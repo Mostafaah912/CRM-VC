@@ -155,3 +155,34 @@ Migration جدید: `database/migrations/2026_09_18_103627_create_extensions_and
 - یک تست دیگر مقادیر تولیدشده توسط SQL را مستقیماً با خروجی زمان‌اجرای `App\Support\JalaliDate::format()` روی چند Timestamp نمونه مقایسه می‌کند تا توافق دو طرف Stack تضمین شود.
 - **Idempotent/Rollback:** `up()` از `CREATE EXTENSION IF NOT EXISTS` و `CREATE OR REPLACE FUNCTION` استفاده می‌کند (اجرای دوباره خطا نمی‌دهد). `down()` هر سه تابع و پسوند را با `IF EXISTS` حذف می‌کند. رفتار با `migrate` → `migrate:rollback --step=1` → `migrate` دوباره روی دیتابیس توسعه دستی تأیید شد.
 - **اصلاح جانبی:** یک خطای از پیش موجود PHPStan در `config/horizon.php` (از P0-02، `Str::slug()` با نوع `bool|string` از `env()`) هنگام اجرای Larastan روی کل پروژه کشف و با `(string)` Cast درست‌شده — چون Larastan اکنون برای اولین‌بار روی کل مسیر `app/` اجرا شد.
+
+## P0-05 — Core Migrations
+
+جدول‌های Core بخش ۰۹ PRD ساخته شدند: `roles`، `permissions`، `role_user`، `permission_role`، `permission_overrides`، `settings`، `audit_logs`. `users` هم با یک Migration جدید تکمیل شد (`is_active`، `last_login_at`، و کوتاه‌سازی طول `name`/`email` به ۱۲۰/۱۶۰ طبق Schema). `email_verified_at` و `two_factor_recovery_codes` عمداً حذف نشدند — فهرست جدول PRD جامع همه ستون‌های موردنیاز Framework نیست و این دو برای تأیید ایمیل و بازیابی 2FA در P0-06 لازم‌اند.
+
+تمام Foreign Key‌ها صریح‌اند با رفتار `onDelete` مشخص: پیوندهای Pivot (`role_user`, `permission_role`) و خود `permission_overrides.user_id/permission_id` با حذف والد Cascade می‌شوند؛ ارجاع‌های «چه کسی این را ساخت/آخرین‌بار تغییر داد» (`permission_overrides.created_by`, `settings.updated_by`, `audit_logs.user_id`) با حذف کاربر `SET NULL` می‌شوند تا رکورد تاریخی از بین نرود.
+
+CHECK Constraintها (چون Laravel فعلاً متد Fluent برای CHECK ندارد، با `DB::statement` بعد از `Schema::create` اضافه شدند):
+- `permission_overrides.effect IN ('allow','deny')`
+- `audit_logs.actor_type IN ('user','system','ai')` (پیش‌فرض `'user'`)
+
+### 🔴 یافته بحرانی: Timezone پیش‌فرض اتصال PostgreSQL
+
+هنگام تست، `password can be reset with valid token` (یک تست از پیش موجود در استارتر) شکست خورد. علت: `SHOW timezone` روی این اتصال `Asia/Tehran` برمی‌گرداند (تنظیم پیش‌فرض سرور محلی)، نه UTC. Laravel رشته‌های Datetime بدون Offset («Naive») می‌نویسد و فرض می‌کند UTC هستند؛ PostgreSQL چنین رشته‌ای را وقتی وارد ستون `timestamptz` می‌شود با Timezone **نشست** (نه UTC) تفسیر می‌کند. نتیجه: هر مقدار `timestamptz` نوشته‌شده توسط اپ ۳ ساعت و ۳۰ دقیقه جابه‌جا می‌شد — یک باگ بی‌صدا که مستقیماً قانون «Timestamps ذخیره UTC» بخش ۲ CLAUDE.md را نقض می‌کرد و روی *همه* جدول‌های آینده (Orders، Metrics، …) اثر می‌گذاشت، نه فقط جدول‌های این Migration.
+
+**اصلاح:** `'timezone' => 'UTC'` به اتصال `pgsql` در `config/database.php` اضافه شد (Laravel's `PostgresConnector` این کلید را می‌خواند و پس از اتصال `SET timezone` اجرا می‌کند). این مقدار Hardcode است، نه از `.env` — چون یک قاعده معماری ثابت است، نه یک تنظیم محیطی. بعد از این اصلاح، `SHOW timezone` مقدار `UTC` می‌دهد و کل Suite (۱۰۷ تست) سبز شد. توابع `to_jalali*` بخش P0-04 تحت تأثیر این باگ نبودند چون صریحاً `AT TIME ZONE 'Asia/Tehran'` را با نام منطقه می‌نویسند، نه با تکیه بر Timezone نشست.
+
+### تبدیل ستون‌های Timestamp موجود به `timestamptz`
+
+با کشف این مسئله، کل Schema برای ستون‌های `timestamp without time zone` باقی‌مانده از Migrationهای منتشرشده استارتر بررسی شد:
+- `users` (`created_at`, `updated_at`, `email_verified_at`, `two_factor_confirmed_at`) و `password_reset_tokens.created_at` و `failed_jobs.failed_at` — با `ALTER COLUMN ... TYPE timestamptz USING ... AT TIME ZONE 'UTC'` تبدیل شدند (Migration جدید، نه ویرایش Migration منتشرشده، طبق قانون بخش ۳).
+- `jobs`/`job_batches` عمداً دست‌نخورده ماندند — ستون‌های شبه‌Timestamp آن‌ها عدد صحیح Unix Timestamp داخلی Laravel Queue هستند، نه واقعاً `timestamp`؛ تبدیل آن‌ها نوع‌شان را می‌شکند و ربطی به این قانون ندارد.
+- `passkeys` (`created_at`, `updated_at`, `last_used_at`) عمداً برای **P0-06** نگه داشته شد — چون Passkey بخشی از Authentication است، نه Core.
+
+### تست Schema/Constraint
+
+`tests/Integration/CoreSchemaTest.php` (۱۱ تست): مقادیر پیش‌فرض `users`، عدم‌وجود هیچ ستون `timestamp without time zone` باقیمانده (به‌جز سه استثنای آگاهانه بالا)، رد شدن مقدار نامعتبر `effect`/`actor_type`، یکتایی `roles.name`/`permissions(module,action)`/`permission_overrides(user_id,permission_id)`، Cascade حذف Role روی Pivotها، و رفتار PK بودن `settings.key`.
+
+### تأیید Idempotent/Rollback
+
+`migrate:fresh` → `migrate:rollback --step=9` → `migrate` روی دیتابیس توسعه بدون خطا اجرا شد؛ همه Migrationهای جدید `down()` کامل دارند.

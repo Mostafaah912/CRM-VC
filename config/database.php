@@ -97,6 +97,11 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // CLAUDE.md §2: timestamps are stored UTC. Without this, the session
+            // falls back to the server's local TimeZone setting (e.g. Asia/Tehran
+            // on this box), and every naive datetime Laravel writes into a
+            // timestamptz column gets silently shifted by the offset.
+            'timezone' => 'UTC',
         ],
 
         'sqlsrv' => [
