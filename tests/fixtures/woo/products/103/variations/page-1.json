@@ -1,0 +1,42 @@
+{
+  "description": "Variations of product 103: one fully described, one with no sku/price/attributes.",
+  "request": {
+    "endpoint": "products/103/variations",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "1",
+      "X-WP-Total": "2"
+    },
+    "body": [
+      {
+        "id": 1031,
+        "sku": "SYN-SHIRT-103-S",
+        "price": "250000",
+        "status": "publish",
+        "attributes": [
+          {
+            "id": 1,
+            "name": "سایز",
+            "option": "S"
+          },
+          {
+            "id": 2,
+            "name": "رنگ",
+            "option": "مشکی"
+          }
+        ]
+      },
+      {
+        "id": 1032,
+        "sku": "",
+        "price": "",
+        "status": "private",
+        "attributes": []
+      }
+    ]
+  }
+}

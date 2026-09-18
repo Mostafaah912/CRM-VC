@@ -6,7 +6,11 @@ namespace Tests\Support;
 
 use App\Modules\Sync\Services\FakeWooClient;
 use App\Modules\Sync\Support\WooFixture;
+use FilesystemIterator;
+use RecursiveDirectoryIterator;
+use RecursiveIteratorIterator;
 use RuntimeException;
+use SplFileInfo;
 
 /**
  * Loads the recorded Woo exchanges under tests/fixtures/woo into a FakeWooClient.
@@ -21,12 +25,29 @@ final class WooFixtures
         return dirname(__DIR__).'/fixtures/woo';
     }
 
+    /**
+     * Every fixture file, at any depth (the folders mirror endpoints such as orders/5001/refunds), sorted.
+     *
+     * @return list<string>
+     */
+    public static function paths(): array
+    {
+        $paths = [];
+
+        foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(self::directory(), FilesystemIterator::SKIP_DOTS)) as $file) {
+            if ($file instanceof SplFileInfo && $file->getExtension() === 'json') {
+                $paths[] = $file->getPathname();
+            }
+        }
+
+        sort($paths);
+
+        return $paths;
+    }
+
     /** @return list<WooFixture> */
     public static function all(): array
     {
-        $paths = glob(self::directory().'/{,*/,*/*/}*.json', GLOB_BRACE) ?: [];
-        sort($paths);
-
         return array_map(function (string $path): WooFixture {
             $decoded = json_decode((string) file_get_contents($path), true, flags: JSON_THROW_ON_ERROR);
 
@@ -35,7 +56,7 @@ final class WooFixtures
             }
 
             return WooFixture::fromArray($decoded);
-        }, $paths);
+        }, self::paths());
     }
 
     public static function client(): FakeWooClient

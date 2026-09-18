@@ -36,10 +36,23 @@
             "variation_id": 0,
             "quantity": 1,
             "sku": "SYN-TEE-001",
-            "total": "403880"
+            "total": "403880",
+            "subtotal": "403880",
+            "price": 403880
           }
         ],
-        "refunds": []
+        "refunds": [],
+        "discount_total": "0",
+        "total_tax": "0",
+        "payment_method": "synthetic_gateway",
+        "date_paid_gmt": "2026-05-10T08:35:00",
+        "date_completed_gmt": "2026-05-12T09:00:00",
+        "coupon_lines": [
+          {
+            "id": 1,
+            "code": "synth10"
+          }
+        ]
       },
       {
         "id": 5002,
@@ -65,10 +78,23 @@
             "variation_id": 1021,
             "quantity": 1,
             "sku": "SYN-JKT-002-M",
-            "total": "1250000"
+            "total": "1250000",
+            "subtotal": "1300000",
+            "price": 1250000
           }
         ],
-        "refunds": []
+        "refunds": [],
+        "discount_total": "50000",
+        "total_tax": "0",
+        "payment_method": "synthetic_gateway",
+        "date_paid_gmt": "2026-05-11T10:02:00",
+        "date_completed_gmt": null,
+        "coupon_lines": [
+          {
+            "id": 2,
+            "code": "synth50"
+          }
+        ]
       }
     ]
   }

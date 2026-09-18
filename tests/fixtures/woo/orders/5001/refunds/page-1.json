@@ -1,0 +1,43 @@
+{
+  "description": "Refunds of order 5001: one item-level refund (negative quantity/total, as Woo sends) and one amount-only refund.",
+  "request": {
+    "endpoint": "orders/5001/refunds",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "1",
+      "X-WP-Total": "2"
+    },
+    "body": [
+      {
+        "id": 7001,
+        "date_created_gmt": "2026-05-14T10:00:00",
+        "reason": "سایز مناسب نبود",
+        "total": "-100000",
+        "amount": "100000",
+        "line_items": [
+          {
+            "id": 9101,
+            "name": "تی‌شرت آزمایشی",
+            "product_id": 101,
+            "variation_id": 0,
+            "quantity": -1,
+            "sku": "SYN-TEE-001",
+            "total": "-100000"
+          }
+        ]
+      },
+      {
+        "id": 7002,
+        "date_created_gmt": "2026-05-15T11:30:00",
+        "reason": "",
+        "total": "-50000",
+        "amount": "50000",
+        "line_items": []
+      }
+    ]
+  }
+}

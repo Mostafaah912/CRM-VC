@@ -36,10 +36,18 @@
             "variation_id": 0,
             "quantity": 2,
             "sku": "",
-            "total": "560000"
+            "total": "560000",
+            "subtotal": "560000",
+            "price": 280000
           }
         ],
-        "refunds": []
+        "refunds": [],
+        "discount_total": "0",
+        "total_tax": "0",
+        "payment_method": "cod",
+        "date_paid_gmt": null,
+        "date_completed_gmt": null,
+        "coupon_lines": []
       }
     ]
   }

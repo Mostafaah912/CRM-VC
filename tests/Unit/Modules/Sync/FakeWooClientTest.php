@@ -358,7 +358,7 @@ it('keeps the recorded fixtures synthetic: fake phones, no credentials, no real 
         }
     };
 
-    $paths = glob(WooFixtures::directory().'/{,*/,*/*/}*.json', GLOB_BRACE) ?: [];
+    $paths = WooFixtures::paths();
     expect($paths)->not->toBeEmpty();
 
     foreach ($paths as $path) {
