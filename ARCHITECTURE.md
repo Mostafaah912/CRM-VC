@@ -312,3 +312,11 @@ Full test suite: ۱۰۹ سبز. `npm run build` سبز. `tsc --noEmit` سبز. P
 - کامنت `phpunit.xml` که خودش کلمه SQLite داشت بازنویسی شد.
 
 Suite: ۱۸۶ سبز؛ Pint/PHPStan/tsc/build سبز.
+
+## GATE 0 — نتیجه
+
+- Login/Logout/مسیر محافظت‌شده/۲FA (چالش، کد نامعتبر، کد بازیابی نامعتبر، Throttle): ۱۲ تست سبز + Smoke زنده روی سرور واقعی (`/login` ۲۰۰ با `lang="fa" dir="rtl"`، `/dashboard` و `/audit` برای مهمان ۳۰۲ به `/login`).
+- **Deny-override:** کاربر با نقش Manager که `segments.delete` می‌گیرد ولی Override=`deny` دارد → DENY (تست `CRITICAL` + ۱۳ تست PermissionService + Middleware) سبز.
+- **Arch:** ۱۷ تست سبز، با Mutation check اثبات‌شده.
+- Full suite ۱۸۶ سبز؛ `pint --test` کل مخزن، PHPStan (Larastan)، `tsc --noEmit`، `npm run build` سبز (`verify-woo.php` فقط Format شد).
+- باز/تصمیم‌های منتظر: (۱) ثبت‌نام عمومی هنوز باز است؛ (۲) ۲FA اجباری Owner/Manager = P8-01؛ (۳) `npm run check` روی جدول‌های Markdown خود `PRD.md` هشدار می‌دهد (فایل منبع حقیقت، دست‌نخورده)؛ (۴) بخش‌های Settings/Security UI هنوز انگلیسی است (Sprint 3).
