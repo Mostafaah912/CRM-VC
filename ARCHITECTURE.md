@@ -267,3 +267,13 @@ Full test suite: ۱۰۹ سبز. `npm run build` سبز. `tsc --noEmit` سبز. P
 ### تأیید
 
 `migrate:fresh --seed` سبز (۵ نقش، Catalog کامل). Full Suite: ۱۳۵ سبز (۳۶۰ Assertion). Pint/PHPStan/`tsc --noEmit`/`npm run build` سبز.
+
+## P0-08 — Audit
+
+- `App\Modules\Core\Services\AuditService::record()` تنها مسیر نوشتن در `audit_logs` است (Controllerها هرگز مستقیم نمی‌نویسند). `paginate()` برای صفحه Audit است. `App\Modules\Core\Models\AuditLog` + Enum `AuditActorType` (`user|system|ai`).
+- **Redaction:** قبل از ذخیره، هر کلید `before`/`after` که شامل یکی از این زیررشته‌ها باشد (بدون حساسیت به حروف) با `[REDACTED]` جایگزین می‌شود: `password`، `remember_token`، `secret` (پوشش `two_factor_secret`، `consumer_secret`)، `recovery_code`، `consumer_key`، `api_key`، `token`، `config` (چون `integrations.config` اعتبارنامه Woo/AI را نگه می‌دارد). یک تست حین نوشتن نشان داد `two_factor_recovery_codes` با لیست اولیه پوشش داده نمی‌شد؛ `recovery_code` اضافه شد.
+- **Trait `Auditable`** (`Modules/Core/Concerns`): روی مدل‌های حساس گذاشته می‌شود و `created/updated/deleted` را خودکار (با diff فقط فیلدهای تغییرکرده) لاگ می‌کند. عامل: کاربر لاگین‌کرده → `user`، وگرنه `system` (`ai` فقط با فراخوانی صریح ماژول Ai). فعلاً روی `PermissionOverride` (حساس‌ترین جدول Core فعلی) اعمال شد؛ Setting در P0-09.
+- ⚠ **محدودیت Schema:** `audit_logs.auditable_id` طبق PRD `bigint` است ولی `settings.key` رشته‌ای است. تا P0-09 تصمیم جداگانه‌ای برای Audit Setting گرفته می‌شود (نه اینجا).
+- **صفحه Audit:** `GET /audit` (`AuditLogController@index` → `AuditService::paginate()`؛ Controller منطق ندارد)، محافظت‌شده با `auth` + `permission:audit,view`. صفحه React `pages/audit/index.tsx` فارسی RTL با صفحه‌بندی دستی. **`dangerouslySetInnerHTML` عمداً استفاده نشد** (قانون CLAUDE.md §2) — نسخه اول برچسب HTML صفحه‌بندی Laravel را با آن رندر می‌کرد و قبل از Commit با «قبلی/بعدی» ساده جایگزین شد. کامپوننت `ui/table.tsx` دستی اضافه شد (CLI شادسی‌ان به‌خاطر نبودن `pnpm` شکست خورد) با کلاس‌های منطقی RTL. لینک سایدبار فقط با `useCan('audit','view')` نمایش داده می‌شود.
+- ⚠ `php artisan wayfinder:generate` دستی، Helperهای `.form()` را حذف می‌کند؛ فقط `npm run build` (پلاگین Vite) صحیح تولید می‌کند.
+- تست‌ها: `AuditServiceTest` (۷)، `AuditableTraitTest` (۳)، `AuditLogPageTest` (۳: مهمان/بدون مجوز/مجاز). Suite: ۱۴۸ سبز، Pint/PHPStan/tsc/build سبز.
