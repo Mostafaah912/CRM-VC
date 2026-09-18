@@ -320,3 +320,17 @@ Suite: ۱۸۶ سبز؛ Pint/PHPStan/tsc/build سبز.
 - **Arch:** ۱۷ تست سبز، با Mutation check اثبات‌شده.
 - Full suite ۱۸۶ سبز؛ `pint --test` کل مخزن، PHPStan (Larastan)، `tsc --noEmit`، `npm run build` سبز (`verify-woo.php` فقط Format شد).
 - باز/تصمیم‌های منتظر: (۱) ثبت‌نام عمومی هنوز باز است؛ (۲) ۲FA اجباری Owner/Manager = P8-01؛ (۳) `npm run check` روی جدول‌های Markdown خود `PRD.md` هشدار می‌دهد (فایل منبع حقیقت، دست‌نخورده)؛ (۴) بخش‌های Settings/Security UI هنوز انگلیسی است (Sprint 3).
+
+## P1-01 — Customers + identities + conflicts + addresses + notes
+
+Migrationهای ۰۱۲–۰۱۶ بخش ۰۹ PRD و ماژول `app/Modules/Customers` (`Models`, `Enums`) + `CustomerFactory`.
+
+- **`customers`:** دقیقاً طبق Schema (`phone_normalized` یکتا، `status`/`lifecycle_stage` با CHECK، `metrics_dirty` پیش‌فرض true، Soft delete، همه Timestamp از نوع `timestamptz`). Indexهای PRD: جزئی `WHERE metrics_dirty = true` و GIN `gin_trgm_ops` روی `display_name`. **هیچ شمارنده تجمیعی روی جدول نیست** (C7) — تست Schema تضمین می‌کند.
+- **`customer_identities`:** `UNIQUE(source, source_id)` (حتی بین دو مشتری)؛ `source` CHECK (`woo_user|woo_guest_order`).
+- **`identity_conflicts`:** `woo_order_id` عمداً FK نیست (جدول `orders` در P1-03 می‌آید و تعارض باید مستقل از آن بماند)؛ `resolved_by` با حذف کاربر NULL می‌شود.
+- **`customer_addresses`** (`type` CHECK) و **`customer_notes`** (`user_id` nullable + `SET NULL`: یادداشت‌ها از Woo قابل بازیابی نیستند، پس با حذف نویسنده باقی می‌مانند).
+- FK فرزندها به `customers` با `CASCADE` است چون حذف واقعی مشتری در Phase 1 اتفاق نمی‌افتد (Soft delete/Anonymize)؛ سفارش‌ها در P1-03 `RESTRICT` خواهند بود.
+- **پیش‌فرض‌های صریح (PRD ساکت بود):** (۱) `customer_identities.confidence` مقدارش را PRD نگفته؛ CHECK روی `high|medium|low` گذاشته شد (قاعده «هر ستون Enum یک CHECK») — در P2-04 در صورت نیاز تغییر می‌کند؛ (۲) Enumهای همین جدول‌ها (`CustomerStatus`, `LifecycleStage`, `IdentitySource`, `IdentityConfidence`, `IdentityConflictStatus`, `AddressType`) همین‌جا ساخته شدند چون Model بدون Enum «رشته لخت» می‌شد؛ P1-05 بقیه Enumها را اضافه می‌کند.
+- **Mutator نرمال‌سازی:** `Customer::phone_normalized` هر مقدار نوشته‌شده را از `PhoneNormalizer` رد می‌کند؛ `+98 912…` و `0912…` هرگز دو مشتری نمی‌شوند و موبایل نامعتبر Exception می‌دهد (تست‌شده). منطق Resolve/Conflict (`CustomerIdentityService`) عمداً P2-04 است و اینجا ساخته نشد.
+- **Auditable Trait روی این جدول‌ها اعمال نشد:** Trait در ماژول Core است و استفاده مستقیم از آن در Customers قانون مرز ماژول (فقط Service/Event) را نقض می‌کند؛ Audit تصمیم‌های بازبینی هویت در P2-04/Sprint 3 از طریق `AuditService` انجام می‌شود.
+- تست: `tests/Integration/CustomersSchemaTest.php` (Constraintها، Indexها، بدون شمارنده، `timestamptz`) و `tests/Feature/Modules/Customers/CustomerModelTest.php` (Factory، نرمال‌سازی، رابطه‌ها، Soft delete). `migrate:rollback --step=5` و `migrate:fresh --seed` سبز. Suite: ۲۱۶ سبز، Pint/PHPStan/tsc/Arch سبز.
