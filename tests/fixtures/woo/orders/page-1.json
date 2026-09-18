@@ -1,0 +1,75 @@
+{
+  "description": "Orders, page 1 of 2 (unfiltered). Order 5002 carries a Persian-digit phone with an RTL mark.",
+  "request": {
+    "endpoint": "orders",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "2",
+      "X-WP-Total": "3"
+    },
+    "body": [
+      {
+        "id": 5001,
+        "number": "5001",
+        "status": "completed",
+        "currency": "IRT",
+        "date_created_gmt": "2026-05-10T08:30:00",
+        "date_modified_gmt": "2026-05-12T09:00:00",
+        "total": "403880",
+        "shipping_total": "0",
+        "customer_id": 11,
+        "billing": {
+          "first_name": "مشتری",
+          "last_name": "آزمایشی یک",
+          "phone": "09000000001",
+          "email": ""
+        },
+        "line_items": [
+          {
+            "id": 9001,
+            "name": "تی‌شرت آزمایشی",
+            "product_id": 101,
+            "variation_id": 0,
+            "quantity": 1,
+            "sku": "SYN-TEE-001",
+            "total": "403880"
+          }
+        ],
+        "refunds": []
+      },
+      {
+        "id": 5002,
+        "number": "5002",
+        "status": "processing",
+        "currency": "IRT",
+        "date_created_gmt": "2026-05-11T10:00:00",
+        "date_modified_gmt": "2026-05-11T10:05:00",
+        "total": "1250000",
+        "shipping_total": "0",
+        "customer_id": 12,
+        "billing": {
+          "first_name": "مشتری",
+          "last_name": "آزمایشی دو",
+          "phone": "\u200f۰۹۰۰۰۰۰۰۰۰۲",
+          "email": ""
+        },
+        "line_items": [
+          {
+            "id": 9002,
+            "name": "کت آزمایشی",
+            "product_id": 102,
+            "variation_id": 1021,
+            "quantity": 1,
+            "sku": "SYN-JKT-002-M",
+            "total": "1250000"
+          }
+        ],
+        "refunds": []
+      }
+    ]
+  }
+}

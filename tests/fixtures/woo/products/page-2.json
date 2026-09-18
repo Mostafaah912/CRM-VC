@@ -1,0 +1,16 @@
+{
+  "description": "Products, page 2 comes back EMPTY with the page-1 headers: records were deleted between page fetches (PRD: stop when page is empty).",
+  "request": {
+    "endpoint": "products",
+    "page": 2,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "2",
+      "X-WP-Total": "4"
+    },
+    "body": []
+  }
+}

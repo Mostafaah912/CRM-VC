@@ -1,0 +1,16 @@
+{
+  "description": "Malformed: HTTP 200 whose body is an HTML maintenance page, not JSON.",
+  "request": {
+    "endpoint": "products/attributes",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "1",
+      "X-WP-Total": "1"
+    },
+    "body": "<html><body>Maintenance</body></html>"
+  }
+}

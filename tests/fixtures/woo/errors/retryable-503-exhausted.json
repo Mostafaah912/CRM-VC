@@ -1,0 +1,14 @@
+{
+  "description": "Retryable failure: 503 on every attempt; HttpWooClient gave up after 1 + 4 retries.",
+  "request": {
+    "endpoint": "products/101/variations",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 503,
+    "headers": {},
+    "body": "",
+    "attempts": 5
+  }
+}

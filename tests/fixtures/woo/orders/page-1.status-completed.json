@@ -1,0 +1,48 @@
+{
+  "description": "Orders filtered by status=completed: a single page.",
+  "request": {
+    "endpoint": "orders",
+    "page": 1,
+    "query": {
+      "status": "completed"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "1",
+      "X-WP-Total": "1"
+    },
+    "body": [
+      {
+        "id": 5001,
+        "number": "5001",
+        "status": "completed",
+        "currency": "IRT",
+        "date_created_gmt": "2026-05-10T08:30:00",
+        "date_modified_gmt": "2026-05-12T09:00:00",
+        "total": "403880",
+        "shipping_total": "0",
+        "customer_id": 11,
+        "billing": {
+          "first_name": "مشتری",
+          "last_name": "آزمایشی یک",
+          "phone": "09000000001",
+          "email": ""
+        },
+        "line_items": [
+          {
+            "id": 9001,
+            "name": "تی‌شرت آزمایشی",
+            "product_id": 101,
+            "variation_id": 0,
+            "quantity": 1,
+            "sku": "SYN-TEE-001",
+            "total": "403880"
+          }
+        ],
+        "refunds": []
+      }
+    ]
+  }
+}

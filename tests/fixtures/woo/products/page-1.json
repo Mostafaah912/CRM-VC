@@ -1,0 +1,45 @@
+{
+  "description": "Products, page 1. Headers promise 2 pages / 4 products.",
+  "request": {
+    "endpoint": "products",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "2",
+      "X-WP-Total": "4"
+    },
+    "body": [
+      {
+        "id": 101,
+        "name": "تی‌شرت آزمایشی",
+        "type": "simple",
+        "status": "publish",
+        "sku": "SYN-TEE-001",
+        "price": "403880",
+        "categories": [
+          {
+            "id": 31,
+            "name": "پوشاک آزمایشی"
+          }
+        ]
+      },
+      {
+        "id": 102,
+        "name": "کت آزمایشی",
+        "type": "variable",
+        "status": "publish",
+        "sku": "SYN-JKT-002",
+        "price": "1250000",
+        "categories": [
+          {
+            "id": 32,
+            "name": "کت آزمایشی"
+          }
+        ]
+      }
+    ]
+  }
+}

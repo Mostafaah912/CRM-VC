@@ -1,0 +1,20 @@
+{
+  "description": "Terminal failure: 401. Never retried.",
+  "request": {
+    "endpoint": "customers",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 401,
+    "headers": {},
+    "body": {
+      "code": "woocommerce_rest_cannot_view",
+      "message": "Sorry, you cannot list resources.",
+      "data": {
+        "status": 401
+      }
+    },
+    "attempts": 1
+  }
+}

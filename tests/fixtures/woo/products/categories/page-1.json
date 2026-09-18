@@ -1,0 +1,29 @@
+{
+  "description": "Product categories, a single page.",
+  "request": {
+    "endpoint": "products/categories",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "1",
+      "X-WP-Total": "2"
+    },
+    "body": [
+      {
+        "id": 31,
+        "name": "پوشاک آزمایشی",
+        "slug": "synthetic-apparel",
+        "parent": 0
+      },
+      {
+        "id": 32,
+        "name": "کت آزمایشی",
+        "slug": "synthetic-jackets",
+        "parent": 31
+      }
+    ]
+  }
+}
