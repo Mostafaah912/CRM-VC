@@ -29,6 +29,9 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
+        <!-- The Woo rate limiter is a real Redis token bucket; tests use an isolated Redis DB/prefix, never the dev one. -->
+        <env name="REDIS_DB" value="15"/>
+        <env name="REDIS_PREFIX" value="heymode-testing-"/>
         <!-- Real PostgreSQL only — see CLAUDE.md §3/§8. Connection/credentials come from .env.testing (gitignored), never an in-memory engine. -->
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
