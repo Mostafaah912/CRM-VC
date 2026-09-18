@@ -20,7 +20,7 @@ type Props = {
 export default function Login({ status, canResetPassword }: Props) {
     return (
         <>
-            <Head title="Log in" />
+            <Head title="ورود" />
 
             <PasskeyVerify />
 
@@ -33,7 +33,7 @@ export default function Login({ status, canResetPassword }: Props) {
                     <>
                         <div className="grid gap-6">
                             <div className="grid gap-2">
-                                <Label htmlFor="email">Email address</Label>
+                                <Label htmlFor="email">ایمیل</Label>
                                 <Input
                                     id="email"
                                     type="email"
@@ -49,14 +49,14 @@ export default function Login({ status, canResetPassword }: Props) {
 
                             <div className="grid gap-2">
                                 <div className="flex items-center">
-                                    <Label htmlFor="password">Password</Label>
+                                    <Label htmlFor="password">رمز عبور</Label>
                                     {canResetPassword && (
                                         <TextLink
                                             href={request()}
-                                            className="ml-auto text-sm"
+                                            className="ms-auto text-sm"
                                             tabIndex={5}
                                         >
-                                            Forgot your password?
+                                            رمز عبور را فراموش کرده‌اید؟
                                         </TextLink>
                                     )}
                                 </div>
@@ -66,7 +66,7 @@ export default function Login({ status, canResetPassword }: Props) {
                                     required
                                     tabIndex={2}
                                     autoComplete="current-password"
-                                    placeholder="Password"
+                                    placeholder="رمز عبور"
                                 />
                                 <InputError message={errors.password} />
                             </div>
@@ -77,7 +77,9 @@ export default function Login({ status, canResetPassword }: Props) {
                                     name="remember"
                                     tabIndex={3}
                                 />
-                                <Label htmlFor="remember">Remember me</Label>
+                                <Label htmlFor="remember">
+                                    مرا به‌خاطر بسپار
+                                </Label>
                             </div>
 
                             <Button
@@ -88,14 +90,14 @@ export default function Login({ status, canResetPassword }: Props) {
                                 data-test="login-button"
                             >
                                 {processing && <Spinner />}
-                                Log in
+                                ورود
                             </Button>
                         </div>
 
                         <div className="text-muted-foreground text-center text-sm">
-                            Don't have an account?{' '}
+                            حساب کاربری ندارید؟{' '}
                             <TextLink href={register()} tabIndex={5}>
-                                Sign up
+                                ثبت‌نام
                             </TextLink>
                         </div>
                     </>
@@ -112,6 +114,6 @@ export default function Login({ status, canResetPassword }: Props) {
 }
 
 Login.layout = {
-    title: 'Log in to your account',
-    description: 'Enter your email and password below to log in',
+    title: 'ورود به حساب کاربری',
+    description: 'ایمیل و رمز عبور خود را برای ورود وارد کنید',
 };

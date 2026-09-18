@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use PragmaRX\Google2FA\Google2FA;
 
 /**
  * @extends Factory<User>
@@ -52,7 +53,11 @@ class UserFactory extends Factory
     public function withTwoFactor(): static
     {
         return $this->state(fn (array $attributes) => [
-            'two_factor_secret' => encrypt('secret'),
+            // A real base32 secret — google2fa throws (rather than failing
+            // validation) on anything shorter than 16 base32 characters, so a
+            // placeholder string like 'secret' breaks any test that actually
+            // submits a code to the two-factor challenge.
+            'two_factor_secret' => encrypt(app(Google2FA::class)->generateSecretKey()),
             'two_factor_recovery_codes' => encrypt(json_encode(['recovery-code-1'])),
             'two_factor_confirmed_at' => now(),
         ]);

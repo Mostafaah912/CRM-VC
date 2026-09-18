@@ -33,3 +33,45 @@ test('two factor challenge can be rendered', function () {
             ->component('auth/two-factor-challenge'),
         );
 });
+
+test('an invalid two factor code is rejected and does not authenticate the user', function () {
+    Features::twoFactorAuthentication([
+        'confirm' => true,
+        'confirmPassword' => true,
+    ]);
+
+    $user = User::factory()->withTwoFactor()->create();
+
+    $this->post(route('login'), [
+        'email' => $user->email,
+        'password' => 'password',
+    ]);
+
+    $response = $this->post(route('two-factor.login.store'), [
+        'code' => '000000',
+    ]);
+
+    $response->assertSessionHasErrors();
+    $this->assertGuest();
+});
+
+test('an invalid two factor recovery code is rejected and does not authenticate the user', function () {
+    Features::twoFactorAuthentication([
+        'confirm' => true,
+        'confirmPassword' => true,
+    ]);
+
+    $user = User::factory()->withTwoFactor()->create();
+
+    $this->post(route('login'), [
+        'email' => $user->email,
+        'password' => 'password',
+    ]);
+
+    $response = $this->post(route('two-factor.login.store'), [
+        'recovery_code' => 'not-a-real-recovery-code',
+    ]);
+
+    $response->assertSessionHasErrors();
+    $this->assertGuest();
+});

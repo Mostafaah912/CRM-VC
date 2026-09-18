@@ -9,7 +9,7 @@
 - Laravel: نصب‌شده با starter kit — React + Inertia + Laravel built-in auth (با 2FA و Passkeys)
 - Node.js: 22.17.0 / npm: 10.9.2
 - Composer: نصب‌شده
-- PostgreSQL: 15.19  ← توجه: نسخه ۱۵ است، نه ۱۶
+- PostgreSQL: 15.19 ← توجه: نسخه ۱۵ است، نه ۱۶
 - Redis: 7.4.6
 - تست: Pest
 - Homebrew: نصب‌شده ولی به‌عنوان وابستگی پروژه استفاده نمی‌شود (محدودیت Intel + macOS 12)
@@ -30,61 +30,67 @@
 
 ## یافته‌های راستی‌آزمایی (P0-00)
 
-
 ### V8 — حجم کل تاریخچه سفارش
-  • تعداد کل سفارش‌ها (هر وضعیت): 24421
-  ✓ در محدوده قابل مدیریت برای Full Sync کامل.
-  • نمونه بررسی‌شده در این اجرا: 600 سفارش اخیر
+
+• تعداد کل سفارش‌ها (هر وضعیت): 24421
+✓ در محدوده قابل مدیریت برای Full Sync کامل.
+• نمونه بررسی‌شده در این اجرا: 600 سفارش اخیر
 
 ### V2 — وضعیت‌های سفارش (Slug واقعی)
-  • وضعیت 'completed': 296 سفارش در نمونه
-  • وضعیت 'cancelled': 239 سفارش در نمونه
-  • وضعیت 'processing': 59 سفارش در نمونه
-  • وضعیت 'pending': 3 سفارش در نمونه
-  • وضعیت 'refunded': 3 سفارش در نمونه
 
-  • در config/woo.php، realized_statuses باید شامل معادل‌های پرداخت‌شده/ارسال‌شده/تکمیل‌شده باشد.
-  • پیش‌فرض سند: ['processing','shipped','completed'] — با لیست بالا تطبیق دهید.
-  ⚠ وضعیت 'shipped' در نمونه دیده نشد. اگر وضعیت ارسال سفارشی دارید، Slug واقعی‌اش را پیدا و ثبت کنید.
+• وضعیت 'completed': 296 سفارش در نمونه
+• وضعیت 'cancelled': 239 سفارش در نمونه
+• وضعیت 'processing': 59 سفارش در نمونه
+• وضعیت 'pending': 3 سفارش در نمونه
+• وضعیت 'refunded': 3 سفارش در نمونه
+
+• در config/woo.php، realized_statuses باید شامل معادل‌های پرداخت‌شده/ارسال‌شده/تکمیل‌شده باشد.
+• پیش‌فرض سند: ['processing','shipped','completed'] — با لیست بالا تطبیق دهید.
+⚠ وضعیت 'shipped' در نمونه دیده نشد. اگر وضعیت ارسال سفارشی دارید، Slug واقعی‌اش را پیدا و ثبت کنید.
 
 ### V1 — واحد پول و اعشار
-  • کد واحد پول ووکامرس: IRT
-  • تعداد رقم اعشار قیمت: 0
-  • نمونه مبلغ یک سفارش واقعی: 403880
-  ⚠ این عدد را با مبلغی که در پنل همان سفارش می‌بینید مقایسه کنید:
-  ⚠ اگر یکی بود → واحد ذخیره تومان است. اگر عدد API ده برابر بود → ریال است (ضریب در config/hm.php).
+
+• کد واحد پول ووکامرس: IRT
+• تعداد رقم اعشار قیمت: 0
+• نمونه مبلغ یک سفارش واقعی: 403880
+⚠ این عدد را با مبلغی که در پنل همان سفارش می‌بینید مقایسه کنید:
+⚠ اگر یکی بود → واحد ذخیره تومان است. اگر عدد API ده برابر بود → ریال است (ضریب در config/hm.php).
 
 ### V3 و V4 — خرید مهمان و وجود موبایل
-  • سفارش مهمان (customer_id=0): 0 (0٪ نمونه)
-  • سفارش کاربر ثبت‌نامی: 600
-  • در نمونه، خرید مهمان دیده نشد.
 
-  • سفارش بدون موبایل: 0 (0٪ نمونه)
-  ✓ کمتر از ۱٪ سفارش بدون موبایل — کلید هویت موبایل امن است.
+• سفارش مهمان (customer_id=0): 0 (0٪ نمونه)
+• سفارش کاربر ثبت‌نامی: 600
+• در نمونه، خرید مهمان دیده نشد.
+
+• سفارش بدون موبایل: 0 (0٪ نمونه)
+✓ کمتر از ۱٪ سفارش بدون موبایل — کلید هویت موبایل امن است.
 
 ### V5 و V10 — موبایل مشترک و اتکاپذیری ایمیل
-  • موبایل‌هایی که با بیش از یک نام خانوادگی سفارش داده‌اند: 1
-  ⚠ این‌ها در identity_conflicts برای بازبینی ثبت می‌شوند (مشتری تقسیم نمی‌شود).
 
-  • سفارش‌های با ایمیل معتبر: 2 (0.3٪ نمونه)
-  • ایمیل ناقص است — طبق سند فقط شناسه ثانویه و بدون تطبیق در فاز ۱.
+• موبایل‌هایی که با بیش از یک نام خانوادگی سفارش داده‌اند: 1
+⚠ این‌ها در identity_conflicts برای بازبینی ثبت می‌شوند (مشتری تقسیم نمی‌شود).
+
+• سفارش‌های با ایمیل معتبر: 2 (0.3٪ نمونه)
+• ایمیل ناقص است — طبق سند فقط شناسه ثانویه و بدون تطبیق در فاز ۱.
 
 ### V6 و V7 — ساختار عودت
-  • سفارش نمونه با عودت: #53960
-  • مبلغ عودت: 11340000
-  ✓ عودت دارای line_items است → عودت در سطح قلم قابل محاسبه است (طبق فرض سند).
-  • V7: وب‌هوک عودت به‌صورت پیش‌فرض فرض نمی‌شود؛ Polling ساعتی استفاده می‌شود.
+
+• سفارش نمونه با عودت: #53960
+• مبلغ عودت: 11340000
+✓ عودت دارای line_items است → عودت در سطح قلم قابل محاسبه است (طبق فرض سند).
+• V7: وب‌هوک عودت به‌صورت پیش‌فرض فرض نمی‌شود؛ Polling ساعتی استفاده می‌شود.
 
 ### V9 — پوشش SKU روی محصولات و واریانت‌ها
-  • نمونه محصول بررسی‌شده: 100
-  • محصول بدون SKU: 0
-  ✓ همه محصولات نمونه SKU دارند.
-  • واریانت بررسی‌شده (از 3 محصول متغیر): 15، بدون SKU: 0
-  ✓ همه واریانت‌های بررسی‌شده SKU دارند.
+
+• نمونه محصول بررسی‌شده: 100
+• محصول بدون SKU: 0
+✓ همه محصولات نمونه SKU دارند.
+• واریانت بررسی‌شده (از 3 محصول متغیر): 15، بدون SKU: 0
+✓ همه واریانت‌های بررسی‌شده SKU دارند.
 
 ## تصمیم‌های قطعی بعد از P0-00
 
-- **واحد پول: تومان (IRT).** مبالغ به تومان و بدون اعشار ذخیره می‌شوند (bigint). 
+- **واحد پول: تومان (IRT).** مبالغ به تومان و بدون اعشار ذخیره می‌شوند (bigint).
   هیچ تبدیلی لازم نیست — API هم تومان می‌دهد. (تأییدشده با مبلغ نمونه ۴۰۳٬۸۸۰.)
 - **realized_statuses = ['processing','completed']** (وضعیت shipped وجود ندارد).
 - **خرید مهمان: غیرفعال.** همه سفارش‌ها customer_id دارند. مسیر woo_guest_order بلااستفاده.
@@ -111,6 +117,7 @@
 - shadcn/ui: از قبل نصب‌شده (`components.json`، استایل `new-york`، `baseColor: neutral`، آیکون‌ها از `lucide-react`) — تأیید شد که `npm run build` سبز است.
 
 ### تغییرات RTL
+
 - طبق تصمیم D10 (فقط فارسی، بدون i18n)، `resources/views/app.blade.php` اکنون همیشه `lang="fa" dir="rtl"` دارد — دیگر وابسته به `app()->getLocale()` نیست، چون این اپ زبان دوم ندارد.
 - Tailwind v4 از `rtl:`/`ltr:` بر پایه ویژگی `dir` به‌صورت داخلی پشتیبانی می‌کند؛ نیازی به پلاگین یا `tailwind.config.js` جداگانه نبود.
 - `APP_LOCALE` در `.env` عمداً روی `en` باقی ماند — طبق D10 متن رابط کاربری در خود کامپوننت React فارسی نوشته می‌شود، نه از طریق فایل‌های ترجمه Laravel؛ تغییر `APP_LOCALE` بدون فایل‌های `resources/lang/fa` پیام‌های اعتبارسنجی Fortify را می‌شکند و در Scope این گام نیست.
@@ -130,6 +137,7 @@
 ## اصلاح زیرساخت تست — قبل از P0-03
 
 `phpunit.xml` استارتر روی `DB_CONNECTION=sqlite` و `DB_DATABASE=:memory:` تنظیم شده بود که مستقیماً قانون بخش ۳/۸ CLAUDE.md («هرگز SQLite») را نقض می‌کرد. برای اینکه اولین تست‌های TEST-FIRST (P0-03) درست شروع شوند:
+
 - دیتابیس جدا `heymode_testing` روی همان PostgreSQL محلی ساخته شد (با اجازه کاربر، چون نقش `heymode` نیاز به `CREATEDB` داشت که ابتدا نداشت).
 - اتصال/رمز عبور تست در `.env.testing` (در `.gitignore`، هرگز Commit نمی‌شود) قرار گرفت؛ `phpunit.xml` دیگر `DB_CONNECTION`/`DB_DATABASE`/`DB_URL` را Override نمی‌کند تا مقادیر واقعی از `.env.testing` خوانده شوند.
 - نتیجه: `RefreshDatabase` هر بار `heymode_testing` را Migrate می‌کند، نه دیتابیس توسعه `heymode` را — داده محلی دست‌نخورده می‌ماند.
@@ -163,18 +171,20 @@ Migration جدید: `database/migrations/2026_09_18_103627_create_extensions_and
 تمام Foreign Key‌ها صریح‌اند با رفتار `onDelete` مشخص: پیوندهای Pivot (`role_user`, `permission_role`) و خود `permission_overrides.user_id/permission_id` با حذف والد Cascade می‌شوند؛ ارجاع‌های «چه کسی این را ساخت/آخرین‌بار تغییر داد» (`permission_overrides.created_by`, `settings.updated_by`, `audit_logs.user_id`) با حذف کاربر `SET NULL` می‌شوند تا رکورد تاریخی از بین نرود.
 
 CHECK Constraintها (چون Laravel فعلاً متد Fluent برای CHECK ندارد، با `DB::statement` بعد از `Schema::create` اضافه شدند):
+
 - `permission_overrides.effect IN ('allow','deny')`
 - `audit_logs.actor_type IN ('user','system','ai')` (پیش‌فرض `'user'`)
 
 ### 🔴 یافته بحرانی: Timezone پیش‌فرض اتصال PostgreSQL
 
-هنگام تست، `password can be reset with valid token` (یک تست از پیش موجود در استارتر) شکست خورد. علت: `SHOW timezone` روی این اتصال `Asia/Tehran` برمی‌گرداند (تنظیم پیش‌فرض سرور محلی)، نه UTC. Laravel رشته‌های Datetime بدون Offset («Naive») می‌نویسد و فرض می‌کند UTC هستند؛ PostgreSQL چنین رشته‌ای را وقتی وارد ستون `timestamptz` می‌شود با Timezone **نشست** (نه UTC) تفسیر می‌کند. نتیجه: هر مقدار `timestamptz` نوشته‌شده توسط اپ ۳ ساعت و ۳۰ دقیقه جابه‌جا می‌شد — یک باگ بی‌صدا که مستقیماً قانون «Timestamps ذخیره UTC» بخش ۲ CLAUDE.md را نقض می‌کرد و روی *همه* جدول‌های آینده (Orders، Metrics، …) اثر می‌گذاشت، نه فقط جدول‌های این Migration.
+هنگام تست، `password can be reset with valid token` (یک تست از پیش موجود در استارتر) شکست خورد. علت: `SHOW timezone` روی این اتصال `Asia/Tehran` برمی‌گرداند (تنظیم پیش‌فرض سرور محلی)، نه UTC. Laravel رشته‌های Datetime بدون Offset («Naive») می‌نویسد و فرض می‌کند UTC هستند؛ PostgreSQL چنین رشته‌ای را وقتی وارد ستون `timestamptz` می‌شود با Timezone **نشست** (نه UTC) تفسیر می‌کند. نتیجه: هر مقدار `timestamptz` نوشته‌شده توسط اپ ۳ ساعت و ۳۰ دقیقه جابه‌جا می‌شد — یک باگ بی‌صدا که مستقیماً قانون «Timestamps ذخیره UTC» بخش ۲ CLAUDE.md را نقض می‌کرد و روی _همه_ جدول‌های آینده (Orders، Metrics، …) اثر می‌گذاشت، نه فقط جدول‌های این Migration.
 
 **اصلاح:** `'timezone' => 'UTC'` به اتصال `pgsql` در `config/database.php` اضافه شد (Laravel's `PostgresConnector` این کلید را می‌خواند و پس از اتصال `SET timezone` اجرا می‌کند). این مقدار Hardcode است، نه از `.env` — چون یک قاعده معماری ثابت است، نه یک تنظیم محیطی. بعد از این اصلاح، `SHOW timezone` مقدار `UTC` می‌دهد و کل Suite (۱۰۷ تست) سبز شد. توابع `to_jalali*` بخش P0-04 تحت تأثیر این باگ نبودند چون صریحاً `AT TIME ZONE 'Asia/Tehran'` را با نام منطقه می‌نویسند، نه با تکیه بر Timezone نشست.
 
 ### تبدیل ستون‌های Timestamp موجود به `timestamptz`
 
 با کشف این مسئله، کل Schema برای ستون‌های `timestamp without time zone` باقی‌مانده از Migrationهای منتشرشده استارتر بررسی شد:
+
 - `users` (`created_at`, `updated_at`, `email_verified_at`, `two_factor_confirmed_at`) و `password_reset_tokens.created_at` و `failed_jobs.failed_at` — با `ALTER COLUMN ... TYPE timestamptz USING ... AT TIME ZONE 'UTC'` تبدیل شدند (Migration جدید، نه ویرایش Migration منتشرشده، طبق قانون بخش ۳).
 - `jobs`/`job_batches` عمداً دست‌نخورده ماندند — ستون‌های شبه‌Timestamp آن‌ها عدد صحیح Unix Timestamp داخلی Laravel Queue هستند، نه واقعاً `timestamp`؛ تبدیل آن‌ها نوع‌شان را می‌شکند و ربطی به این قانون ندارد.
 - `passkeys` (`created_at`, `updated_at`, `last_used_at`) عمداً برای **P0-06** نگه داشته شد — چون Passkey بخشی از Authentication است، نه Core.
@@ -186,3 +196,33 @@ CHECK Constraintها (چون Laravel فعلاً متد Fluent برای CHECK ن�
 ### تأیید Idempotent/Rollback
 
 `migrate:fresh` → `migrate:rollback --step=9` → `migrate` روی دیتابیس توسعه بدون خطا اجرا شد؛ همه Migrationهای جدید `down()` کامل دارند.
+
+## P0-06 — Authentication + 2FA
+
+استارتر Laravel از قبل با Fortify کامل بود (Login/Logout/Register/Reset Password/Email Verification/2FA/Passkeys، همراه با Throttle روی Login و روی 2FA). طبق دستور صریح («Stack موجود را حفظ کن، Framework جدید اضافه نکن») چیزی جایگزین نشد؛ کار این گام تکمیل شکاف‌ها بود، نه بازسازی.
+
+### باگ واقعی پیدا و رفع‌شده در Factory تست
+
+هنگام نوشتن تست «کد 2FA نامعتبر»، `UserFactory::withTwoFactor()` معلوم شد `two_factor_secret` را با `encrypt('secret')` می‌ساخت — یعنی مقدار رمزگشایی‌شده لفظاً کلمه «secret» (۶ کاراکتر) است، در حالی که Google2FA حداقل ۱۶ کاراکتر Base32 لازم دارد و به‌جای برگرداندن «کد اشتباه»، Exception پرتاب می‌کند (`SecretKeyTooShortException`). چون تا امروز هیچ تستی واقعاً کد را Verify نمی‌کرد، این باگ بی‌صدا مانده بود. اصلاح شد به تولید یک Secret واقعی با `Google2FA::generateSecretKey()` (`database/factories/UserFactory.php`).
+
+### تست‌های اضافه‌شده
+
+`tests/Feature/Auth/TwoFactorChallengeTest.php`: کد ۲FA نامعتبر رد می‌شود و کاربر را وارد نمی‌کند؛ کد بازیابی نامعتبر هم همینطور. سناریوهای «ورود موفق»، «رمز اشتباه»، «خروج»، «مسیر محافظت‌شده» (`DashboardTest.php`)، «کاربر با 2FA فعال به چالش هدایت می‌شود»، و «Rate Limit» همگی از قبل در `tests/Feature/Auth/AuthenticationTest.php` و `DashboardTest.php` موجود و سبز بودند.
+
+### ترجمه صفحات Auth به فارسی RTL
+
+طبق D10، هفت صفحه مسیر ورود/ثبت‌نام/بازیابی/۲FA (`resources/js/pages/auth/{login,register,forgot-password,reset-password,verify-email,confirm-password,two-factor-challenge}.tsx`) که هنوز انگلیسی بودند، به فارسی ترجمه شدند (متن، Placeholder، عنوان `Head`، `layout.title/description`). Layout‌های مشترک (`auth-layout` → `auth-simple-layout`) هیچ متن Hardcode‌شده‌ای نداشتند. در همین مسیر، یک نمونه از ریسک ثبت‌شده در P0-01 (کلاس فیزیکی `ml-auto` در دکمه «فراموشی رمز عبور») به کلاس منطقی `ms-auto` تغییر کرد چون دقیقاً همان خط ترجمه می‌شد؛ بقیه اصلاح فیزیکی→منطقی طبق تصمیم قبلی برای Sprint 3 می‌ماند.
+
+⚠️ **یادداشت برای بعد، نه تصمیم:** ثبت‌نام عمومی (`register`) هنوز باز است. چون هی‌مد یک ابزار داخلی ۵ نفره است (نه SaaS)، احتمالاً در Sprint 8 (P8-05 «کاربران واقعی») باید بسته یا محدود به Invite شود — این یک تصمیم معماری است که نباید خودسرانه در این گام گرفته می‌شد، فقط اینجا برای تصمیم‌گیری بعدی یادداشت شد.
+
+### تکمیل Timestamptz برای `passkeys` (شکاف باقیمانده از P0-05)
+
+سه ستون `passkeys.{created_at,updated_at,last_used_at}` که در P0-05 عمداً نگه داشته شده بودند («چون Passkey بخشی از Authentication است»)، حالا با Migration جدید (`convert_passkeys_timestamps_to_timestamptz`) به `timestamptz` تبدیل شدند. بعد از این، در کل Schema هیچ ستون `timestamp without time zone` باقی نمانده به‌جز `jobs`/`job_batches` (که عمداً Unix Integer داخلی Queue هستند، نه Timestamp واقعی).
+
+### «2FA اجباری برای Owner/Manager» — عمداً اینجا پیاده نشد
+
+بخش ۲۱ PRD این را زیر «چک‌لیست سخت‌سازی» فهرست کرده که دقیقاً معادل Backlog Item **P8-01** (Sprint 8، نه Sprint 0) است؛ enforcement آن هم نیازمند رابطه واقعی کاربر↔نقش است که در P0-07 ساخته می‌شود و در Sprint 8 با کاربران واقعی (P8-05) پر می‌شود. اجرای زودهنگام آن اینجا یا duplicate‌کاری با P0-07 بود یا Enforcement روی داده جعلی. تصمیم: طبق ترتیب Backlog خود PRD، به P8-01 موکول شد؛ این یک انحراف از Scope نیست.
+
+### تأیید
+
+Full test suite: ۱۰۹ سبز. `npm run build` سبز. `tsc --noEmit` سبز. Pint/PHPStan سبز (تنها هشدار باقیمانده `npm run check` مربوط به فرمت جدول‌های Markdown در خود `PRD.md` است — فایل منبع حقیقت پروژه، از قبل همینطور بوده و در این گام دست‌نخورده ماند، چون تغییر آن خارج از اختیار این گام است).
