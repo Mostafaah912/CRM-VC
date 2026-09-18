@@ -20,11 +20,19 @@ class DatabaseSeeder extends Seeder
             RoleSeeder::class,
         ]);
 
+        // Fake customers/orders: never in production, where real data comes only from the Woo sync.
+        if (! app()->isProduction()) {
+            $this->call(DemoDataSeeder::class);
+        }
+
         // User::factory(10)->create();
 
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // Idempotent so `php artisan db:seed` can be re-run on a seeded database.
+        if (! User::query()->where('email', 'test@example.com')->exists()) {
+            User::factory()->create([
+                'name' => 'Test User',
+                'email' => 'test@example.com',
+            ]);
+        }
     }
 }
