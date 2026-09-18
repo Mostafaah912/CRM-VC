@@ -71,14 +71,22 @@ final class AuditService
             ->paginate($perPage);
     }
 
-    /** @param  array<string, mixed>  $attributes
-     * @return array<string, mixed> */
+    /**
+     * @param  array<string, mixed>  $attributes
+     * @return array<string, mixed>
+     */
     private function redact(array $attributes): array
     {
         $redacted = [];
 
         foreach ($attributes as $key => $value) {
-            $redacted[$key] = $this->isSensitiveKey((string) $key) ? '[REDACTED]' : $value;
+            if ($this->isSensitiveKey((string) $key)) {
+                $redacted[$key] = '[REDACTED]';
+            } elseif (is_array($value)) {
+                $redacted[$key] = $this->redact($value);
+            } else {
+                $redacted[$key] = $value;
+            }
         }
 
         return $redacted;
