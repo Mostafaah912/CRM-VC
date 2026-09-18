@@ -225,9 +225,18 @@ it('declares strict_types in new application code', function () {
     expect($missing)->toBeEmpty();
 });
 
-/** CLAUDE.md §3: never hardcode an order status string outside config/woo.php. */
+/**
+ * CLAUDE.md §3: never hardcode an order status string outside config/woo.php.
+ * The two job-status enums are exempt: `completed` there is a run/sync outcome
+ * (PRD §09 metric_runs.status, sync_jobs.status), not a WooCommerce order status.
+ * Every other file — including everything under Orders — is still scanned.
+ */
 it('does not hardcode order status strings outside config', function () {
-    $files = Scanner::phpFiles(['app']);
+    $jobStatusEnums = ['app/Modules/Metrics/Enums/MetricRunStatus.php', 'app/Modules/Sync/Enums/SyncStatus.php'];
+    $files = array_values(array_filter(
+        Scanner::phpFiles(['app']),
+        fn (string $file) => ! in_array(Scanner::relative($file), $jobStatusEnums, true),
+    ));
 
     expect(Scanner::violations($files, ["/['\"](wc-)?(processing|completed|on-hold|cancelled|refunded)['\"]/"]))->toBeEmpty();
 });
