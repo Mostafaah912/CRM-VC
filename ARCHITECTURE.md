@@ -126,3 +126,18 @@
 - **یافته محیطی مهم:** روی این مک، Redis 7.4.6 نصب است (`/usr/local/bin/redis-server`) ولی به‌صورت سرویس خودکار (launchd/brew services) اجرا نمی‌شود — باید دستی با `redis-server --daemonize yes` بالا بیاید. این باید در مستندات Setup پروژه (بعداً) یا اسکریپت dev ثبت شود؛ فعلاً فقط اینجا یادداشت شد.
 - **تأیید سرتاسری صف:** یک Job موقت (`HorizonProbeJob`, بعد از تست حذف شد) روی صف پیش‌فرض dispatch شد، `php artisan horizon` آن را از Redis برداشت، اجرا کرد و نتیجه در Cache (که آن هم الان روی Redis است) قابل مشاهده بود. `horizon:status` → `running`، `horizon:terminate` تمیز خاتمه داد.
 - PostgreSQL 15.19 هم تأیید شد در دسترس است (`php artisan db:show`).
+
+## اصلاح زیرساخت تست — قبل از P0-03
+
+`phpunit.xml` استارتر روی `DB_CONNECTION=sqlite` و `DB_DATABASE=:memory:` تنظیم شده بود که مستقیماً قانون بخش ۳/۸ CLAUDE.md («هرگز SQLite») را نقض می‌کرد. برای اینکه اولین تست‌های TEST-FIRST (P0-03) درست شروع شوند:
+- دیتابیس جدا `heymode_testing` روی همان PostgreSQL محلی ساخته شد (با اجازه کاربر، چون نقش `heymode` نیاز به `CREATEDB` داشت که ابتدا نداشت).
+- اتصال/رمز عبور تست در `.env.testing` (در `.gitignore`، هرگز Commit نمی‌شود) قرار گرفت؛ `phpunit.xml` دیگر `DB_CONNECTION`/`DB_DATABASE`/`DB_URL` را Override نمی‌کند تا مقادیر واقعی از `.env.testing` خوانده شوند.
+- نتیجه: `RefreshDatabase` هر بار `heymode_testing` را Migrate می‌کند، نه دیتابیس توسعه `heymode` را — داده محلی دست‌نخورده می‌ماند.
+
+## P0-03 — PhoneNormalizer، JalaliDate، Money (TEST FIRST)
+
+- `App\Support\PhoneNormalizer::normalize()` طبق بخش ۰۸ PRD: علامت‌های RTL/LTR (U+200E/U+200F) حذف، ارقام فارسی و عربی-هندی به ASCII، سپس تشخیص فرمت (`0912...`، `912...`، `+98912...`، `0098912...`، با فاصله/خط‌تیره) و تبدیل به خروجی قطعی `989XXXXXXXXX`. برای خالی/کوتاه/غیرموبایل (شهری مثل `021`/`031`)/غیرایرانی، `InvalidPhoneException` می‌اندازد — هرگز مقدار نامعتبر برنمی‌گرداند.
+- `App\Support\JalaliDate` تبدیل شمسی↔میلادی با الگوریتم استاندارد چرخه ۳۳ ساله (همان الگوریتمی که در P0-04 معادل PL/pgSQL آن ساخته می‌شود تا دو طرف Stack هم‌رأی باشند). ورودی همیشه ابتدا به `Asia/Tehran` تبدیل می‌شود، طبق قانون «ذخیره UTC، نمایش Asia/Tehran + شمسی».
+- `App\Support\Money` فرمت‌کننده/Parser مبلغ `int` تومان: نمایش با جداکننده هزارگان فارسی و پسوند «تومان»، و `parseToman()` که هر ورودی غیر عدد صحیح خالص (مثلاً با اعشار) را رد می‌کند تا «هرگز float برای پول» در همان مرز ورودی اعمال شود.
+- **تست قبل از کد:** هر سه فایل تست (`tests/Unit/Support/{PhoneNormalizerTest,JalaliDateTest,MoneyTest}.php`) قبل از پیاده‌سازی نوشته و اجرا شدند (قرمز با خطای «Class not found»)، سپس پیاده‌سازی تا سبز شدن ادامه یافت.
+- تست‌های JalaliDate شامل تاریخ‌های Nowruz شناخته‌شده (۱۳۹۹ تا ۱۴۰۳)، روز کبیسه ۳۰ اسفند ۱۳۹۹، و Round-trip روی بازه وسیع تاریخ میلادی — همگی سبز، که هم الگوریتم و هم لنگرهای تاریخی حافظه‌محور را تأیید متقابل می‌کنند.

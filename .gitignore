@@ -12,9 +12,11 @@
 /resources/js/wayfinder
 /vendor
 .DS_Store
+*.rdb
 .env
 .env.backup
 .env.production
+.env.testing
 .phpactor.json
 .phpunit.result.cache
 Homestead.json
