@@ -226,3 +226,44 @@ CHECK Constraintها (چون Laravel فعلاً متد Fluent برای CHECK ن�
 ### تأیید
 
 Full test suite: ۱۰۹ سبز. `npm run build` سبز. `tsc --noEmit` سبز. Pint/PHPStan سبز (تنها هشدار باقیمانده `npm run check` مربوط به فرمت جدول‌های Markdown در خود `PRD.md` است — فایل منبع حقیقت پروژه، از قبل همینطور بوده و در این گام دست‌نخورده ماند، چون تغییر آن خارج از اختیار این گام است).
+
+## P0-07 — Permissions (CRITICAL)
+
+پیاده‌سازی اختصاصی طبق تصمیم C8/بخش ۲۰ PRD؛ Spatie اضافه نشد.
+
+### محل کد
+
+کد جدید زیر `app/Modules/Core/{Enums,Models,Services}` قرار گرفت — اولین کد واقعی داخل ساختار Module بخش ۰۱ CLAUDE.md. دو تصمیم مرزی آگاهانه:
+- **`App\Models\User` جابه‌جا نشد.** طبق قانون مرز ماژول فقط `Customers\Models\Customer` استثنا دارد، ولی `User` اصلاً داخل هیچ Moduleای نیست — یک Entity سطح Framework است که هر جدول Core (role_user، permission_overrides.user_id، audit_logs.user_id، settings.updated_by) به آن ارجاع می‌دهد. جابه‌جایی آن به `app/Modules/Core/Models` یعنی بازنویسی Fortify Config، UserFactory، و ده‌ها فایل موجود و تست‌شده — تغییر معماری بزرگ و خارج از Scope «Permissions». `Role`/`Permission`/`PermissionOverride` به `App\Models\User` ارجاع می‌دهند؛ این مشابه استثنای `Customer` در نظر گرفته شد، نه نقض قانون مرز.
+- **PermissionService به‌جای Policy واقعی:** لایه Model Policy در PRD ذکر شده، ولی چون هنوز هیچ Model محافظت‌شدنی (Customer/Order/...) وجود ندارد، Policy واقعی در این گام ساخته نشد. `PermissionService::allows()` طوری نوشته شده که از داخل هر Policy آینده (Sprint 1+) هم قابل فراخوانی است.
+
+### منطق (TEST FIRST)
+
+`PermissionService::allows(User, module, action)`:
+1. اگر Permission در Catalog نباشد → `false` (بسته پیش‌فرض).
+2. اگر `permission_overrides` رکورد دارد (تضمین‌شده حداکثر یکی به‌خاطر `UNIQUE(user_id,permission_id)`) → دقیقاً همان اثر (allow/deny) برمی‌گردد و **کار تمام می‌شود** — یعنی گام‌های ۱ و ۲ ترتیب PRD («deny > allow») به‌صورت طبیعی از همین قید یکتایی نتیجه می‌شوند: یک کاربر هرگز هم‌زمان Override allow و deny روی یک Permission ندارد.
+3. وگرنه، اگر نقشی که Grant می‌دهد دارد → `true`.
+4. وگرنه → `false`.
+
+`tests/Feature/Modules/Core/PermissionServiceTest.php` (۱۳ تست، TEST FIRST — قبل از نوشتن Service اجرا و قرمز شدن‌شان تأیید شد) دقیقاً سناریوی بحرانی خود CLAUDE.md را پوشش می‌دهد: کاربری با نقش Manager که `segments.delete` می‌گیرد ولی Override او `deny` است → **DENY**. به‌علاوه: Override مستقل از نقش، Scope دقیق per-user/per-permission، و `allowedKeys()` (برای لایه UI).
+
+### لایه‌های اعمال
+
+- **Route Middleware:** `App\Http\Middleware\EnsurePermission` (alias نام `permission`، در `bootstrap/app.php`) — `abort(403)` واقعی. تست در `EnsurePermissionMiddlewareTest.php` روی یک Route موقتِ داخل تست (چون هنوز Route محافظت‌شدنی واقعی وجود ندارد).
+- **Inertia Shared `auth.permissions`:** در `HandleInertiaRequests::share()`، آرایه‌ای از کلیدهای `"module.action"` که کاربر لاگین‌کرده مجاز است (از `PermissionService::allowedKeys()`) به هر صفحه فرستاده می‌شود.
+- **React `can()`:** هوک `resources/js/hooks/use-can.ts`، فقط از همین Prop می‌خواند — طبق تصریح PRD فقط UX است، مرز امنیتی واقعی نیست.
+- **ماسک موبایل:** مجوز `customers.view_full_phone` در Catalog Seed شد؛ مکانیزم واقعی Mask کردن به Sprint 3 (وقتی UI مشتری ساخته می‌شود) موکول است — چیزی برای Mask کردن هنوز وجود ندارد.
+
+### یافته فنی حین نوشتن تست Middleware
+
+ثبت پویای یک Route داخل تست با الگوی معمول `Route::get(...)->name(...)` باعث شد `route('...')` خطای «Route not defined» بدهد با اینکه `Route::getRoutes()->count()` مسیر را نشان می‌داد. علت: `RouteCollection::add()` نام مسیر را در لحظه‌ی افزودن ایندکس می‌کند، نه بعد از `->name()`؛ `refreshNameLookups()` فقط یک‌بار در بوت اپلیکیشن (بعد از بارگذاری `routes/web.php`) صدا زده می‌شود، نه بعد از ثبت پویا در میانه تست. راه‌حل: در `EnsurePermissionMiddlewareTest.php` از URL خام به‌جای `route()` استفاده شد — این یک محدودیت شناخته‌شده تست‌نویسی روی این نسخه Laravel است، نه باگ کد پروژه.
+
+### Catalog و ماتریس نقش (Seeders)
+
+چون بخش ۲۰ PRD ماتریس را به‌صورت کیفی («همه»، «view + …») توصیف کرده نه به‌صورت لیست دقیق `module.action`، یک Catalog صریح از روی متن PRD استخراج شد (`database/seeders/PermissionSeeder::catalog()`) — شامل هر مورد Named شده (`customers.view_full_phone`, `customers.export`, `customers.anonymize`, `identity.review`, `ai.request`, `segments.{view,create,edit,delete}`) به‌علاوه یک `view` برای هر Module ذکرشده در ماتریس (`audit`, `settings→manage`, `users→manage`, `customers`, `orders`, `metrics`, `dashboard`, `analytics`, `ai`) و `customers.note` برای Support. این یک **پیش‌فرض صریح مستندشده** است، نه استنباط بی‌رویه: هر Module واقعی (Customers در P1-01، Sync در P2، …) وقتی ساخته شود Permissionهای دقیق‌تر خودش را به همین Catalog اضافه می‌کند.
+
+`RoleSeeder` این ماتریس را دقیقاً پیاده می‌کند (Owner=همه، Manager=همه به‌جز `audit`/`settings`/`users`، Analyst=هر `*.view` + سه مورد اضافه بدون هیچ `*.delete`، Support=سه Permission ثابت، Viewer=چهار Permission ثابت) و Idempotent است (`firstOrCreate` + `sync`). `tests/Feature/Modules/Core/RoleSeederTest.php` (۷ تست) هر ردیف ماتریس + Idempotency را تأیید می‌کند. `DatabaseSeeder` این دو Seeder را قبل از کاربر تستی صدا می‌زند.
+
+### تأیید
+
+`migrate:fresh --seed` سبز (۵ نقش، Catalog کامل). Full Suite: ۱۳۵ سبز (۳۶۰ Assertion). Pint/PHPStan/`tsc --noEmit`/`npm run build` سبز.

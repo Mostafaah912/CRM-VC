@@ -12,6 +12,8 @@ export type User = {
 
 export type Auth = {
     user: User;
+    /** "module.action" keys the current user is allowed. UX only — see useCan(). */
+    permissions: string[];
 };
 
 export type Passkey = {
