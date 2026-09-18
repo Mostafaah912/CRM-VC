@@ -92,3 +92,26 @@
 - **عودت: دارای line_items.** عودت سطح قلم پیاده می‌شود. (نمونه: عودت ۱٬۱۳۴٬۰۰۰ تومان)
 - **ایمیل: تقریباً وجود ندارد (۰٫۳٪).** حتی به‌عنوان شناسه ثانویه هم استفاده نمی‌شود.
 - **کل سفارش‌ها: ~۲۴٬۴۲۱.** Full Sync کامل بدون محدودیت زمانی.
+
+## P0-01 — Scaffold RTL + shadcn/ui (نسخه‌های واقعی نصب‌شده)
+
+اسکلت Laravel با `laravel new` از قبل با استارتر React + Inertia + Fortify (2FA و Passkeys) و shadcn/ui (استایل `new-york`، Tailwind v4 CSS-first) ساخته شده بود. در این گام دوباره Scaffold نشد؛ فقط RTL اضافه و نسخه‌های واقعی ثبت شد.
+
+- Laravel Framework: **13.32.0**
+- PHP: **8.4.15** (از طریق Herd)
+- Inertia (inertiajs/inertia-laravel): **3.3.4**
+- Laravel Fortify: **1.39.0**
+- Pest: **5.2.1**
+- React / React DOM: **19.3.0**
+- @inertiajs/react: **3.7.1**
+- TypeScript: **5.9.3**
+- Tailwind CSS: **4.3.3** (بدون `tailwind.config.js` — پیکربندی CSS-first در `resources/css/app.css`)
+- Vite: **8.3.0**
+- Node.js: **22.17.0** / npm: **10.9.2**
+- shadcn/ui: از قبل نصب‌شده (`components.json`، استایل `new-york`، `baseColor: neutral`، آیکون‌ها از `lucide-react`) — تأیید شد که `npm run build` سبز است.
+
+### تغییرات RTL
+- طبق تصمیم D10 (فقط فارسی، بدون i18n)، `resources/views/app.blade.php` اکنون همیشه `lang="fa" dir="rtl"` دارد — دیگر وابسته به `app()->getLocale()` نیست، چون این اپ زبان دوم ندارد.
+- Tailwind v4 از `rtl:`/`ltr:` بر پایه ویژگی `dir` به‌صورت داخلی پشتیبانی می‌کند؛ نیازی به پلاگین یا `tailwind.config.js` جداگانه نبود.
+- `APP_LOCALE` در `.env` عمداً روی `en` باقی ماند — طبق D10 متن رابط کاربری در خود کامپوننت React فارسی نوشته می‌شود، نه از طریق فایل‌های ترجمه Laravel؛ تغییر `APP_LOCALE` بدون فایل‌های `resources/lang/fa` پیام‌های اعتبارسنجی Fortify را می‌شکند و در Scope این گام نیست.
+- ⚠ **ریسک ثبت‌شده برای Sprint 3:** کامپوننت‌های shadcn/ui استارتر (sidebar، dropdown، breadcrumb و…) از `ml-`/`mr-`/`left-`/`right-` فیزیکی استفاده می‌کنند که با `dir="rtl"` خودکار flip نمی‌شوند. اصلاح آن‌ها به کلاس‌های منطقی (`ms-`/`me-`/`start-`/`end-`) هنگام ساخت UI واقعی در Sprint 3 انجام می‌شود، نه اینجا.
