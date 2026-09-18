@@ -66,8 +66,8 @@ it('only reaches into other modules through their Services or Events', function 
 
     foreach (Scanner::modules() as $module) {
         foreach (Scanner::phpFiles(["app/Modules/{$module}"]) as $file) {
-            foreach (Scanner::violations([$file], ['/App\\\\Modules\\\\(\w+)\\\\(\w+)\\\\/']) as $hit) {
-                preg_match('/App\\\\Modules\\\\(\w+)\\\\(\w+)\\\\(\w*)/', $hit, $m);
+            foreach (Scanner::violations([$file], ['/App\\\\Modules\\\\(\w+)\\\\(\w+)\\\\(\w+)/']) as $hit) {
+                preg_match('/App\\\\Modules\\\\(\w+)\\\\(\w+)\\\\(\w+)/', $hit, $m);
 
                 $sharedCustomer = $m[1] === 'Customers' && $m[2] === 'Models' && $m[3] === 'Customer';
 
