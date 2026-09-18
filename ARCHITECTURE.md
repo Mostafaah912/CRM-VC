@@ -115,3 +115,14 @@
 - Tailwind v4 از `rtl:`/`ltr:` بر پایه ویژگی `dir` به‌صورت داخلی پشتیبانی می‌کند؛ نیازی به پلاگین یا `tailwind.config.js` جداگانه نبود.
 - `APP_LOCALE` در `.env` عمداً روی `en` باقی ماند — طبق D10 متن رابط کاربری در خود کامپوننت React فارسی نوشته می‌شود، نه از طریق فایل‌های ترجمه Laravel؛ تغییر `APP_LOCALE` بدون فایل‌های `resources/lang/fa` پیام‌های اعتبارسنجی Fortify را می‌شکند و در Scope این گام نیست.
 - ⚠ **ریسک ثبت‌شده برای Sprint 3:** کامپوننت‌های shadcn/ui استارتر (sidebar، dropdown، breadcrumb و…) از `ml-`/`mr-`/`left-`/`right-` فیزیکی استفاده می‌کنند که با `dir="rtl"` خودکار flip نمی‌شوند. اصلاح آن‌ها به کلاس‌های منطقی (`ms-`/`me-`/`start-`/`end-`) هنگام ساخت UI واقعی در Sprint 3 انجام می‌شود، نه اینجا.
+
+## P0-02 — Horizon + تأیید Queue روی Redis
+
+- `laravel/horizon` نصب شد (نسخه منتشرشده با `composer.lock`: **^5.49**، از طریق `composer require laravel/horizon` + `php artisan horizon:install`).
+- `app/Providers/HorizonServiceProvider.php` ثبت شد در `bootstrap/providers.php`. Gate پیش‌فرض `viewHorizon` دست‌نخورده ماند (فقط env محلی مجاز است)؛ محدودسازی واقعی به نقش Owner زمانی انجام می‌شود که ماژول Core/Permissions (P0-07) و کاربران واقعی (Sprint 8) وجود داشته باشند — طبق چک‌لیست سخت‌سازی بخش ۲۱، نه اینجا.
+- `config/horizon.php`: صف `supervisor-1` روی ترتیب اولویت بخش ۲۲ تنظیم شد: `['critical','sync','metrics','ai','default']`. تعریف Job واقعی برای هرکدام در Sprintهای بعدی (Sync/Metrics/AI) اضافه می‌شود.
+- **اصلاح باگ در `.env`:** `DB_CONNECTION` دو بار تعریف شده بود (`sqlite` سپس `pgsql`) — خط تکراری حذف شد (مقدار مؤثر همیشه `pgsql` بود، چون phpdotenv خط دوم را می‌گیرد، ولی تکرار گمراه‌کننده بود).
+- **`QUEUE_CONNECTION` و `CACHE_STORE` از `database` به `redis` تغییر کردند** — طبق معماری بخش ۰۶ («Redis: queue + cache + lock»). `.env.example` هم با همین مقادیر و با `DB_CONNECTION=pgsql` به‌روز شد تا نمونه واقعی پروژه را نشان دهد، نه پیش‌فرض SQLite اسکلت Laravel.
+- **یافته محیطی مهم:** روی این مک، Redis 7.4.6 نصب است (`/usr/local/bin/redis-server`) ولی به‌صورت سرویس خودکار (launchd/brew services) اجرا نمی‌شود — باید دستی با `redis-server --daemonize yes` بالا بیاید. این باید در مستندات Setup پروژه (بعداً) یا اسکریپت dev ثبت شود؛ فعلاً فقط اینجا یادداشت شد.
+- **تأیید سرتاسری صف:** یک Job موقت (`HorizonProbeJob`, بعد از تست حذف شد) روی صف پیش‌فرض dispatch شد، `php artisan horizon` آن را از Redis برداشت، اجرا کرد و نتیجه در Cache (که آن هم الان روی Redis است) قابل مشاهده بود. `horizon:status` → `running`، `horizon:terminate` تمیز خاتمه داد.
+- PostgreSQL 15.19 هم تأیید شد در دسترس است (`php artisan db:show`).
