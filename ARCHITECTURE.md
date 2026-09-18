@@ -286,3 +286,29 @@ Full test suite: ۱۰۹ سبز. `npm run build` سبز. `tsc --noEmit` سبز. P
 - **`AlertService::critical(AlertKind, message, context)`**: شش نوع طبق PRD (`sync_failure`، `metric_run_failure`، `reconciliation_variance`، `failed_jobs_threshold`، `ai_budget_threshold`، `nightly_chain_timeout`). چون Phase 1 هیچ کانال اعلان (SMS/Telegram/Email) ندارد، هشدار = `Log::critical` + رکورد Audit با `alert.critical` (در صفحه Audit دیده می‌شود). Dedupe با `Cache::add` به‌ازای هر نوع در پنجره `alerts.dedupe_minutes`؛ با `alerts.enabled=false` خاموش است؛ خروجی `bool` (اعلام‌شد/نه). Schedulerهایی که این را صدا می‌زنند (Sprint 6) هنوز ساخته نشده‌اند.
 - **اصلاح جانبی:** Redaction در `AuditService` بازگشتی شد (Context تودرتوی هشدار، مثل `consumer_secret` داخل `context`، قبلاً Redact نمی‌شد).
 - تست: `SettingServiceTest` (۱۱)، `AlertServiceTest` (۶). Suite: ۱۶۹ سبز، Pint/PHPStan سبز.
+
+## P0-10 — تست‌های معماری
+
+`tests/Arch` (سوئیت `Arch` در `phpunit.xml`؛ بدون DB). به‌جای `arch()` خود Pest از یک اسکنر مبتنی بر Token (`tests/Arch/Scanner.php`) استفاده شد که کامنت/DocBlock را حذف می‌کند تا متن مستندات (مثل «ممنوع: DB::raw») هشدار الکی ندهد؛ `ScannerTest` خودِ اسکنر را اثبات می‌کند. قوانین (`ArchitectureTest.php`):
+
+1. Controller بدون DB/Query (`DB::`، `::where/query/find/create…`، `->where/save/update/delete/select…`).
+2. Controller هرگز Model ماژول را مستقیم `use` نمی‌کند (Controller→Service→Model).
+3. Job بدون منطق کسب‌وکار (همان الگوها + Model ماژول).
+4. ماژول‌ها Model یکدیگر را نمی‌بینند؛ تنها `Customers\Models\Customer` مجاز است.
+5. ارجاع بین‌ماژولی فقط به `Services` یا `Events` (سخت‌گیرانه طبق CLAUDE.md؛ اگر Enum مشترک لازم شد باید صریحاً بحث و اضافه شود).
+6. جدول وابستگی ماژول‌ها دقیقاً طبق بخش ۰۷ PRD.
+7. `Segments`: هیچ `whereRaw/selectRaw/…/DB::raw/Expression`.
+8. Raw SQL فقط در Migration و `Metrics`/`Analytics` (کل `app/`، `routes`, `config`).
+9. بدون `dd/dump/ray/var_dump/print_r`، و در فرانت بدون `console.log/debugger/dangerouslySetInnerHTML`.
+10. تست‌ها روی SQLite/`:memory:` نیستند (phpunit.xml، `.env.testing`، `.env.example`، فایل‌های تست).
+11. `.env*` در Git نیست و هیچ کلید Woo (`ck_/cs_`)، کلید AI، یا Private Key در فایل‌های ردیابی‌شده نیست.
+12. `declare(strict_types=1)` در `app/Modules` و `app/Support`؛ رشته وضعیت سفارش Hardcode نشده.
+
+**Mutation check:** نقض عمدی (Job با DB، `whereRaw` در Segments، `use` مدل ماژول دیگر، `dd()`) موقتاً کاشته شد؛ ۷ تست شکست خوردند و پس از حذف همه سبز شدند.
+
+### تخلف‌های واقعی که تست‌ها در کد استارتر پیدا کردند و رفع شدند
+- `ProfileController` (`save`, `delete`) و `SecurityController` (`update` رمز، Query لیست Passkey) مستقیم در Controller به DB می‌نوشتند/می‌خواندند → به `Modules/Core/Services/UserAccountService` منتقل شد (رفتار و تست‌های موجود بدون تغییر).
+- `two-factor-setup-modal.tsx` کد QR را با `dangerouslySetInnerHTML` رندر می‌کرد → با `<img src="data:image/svg+xml…">` جایگزین شد (SVG داخل `img` اسکریپت اجرا نمی‌کند).
+- کامنت `phpunit.xml` که خودش کلمه SQLite داشت بازنویسی شد.
+
+Suite: ۱۸۶ سبز؛ Pint/PHPStan/tsc/build سبز.

@@ -14,6 +14,9 @@
         <testsuite name="Integration">
             <directory>tests/Integration</directory>
         </testsuite>
+        <testsuite name="Arch">
+            <directory>tests/Arch</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>
@@ -26,7 +29,7 @@
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
-        <!-- Real PostgreSQL only — see CLAUDE.md §3/§8. Connection/credentials come from .env.testing (gitignored), never SQLite. -->
+        <!-- Real PostgreSQL only — see CLAUDE.md §3/§8. Connection/credentials come from .env.testing (gitignored), never an in-memory engine. -->
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
