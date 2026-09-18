@@ -141,3 +141,17 @@
 - `App\Support\Money` فرمت‌کننده/Parser مبلغ `int` تومان: نمایش با جداکننده هزارگان فارسی و پسوند «تومان»، و `parseToman()` که هر ورودی غیر عدد صحیح خالص (مثلاً با اعشار) را رد می‌کند تا «هرگز float برای پول» در همان مرز ورودی اعمال شود.
 - **تست قبل از کد:** هر سه فایل تست (`tests/Unit/Support/{PhoneNormalizerTest,JalaliDateTest,MoneyTest}.php`) قبل از پیاده‌سازی نوشته و اجرا شدند (قرمز با خطای «Class not found»)، سپس پیاده‌سازی تا سبز شدن ادامه یافت.
 - تست‌های JalaliDate شامل تاریخ‌های Nowruz شناخته‌شده (۱۳۹۹ تا ۱۴۰۳)، روز کبیسه ۳۰ اسفند ۱۳۹۹، و Round-trip روی بازه وسیع تاریخ میلادی — همگی سبز، که هم الگوریتم و هم لنگرهای تاریخی حافظه‌محور را تأیید متقابل می‌کنند.
+
+## P0-04 — توابع PL/pgSQL جلالی
+
+Migration جدید: `database/migrations/2026_09_18_103627_create_extensions_and_jalali_functions.php` (معادل «001 extensions + jalali functions» بخش ۰۹ PRD؛ اسم فایل از قرارداد Timestamp خود Laravel پیروی می‌کند، نه شماره‌گذاری متنی PRD).
+
+- `CREATE EXTENSION IF NOT EXISTS pg_trgm` — برای GIN Index نام مشتری/محصول در Sprint 1.
+- `to_jalali(timestamptz) RETURNS text` — همان الگوریتم چرخه ۳۳ ساله `App\Support\JalaliDate` (P0-03) ولی در PL/pgSQL، تا SQL طرف Metrics/Cohort (Sprint 4-6) با PHP هم‌رأی باشد. ورودی ابتدا به `Asia/Tehran` تبدیل می‌شود (طبق قانون ذخیره UTC/نمایش Tehran). `STABLE` علامت‌گذاری شد نه `IMMUTABLE`، چون تبدیل با نام Zone به‌صورت رسمی در PostgreSQL «Immutable» تضمین‌شده نیست.
+- `to_jalali_month(timestamptz) RETURNS text` — همان مقدار را به ۷ کاراکتر `YYYY-MM` کوتاه می‌کند؛ دقیقاً فرمت ستون `cohort_month varchar(7)`.
+- `jalali_month_diff(text, text) RETURNS int` — اختلاف ماه بین دو رشته `YYYY-MM` (`IMMUTABLE`، چون فقط محاسبه رشته‌ای است، وابسته به Timezone نیست).
+- **تست اول:** `tests/Integration/JalaliFunctionsTest.php` (۱۷ تست) قبل از اجرای Migration نوشته شد و روی PostgreSQL واقعی (`heymode_testing`، از طریق `RefreshDatabase`) اجرا می‌شود؛ به همین دلیل به `tests/Integration` نیاز بود که به `phpunit.xml` و `tests/Pest.php` (خط `->in('Feature', 'Integration')`) اضافه شد.
+- **یافته حین تست:** یک فرض غلط در تست اولیه («۳۰ اسفند ۱۴۰۲ وجود دارد») رد شد — با شمارش مستقیم روز بین دو لنگر Nowruz تأییدشده (۱۴۰۲-۰۱-۰۱ = ۲۰۲۳-۰۳-۲۱ و ۱۴۰۳-۰۱-۰۱ = ۲۰۲۴-۰۳-۲۰، دقیقاً ۳۶۵ روز فاصله) ثابت شد سال ۱۴۰۲ عادی (۳۶۵ روزه) است و اسفندش ۲۹ روز دارد؛ تست اصلاح شد، نه تابع.
+- یک تست دیگر مقادیر تولیدشده توسط SQL را مستقیماً با خروجی زمان‌اجرای `App\Support\JalaliDate::format()` روی چند Timestamp نمونه مقایسه می‌کند تا توافق دو طرف Stack تضمین شود.
+- **Idempotent/Rollback:** `up()` از `CREATE EXTENSION IF NOT EXISTS` و `CREATE OR REPLACE FUNCTION` استفاده می‌کند (اجرای دوباره خطا نمی‌دهد). `down()` هر سه تابع و پسوند را با `IF EXISTS` حذف می‌کند. رفتار با `migrate` → `migrate:rollback --step=1` → `migrate` دوباره روی دیتابیس توسعه دستی تأیید شد.
+- **اصلاح جانبی:** یک خطای از پیش موجود PHPStan در `config/horizon.php` (از P0-02، `Str::slug()` با نوع `bool|string` از `env()`) هنگام اجرای Larastan روی کل پروژه کشف و با `(string)` Cast درست‌شده — چون Larastan اکنون برای اولین‌بار روی کل مسیر `app/` اجرا شد.
