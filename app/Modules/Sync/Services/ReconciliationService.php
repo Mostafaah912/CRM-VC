@@ -16,10 +16,12 @@ use App\Modules\Sync\Models\ReconciliationReportModel;
 use App\Modules\Sync\Support\GateOneMonth;
 use App\Modules\Sync\Support\GateOneReport;
 use App\Modules\Sync\Support\ReconciliationMonths;
+use App\Modules\Sync\Support\ReconciliationMonthSummary;
 use App\Modules\Sync\Support\ReconciliationReport;
 use App\Modules\Sync\Support\RevenueVariance;
 use App\Modules\Sync\Support\SafeErrorText;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Container\Container;
 use Throwable;
 
 /**
@@ -36,6 +38,9 @@ use Throwable;
  *  - GREEN = count_diff 0 AND variance strictly under 1% (RevenueVariance); otherwise RED. A month that cannot be read is
  *    FAILED — never green, never red.
  *
+ * The Woo client is resolved when a month is actually read, not when the service is built: the health page and GATE 1
+ * check read stored reports only, and must work on a store whose Woo credentials are not configured (that is when they are needed).
+ *
  * compare() is pure. reconcile() compares and stores one row per month (replaced on every run); a failure leaves a failed row
  * with the scrubbed reason and rethrows. Only complete months from the first (Mehr 1403) can be reconciled; a refused month
  * writes nothing.
@@ -45,7 +50,7 @@ final class ReconciliationService
     private const FIELDS = 'id,status,total,currency';
 
     public function __construct(
-        private readonly WooClient $woo,
+        private readonly Container $container,
         private readonly OrderService $orders,
         private readonly OrderStatusMapper $statuses,
         private readonly ReconciliationMonths $months,
@@ -54,6 +59,23 @@ final class ReconciliationService
     public function lastCompleteMonth(): string
     {
         return $this->months->lastComplete();
+    }
+
+    /**
+     * The most recently stored months, newest first, for the health page. Read-only; the measurements' `details` are not selected.
+     *
+     * @return list<ReconciliationMonthSummary>
+     */
+    public function latest(int $limit): array
+    {
+        $rows = ReconciliationReportModel::query()
+            ->orderByDesc('jalali_month')
+            ->limit($limit)
+            ->get(['jalali_month', 'status', 'orders_diff', 'diff_percent', 'error_message']);
+
+        return array_values($rows->map(fn (ReconciliationReportModel $row): ReconciliationMonthSummary => new ReconciliationMonthSummary(
+            $row->jalali_month, $row->status, $row->orders_diff, $row->diff_percent, $row->error_message,
+        ))->all());
     }
 
     /**
@@ -188,7 +210,7 @@ final class ReconciliationService
         $read = 0;
         $revenue = 0;
 
-        foreach ($this->woo->pages('orders', query: $query) as $page) {
+        foreach ($this->container->make(WooClient::class)->pages('orders', query: $query) as $page) {
             $reported ??= $page->total ?? throw new ReconciliationException('Woo did not report X-WP-Total for the first page of the month.');
 
             foreach ($page->items as $raw) {

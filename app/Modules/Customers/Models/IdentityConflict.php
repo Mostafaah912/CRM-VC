@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Modules\Customers\Enums\IdentityConflictStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -18,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property string $reason
  * @property IdentityConflictStatus $status
  * @property int|null $resolved_by
+ * @property Carbon $created_at
  */
 class IdentityConflict extends Model
 {

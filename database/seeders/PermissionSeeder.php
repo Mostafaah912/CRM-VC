@@ -24,6 +24,7 @@ class PermissionSeeder extends Seeder
             ['module' => 'audit', 'action' => 'view', 'label' => 'مشاهده گزارش رخدادها'],
             ['module' => 'settings', 'action' => 'manage', 'label' => 'مدیریت تنظیمات'],
             ['module' => 'users', 'action' => 'manage', 'label' => 'مدیریت کاربران و نقش‌ها'],
+            ['module' => 'system', 'action' => 'view', 'label' => 'مشاهده سلامت سیستم و گزارش همگام‌سازی'],
 
             ['module' => 'customers', 'action' => 'view', 'label' => 'مشاهده مشتریان'],
             ['module' => 'customers', 'action' => 'view_full_phone', 'label' => 'مشاهده شماره موبایل کامل'],

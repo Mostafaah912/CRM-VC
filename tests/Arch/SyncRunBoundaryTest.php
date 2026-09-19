@@ -80,12 +80,19 @@ it('never increments or decrements a stored counter in the sync run code — eve
 });
 
 it('lets only SyncService write the run tables', function () {
+    // P2-12: three READ-ONLY classes may name the run models to list them. That they never write is enforced by
+    // SystemPagesBoundaryTest (no create/update/delete/save/insert/upsert/dispatch in any of them).
+    $readers = [
+        'app/Modules/Sync/Services/SyncHealthService.php',
+        'app/Modules/Sync/Services/SyncRunLogService.php',
+        'app/Modules/Sync/Support/SyncRunRow.php',
+    ];
     $violations = [];
 
     foreach (Scanner::phpFiles(['app']) as $file) {
         $relative = Scanner::relative($file);
 
-        if (str_starts_with($relative, 'app/Modules/Sync/Models/') || $relative === 'app/Modules/Sync/Services/SyncService.php') {
+        if (str_starts_with($relative, 'app/Modules/Sync/Models/') || $relative === 'app/Modules/Sync/Services/SyncService.php' || in_array($relative, $readers, true)) {
             continue;
         }
 

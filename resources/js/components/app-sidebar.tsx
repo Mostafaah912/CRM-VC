@@ -1,5 +1,13 @@
 import { Link } from '@inertiajs/react';
-import { BookOpen, FolderGit2, LayoutGrid, ScrollText } from 'lucide-react';
+import {
+    Activity,
+    BookOpen,
+    FolderGit2,
+    GitMerge,
+    History,
+    LayoutGrid,
+    ScrollText,
+} from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavFooter } from '@/components/nav-footer';
 import { NavMain } from '@/components/nav-main';
@@ -16,6 +24,7 @@ import {
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
 import audit from '@/routes/audit';
+import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
 
 const footerNavItems: NavItem[] = [
@@ -46,6 +55,29 @@ export function AppSidebar() {
                       title: 'گزارش رخدادها',
                       href: audit.index(),
                       icon: ScrollText,
+                  },
+              ]
+            : []),
+        ...(can('system', 'view')
+            ? [
+                  {
+                      title: 'سلامت سیستم',
+                      href: health(),
+                      icon: Activity,
+                  },
+                  {
+                      title: 'گزارش همگام‌سازی',
+                      href: syncLogs(),
+                      icon: History,
+                  },
+              ]
+            : []),
+        ...(can('identity', 'review')
+            ? [
+                  {
+                      title: 'تعارض‌های هویت',
+                      href: identityConflicts(),
+                      icon: GitMerge,
                   },
               ]
             : []),
