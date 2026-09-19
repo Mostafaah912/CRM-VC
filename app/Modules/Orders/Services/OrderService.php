@@ -11,6 +11,7 @@ use App\Modules\Orders\Exceptions\OrderCustomerUnresolvedException;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Support\Exceptions\InvalidPhoneException;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -44,6 +45,21 @@ final class OrderService
         private readonly CustomerIdentityService $identities,
         private readonly CatalogService $catalog,
     ) {}
+
+    /**
+     * Read-only totals over orders CREATED in [from, until): the count of every stored order that is not soft-deleted, and
+     * the sum of `total` over the realized ones (is_realized, decided at write time from config('woo.realized_statuses')).
+     * Two aggregate statements, no rows loaded — used to reconcile a month against Woo.
+     */
+    public function totalsInWindow(CarbonImmutable $from, CarbonImmutable $until): OrderWindowTotals
+    {
+        $window = Order::query()->where('ordered_at', '>=', $from->utc())->where('ordered_at', '<', $until->utc());
+
+        return new OrderWindowTotals(
+            (clone $window)->count(),
+            (int) (clone $window)->where('is_realized', true)->sum('total'),
+        );
+    }
 
     /**
      * @return int the local order id

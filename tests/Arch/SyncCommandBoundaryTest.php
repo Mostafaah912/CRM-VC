@@ -15,10 +15,10 @@ function syncCommandFile(): string
     return Scanner::root().'/app/Console/Commands/SyncCommand.php';
 }
 
-it('adds exactly one console command, hm:sync, and nothing else under app/Console', function () {
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
-    expect($names)->toBe(['app/Console/Commands/SyncCommand.php'])
+    expect($names)->toBe(['app/Console/Commands/ReconcileCommand.php', 'app/Console/Commands/SyncCommand.php'])
         ->and(Scanner::phpCode(syncCommandFile()))->toMatch('/hm:sync \{--entity=orders[^}]*\} \{--full[^}]*\}/');
 });
 
@@ -85,18 +85,18 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
         ->and($service)->not->toContain('JalaliDate');
 });
 
-it('registers one schedule entry, in routes/console.php, with no overlap or server flags', function () {
+it('registers the hm:sync poll in routes/console.php, with no overlap or server flags (P2-11 adds one more entry beside it)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
 
-    expect(substr_count($console, 'Schedule::'))->toBe(1)
+    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 
-it('adds no reconciliation, no health check job and no new webhook code in P2-10', function () {
+it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11)', function () {
     $names = array_map(fn (string $f) => basename($f), Scanner::phpFiles(['app']));
 
-    expect(array_filter($names, fn (string $n) => preg_match('/Reconcil|HealthCheck/i', $n) === 1))->toBe([]);
+    expect(array_filter($names, fn (string $n) => preg_match('/HealthCheck/i', $n) === 1))->toBe([]);
 });

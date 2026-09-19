@@ -167,7 +167,7 @@ it('adds no refund webhook, no registration automation and no webhook command', 
     $files = Scanner::phpFiles(['app']);
     $names = array_map(fn (string $f) => basename($f), $files);
 
-    expect(array_filter($names, fn (string $n) => preg_match('/Webhook.*Refund|Refund.*Webhook|Register.*Webhook|Webhook.*Register|Reconcil/i', $n) === 1))->toBe([])
+    expect(array_filter($names, fn (string $n) => preg_match('/Webhook.*Refund|Refund.*Webhook|Register.*Webhook|Webhook.*Register/i', $n) === 1))->toBe([])
         ->and(Scanner::violations(Scanner::phpFiles(['app/Console']), ['/webhook/i']))->toBe([]);
 });
 

@@ -13,6 +13,7 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Queue;
+use Symfony\Component\Console\Input\StringInput;
 
 /*
 | P2-10 — `hm:sync {--entity=orders} {--full}`: dispatches ONE SyncEntityJob (queue `sync`) and exits without waiting;
@@ -114,6 +115,17 @@ it('schedules exactly one hm:sync for orders every 15 minutes in Asia/Tehran', f
         ->and($events[0]->command)->toMatch("/hm:sync --entity='?orders'?(\s|$)/");
 });
 
+it('schedules a command line the command actually accepts', function () {
+    $command = Artisan::all()['hm:sync'];
+    $line = (string) scheduledSyncEvents()[0]->command;
+    $arguments = trim(substr($line, strpos($line, 'hm:sync') + strlen('hm:sync')));
+
+    $input = new StringInput($arguments);
+    $input->bind($command->getDefinition());
+
+    expect($input->getOption('entity'))->toBe('orders')->and($input->getOption('full'))->toBeFalse();
+});
+
 it('schedules the incremental poll, not a full sync', function () {
     expect(scheduledSyncEvents()[0]->command)->not->toContain('--full');
 });
@@ -125,8 +137,4 @@ it('leaves overlap protection to the P2-08 run rule and the job\'s uniqueness: t
         ->and($event->onOneServer)->toBeFalse();
 });
 
-it('adds no other scheduled task in P2-10', function () {
-    Artisan::all();
-
-    expect(app(Schedule::class)->events())->toHaveCount(1);
-});
+// P2-11 adds the nightly reconciliation; the "exactly two tasks" guard lives in ReconcileCommandTest.
