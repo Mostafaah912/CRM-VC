@@ -103,6 +103,32 @@ final class CatalogService
         });
     }
 
+    /** Read-only lookup by Woo variation id. Woo's 0 means "no variation": callers must not ask with it. */
+    public function resolveVariationByWooId(int $wooVariationId): ?ResolvedCatalogItem
+    {
+        return $this->resolved(ProductVariation::query()->where('woo_variation_id', $wooVariationId)->first());
+    }
+
+    /** Read-only lookup: the variation with this SKU that belongs to this Woo product. */
+    public function resolveVariationByProductAndSku(int $wooProductId, string $sku): ?ResolvedCatalogItem
+    {
+        return $this->resolved(ProductVariation::query()
+            ->where('sku', $sku)
+            ->whereHas('product', fn ($product) => $product->where('woo_product_id', $wooProductId))
+            ->first());
+    }
+
+    /** Read-only lookup by SKU alone (PRD §07). Unambiguous: the partial unique index allows one variation per SKU. */
+    public function resolveVariationBySku(string $sku): ?ResolvedCatalogItem
+    {
+        return $this->resolved(ProductVariation::query()->where('sku', $sku)->first());
+    }
+
+    private function resolved(?ProductVariation $variation): ?ResolvedCatalogItem
+    {
+        return $variation === null ? null : new ResolvedCatalogItem($variation->product_id, $variation->id);
+    }
+
     private function syncCategoryLinks(Product $product, ProductInput $input): void
     {
         $wanted = array_values(array_unique($input->wooCategoryIds));

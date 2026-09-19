@@ -33,6 +33,9 @@ return [
     // cursor_from = stored cursor - overlap (PRD §10 frozen cursor).
     'overlap_minutes' => 10,
 
+    // The store's money unit (P0-00: IRT = Toman, no decimals). An order in any other currency is refused, never converted.
+    'currency' => 'IRT',
+
     'realized_statuses' => ['processing', 'completed'],
     'excluded_statuses' => ['pending', 'on-hold', 'cancelled', 'failed', 'trash'],
 ];

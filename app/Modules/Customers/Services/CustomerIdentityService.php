@@ -111,6 +111,24 @@ final class CustomerIdentityService
         });
     }
 
+    /**
+     * resolve() for a Woo order: a registered Woo user is identified by their Woo customer id, a guest by
+     * the order itself (PRD §08 sources). Lets callers stay out of Customers' enums.
+     *
+     * @throws InvalidPhoneException when the phone is not a valid Iranian mobile number
+     */
+    public function resolveForWooOrder(
+        ?string $phoneRaw,
+        ?string $firstName,
+        ?string $lastName,
+        ?int $wooCustomerId,
+        int $wooOrderId,
+    ): Customer {
+        return $wooCustomerId === null
+            ? $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooGuestOrder, (string) $wooOrderId, $wooOrderId)
+            : $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooUser, (string) $wooCustomerId, $wooOrderId);
+    }
+
     /** Soft-deleted customers included: the UNIQUE index covers them too, and a deleted customer's order must still attach. */
     private function lockedByPhone(string $phone): ?Customer
     {
