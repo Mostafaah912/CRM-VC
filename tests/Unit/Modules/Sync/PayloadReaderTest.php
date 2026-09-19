@@ -284,3 +284,28 @@ it('does not mutate the payload it reads', function () {
 
     expect($data)->toBe($copy);
 });
+
+// ------------------------------------------------------------------ nullableObjectCount (P2-08 refund discovery)
+
+it('counts a list of objects, and answers null — unknown, not 0 — when the list is absent', function () {
+    expect(reader(['refunds' => [['id' => 1], ['id' => 2]]])->nullableObjectCount('refunds'))->toBe(2)
+        ->and(reader(['refunds' => []])->nullableObjectCount('refunds'))->toBe(0)
+        ->and(reader(['refunds' => null])->nullableObjectCount('refunds'))->toBeNull()
+        ->and(reader([])->nullableObjectCount('refunds'))->toBeNull();
+});
+
+it('fails on a present value that is not a list of objects', function (mixed $value) {
+    failsAt(fn () => reader(['refunds' => $value])->nullableObjectCount('refunds'), 'refunds');
+})->with([
+    'a string' => ['2'],
+    'a number' => [2],
+    'a boolean' => [true],
+    'an object, not a list' => [['id' => 1]],
+]);
+
+it('fails at the element that is not an object', function (mixed $element, string $field) {
+    failsAt(fn () => reader(['refunds' => [['id' => 1], $element]])->nullableObjectCount('refunds'), $field);
+})->with([
+    'a scalar element' => [5, 'refunds.1'],
+    'a list element' => [[1, 2], 'refunds.1'],
+]);

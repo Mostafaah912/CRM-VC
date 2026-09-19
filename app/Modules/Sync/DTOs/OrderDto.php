@@ -11,7 +11,9 @@ use Carbon\CarbonImmutable;
  * is decided later by Orders\Services\OrderStatusMapper), `billingPhone` is untouched (PhoneNormalizer
  * runs at identity resolution, P2-04), `wooCustomerId` is null for a guest (Woo sends 0), and there is no
  * subtotal — Woo has none on the order; it is the sum of the items' `lineSubtotal`. Amounts are int Toman
- * in `currency` (the caller must check it is the store's unit). Timestamps are UTC.
+ * in `currency` (the caller must check it is the store's unit). Timestamps are UTC. `refundsCount` is the length of the
+ * payload's `refunds` list — null when Woo did not send one (unknown, not zero); it only tells the sync which orders'
+ * refunds are worth re-reading, and no refund figure is ever taken from it.
  */
 final readonly class OrderDto
 {
@@ -39,5 +41,6 @@ final readonly class OrderDto
         public ?CarbonImmutable $completedAt,
         public CarbonImmutable $wooModifiedAt,
         public array $items,
+        public ?int $refundsCount = null,
     ) {}
 }

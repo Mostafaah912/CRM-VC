@@ -187,6 +187,15 @@ final readonly class PayloadReader
     }
 
     /**
+     * The length of a list of objects, or null when the list is absent or null: "unknown" is not "none" (P2-08 refund
+     * discovery must tell a payload that says 0 refunds from one that does not say).
+     */
+    public function nullableObjectCount(string $key): ?int
+    {
+        return ($this->data[$key] ?? null) === null ? null : count($this->objects($key));
+    }
+
+    /**
      * Like objects(), but an absent or null list is empty (Woo omits e.g. coupon_lines when there are none).
      *
      * @return list<self>

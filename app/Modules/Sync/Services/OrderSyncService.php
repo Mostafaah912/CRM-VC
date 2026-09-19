@@ -7,6 +7,7 @@ namespace App\Modules\Sync\Services;
 use App\Modules\Orders\Services\OrderInput;
 use App\Modules\Orders\Services\OrderItemInput;
 use App\Modules\Orders\Services\OrderService;
+use App\Modules\Orders\Services\RefundService;
 use App\Modules\Sync\DTOs\OrderDto;
 use App\Modules\Sync\DTOs\OrderItemDto;
 use App\Modules\Sync\Exceptions\WooCurrencyMismatchException;
@@ -17,8 +18,10 @@ use App\Modules\Sync\Support\SyncWindow;
 /**
  * Woo -> Orders (P2-06): reads ONE page of orders through the WooClient contract, turns each raw payload into a
  * DTO with the P2-03 mapper, checks its currency, and hands a typed input to Orders' public OrderService. No HTTP,
- * no models, no database, no identity or status logic here. Paging, cursors, jobs and refunds are P2-08/P2-07:
- * the caller chooses the page and may pass a frozen window straight through.
+ * no models, no database, no identity or status logic here. Paging, cursors and jobs are SyncService's (P2-08): the
+ * caller chooses the page and may pass a frozen window straight through. Refunds are RefundSyncService's (P2-07); this
+ * only REPORTS which orders of the page need theirs re-read (OrderSyncResult::$refundOrderIds) and never fetches or
+ * writes one.
  *
  * Each order is its own transaction (inside OrderService). A Woo, mapping, currency or customer failure stops the
  * page and propagates; orders already committed stay, and syncing the page again is safe (idempotent).
@@ -28,6 +31,7 @@ final class OrderSyncService
     public function __construct(
         private readonly WooClient $woo,
         private readonly OrderService $orders,
+        private readonly RefundService $refunds,
         private readonly OrderMapper $mapper = new OrderMapper,
     ) {}
 
@@ -36,6 +40,8 @@ final class OrderSyncService
         $wooPage = $this->woo->page('orders', $page, $window);
         $orders = 0;
         $items = 0;
+        $pageOrderIds = [];
+        $listingRefunds = [];
 
         foreach ($wooPage->items as $raw) {
             $dto = $this->mapper->map($raw);
@@ -45,9 +51,32 @@ final class OrderSyncService
 
             $orders++;
             $items += count($dto->items);
+            $pageOrderIds[] = $dto->wooOrderId;
+
+            if (($dto->refundsCount ?? 0) > 0) {
+                $listingRefunds[$dto->wooOrderId] = true;
+            }
         }
 
-        return new OrderSyncResult($orders, $items, $wooPage->hasMore());
+        return new OrderSyncResult($orders, $items, $wooPage->hasMore(), $this->ordersNeedingRefunds($pageOrderIds, $listingRefunds));
+    }
+
+    /**
+     * Payload lists refunds (a) OR refund rows already stored (b), in page order, each once. (b) is asked after the page
+     * is written, and it is what lets a refund Woo deleted be noticed: the payload then lists none.
+     *
+     * @param  list<int>  $pageOrderIds
+     * @param  array<int, true>  $listingRefunds
+     * @return list<int>
+     */
+    private function ordersNeedingRefunds(array $pageOrderIds, array $listingRefunds): array
+    {
+        $holding = array_flip($this->refunds->wooOrderIdsWithRefunds($pageOrderIds));
+
+        return array_values(array_filter(
+            array_unique($pageOrderIds),
+            fn (int $wooOrderId): bool => isset($listingRefunds[$wooOrderId]) || isset($holding[$wooOrderId]),
+        ));
     }
 
     private function assertStoreCurrency(OrderDto $dto): void

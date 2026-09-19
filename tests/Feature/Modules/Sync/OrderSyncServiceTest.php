@@ -11,6 +11,8 @@ use App\Modules\Orders\Exceptions\OrderCustomerUnresolvedException;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Modules\Orders\Models\Refund;
+use App\Modules\Orders\Services\RefundInput;
+use App\Modules\Orders\Services\RefundService;
 use App\Modules\Sync\Exceptions\WooCurrencyMismatchException;
 use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Modules\Sync\Services\FakeWooClient;
@@ -18,6 +20,7 @@ use App\Modules\Sync\Services\OrderSyncService;
 use App\Modules\Sync\Services\WooClient;
 use App\Modules\Sync\Support\SyncWindow;
 use App\Modules\Sync\Support\WooFixture;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\WooFixtures;
 use Tests\Support\WooPayloads;
@@ -184,4 +187,94 @@ it('reads Woo only through the WooClient contract', function () {
     $types = array_map(fn (ReflectionParameter $p) => (string) $p->getType(), (new ReflectionClass(OrderSyncService::class))->getConstructor()?->getParameters() ?? []);
 
     expect($types)->toContain(WooClient::class);
+});
+
+// ================================================================== refund discovery (P2-08, R-b)
+// The page reports which of its orders need their refunds re-read: those whose payload lists refunds
+// (refundsCount > 0) UNION those that already hold refund rows locally (so a refund Woo deleted is
+// mirrored away). It only REPORTS — it never fetches or writes refunds.
+
+/** A recorded order payload that lists $count refund summaries (Woo's shape: id, reason, total). */
+function orderListingRefunds(int $recordedIndex, int $count): array
+{
+    $summaries = $count === 0 ? [] : array_map(
+        fn (int $n): array => ['id' => 7000 + $n, 'reason' => '', 'total' => '-1000'],
+        range(1, $count),
+    );
+
+    return WooPayloads::set(WooPayloads::items('orders')[$recordedIndex], 'refunds', $summaries);
+}
+
+function storeLocalRefund(int $wooOrderId, int $wooRefundId = 8001): void
+{
+    app(RefundService::class)->sync($wooOrderId, [new RefundInput($wooRefundId, 1000, null, CarbonImmutable::parse('2026-05-14 10:00:00', 'UTC'), [])]);
+}
+
+it('reports no order for the recorded pages: none lists refunds and none holds any', function () {
+    expect(orderSync()->syncPage(1)->refundOrderIds)->toBe([])
+        ->and(orderSync()->syncPage(2)->refundOrderIds)->toBe([]);
+});
+
+it('reports the orders whose payload lists refunds, in page order', function () {
+    $result = orderSync(ordersFake([orderListingRefunds(0, 1), orderListingRefunds(1, 2)]))->syncPage(1);
+
+    expect($result->refundOrderIds)->toBe([5001, 5002]);
+});
+
+it('reports only the orders that list refunds, not the others on the page', function () {
+    $result = orderSync(ordersFake([orderListingRefunds(0, 0), orderListingRefunds(1, 3)]))->syncPage(1);
+
+    expect($result->refundOrderIds)->toBe([5002]);
+});
+
+it('reports an order whose payload now lists none but which still holds refunds locally (a Woo deletion to mirror)', function () {
+    orderSync(ordersFake([orderListingRefunds(0, 0), orderListingRefunds(1, 0)]))->syncPage(1);
+    storeLocalRefund(5002);
+
+    $result = orderSync(ordersFake([orderListingRefunds(0, 0), orderListingRefunds(1, 0)]))->syncPage(1);
+
+    expect($result->refundOrderIds)->toBe([5002]);
+});
+
+it('reports an order once when both the payload and the local rows say it has refunds', function () {
+    orderSync(ordersFake([orderListingRefunds(0, 1)]))->syncPage(1);
+    storeLocalRefund(5001);
+
+    $result = orderSync(ordersFake([orderListingRefunds(0, 1)]))->syncPage(1);
+
+    expect($result->refundOrderIds)->toBe([5001]);
+});
+
+it('does not report an order whose payload has no refunds key (unknown) and which holds none', function () {
+    $noKey = WooPayloads::without(WooPayloads::items('orders')[0], 'refunds');
+
+    expect(orderSync(ordersFake([$noKey]))->syncPage(1)->refundOrderIds)->toBe([]);
+});
+
+it('does not report an order with local refunds that is not on this page', function () {
+    orderSync()->syncPage(1);
+    storeLocalRefund(5001);
+
+    $result = orderSync()->syncPage(2);
+
+    expect($result->refundOrderIds)->toBe([]);
+});
+
+it('keeps the union in page order, each order once', function () {
+    orderSync(ordersFake([orderListingRefunds(0, 0), orderListingRefunds(1, 0)]))->syncPage(1);
+    storeLocalRefund(5001);
+    $third = WooPayloads::items('orders', 2)[0];
+
+    $result = orderSync(ordersFake([orderListingRefunds(1, 2), orderListingRefunds(0, 0), WooPayloads::set($third, 'refunds', [['id' => 7100, 'reason' => '', 'total' => '-1']])]))->syncPage(1);
+
+    expect($result->refundOrderIds)->toBe([5002, 5001, 5003]);
+});
+
+it('only reports: it neither fetches refunds nor writes any', function () {
+    $fake = ordersFake([orderListingRefunds(0, 2)]);
+
+    orderSync($fake)->syncPage(1);
+
+    expect(array_column($fake->requests(), 'endpoint'))->toBe(['orders'])
+        ->and(Refund::count())->toBe(0);
 });

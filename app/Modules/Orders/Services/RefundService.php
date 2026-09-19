@@ -62,6 +62,27 @@ final class RefundService
         });
     }
 
+    /**
+     * Which of these Woo orders already hold at least one refund row — in the order asked, each once. Read-only: it is how
+     * the sync notices an order whose refunds Woo may have deleted (the order's own payload then lists none). Soft-deleted
+     * orders count, as in sync().
+     *
+     * @param  list<int>  $wooOrderIds
+     * @return list<int>
+     */
+    public function wooOrderIdsWithRefunds(array $wooOrderIds): array
+    {
+        $asked = array_values(array_unique($wooOrderIds));
+
+        if ($asked === []) {
+            return [];
+        }
+
+        $holding = array_map(intval(...), Order::withTrashed()->whereIn('woo_order_id', $asked)->whereHas('refunds')->pluck('woo_order_id')->all());
+
+        return array_values(array_filter($asked, fn (int $wooOrderId): bool => in_array($wooOrderId, $holding, true)));
+    }
+
     private function upsertRefund(Order $order, RefundInput $input): void
     {
         $refund = Refund::query()->where('woo_refund_id', $input->wooRefundId)->lockForUpdate()->first();

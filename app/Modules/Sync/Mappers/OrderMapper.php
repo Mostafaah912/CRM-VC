@@ -42,6 +42,7 @@ final class OrderMapper
             $r->nullableDate('date_completed_gmt'),
             $r->date('date_modified_gmt'),
             array_map($this->item(...), $r->objects('line_items')),
+            $r->nullableObjectCount('refunds'),
         );
     }
 

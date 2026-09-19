@@ -13,6 +13,7 @@ use App\Modules\Orders\Services\RefundItemInput;
 use App\Modules\Orders\Services\RefundService;
 use Carbon\CarbonImmutable;
 use Illuminate\Log\Events\MessageLogged;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 
 /*
@@ -428,4 +429,60 @@ it('never leaves the deletion audit behind if the deletion itself is rolled back
     expect(fn () => refunds()->sync(5001, []))->toThrow(RuntimeException::class);
 
     expect(Refund::count())->toBe(1)->and(AuditLog::where('action', 'refund.deleted')->count())->toBe(0);
+});
+
+// ================================================================== which orders hold refunds (P2-08 refund discovery)
+
+it('says which of the asked-about Woo orders already hold refunds, in the order asked', function () {
+    refundableOrder(5001);
+    refundableOrder(5002);
+    refundableOrder(5003);
+    refunds()->sync(5001, [refundInput(7001, 100000)]);
+    refunds()->sync(5002, [refundInput(7002, 100000)]);
+
+    expect(refunds()->wooOrderIdsWithRefunds([5003, 5002, 5001, 9999]))->toBe([5002, 5001]);
+});
+
+it('reports only the orders it was asked about', function () {
+    refundableOrder(5001);
+    refundableOrder(5002);
+    refunds()->sync(5001, [refundInput(7001, 100000)]);
+
+    expect(refunds()->wooOrderIdsWithRefunds([5002]))->toBe([])
+        ->and(refunds()->wooOrderIdsWithRefunds([5001, 5001]))->toBe([5001]);
+});
+
+it('asks the database nothing for an empty list', function () {
+    DB::enableQueryLog();
+
+    expect(refunds()->wooOrderIdsWithRefunds([]))->toBe([])
+        ->and(DB::getQueryLog())->toBe([]);
+});
+
+it('stops reporting an order once its last refund was mirrored away', function () {
+    refundableOrder(5001);
+    refunds()->sync(5001, [refundInput(7001, 100000)]);
+    expect(refunds()->wooOrderIdsWithRefunds([5001]))->toBe([5001]);
+
+    refunds()->sync(5001, []);
+
+    expect(refunds()->wooOrderIdsWithRefunds([5001]))->toBe([]);
+});
+
+it('sees the refunds of a soft-deleted order, as sync() does', function () {
+    $order = refundableOrder(5001);
+    refunds()->sync(5001, [refundInput(7001, 100000)]);
+    $order->delete();
+
+    expect(refunds()->wooOrderIdsWithRefunds([5001]))->toBe([5001]);
+});
+
+it('never writes anything', function () {
+    refundableOrder(5001);
+    refunds()->sync(5001, [refundInput(7001, 100000)]);
+    $before = [Refund::count(), Order::sole()->only(['refunded_total', 'is_fully_refunded']), AuditLog::count()];
+
+    refunds()->wooOrderIdsWithRefunds([5001, 5002]);
+
+    expect([Refund::count(), Order::sole()->only(['refunded_total', 'is_fully_refunded']), AuditLog::count()])->toEqual($before);
 });

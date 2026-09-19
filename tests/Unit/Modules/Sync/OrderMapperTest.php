@@ -241,3 +241,43 @@ it('does not swallow a broken second line item behind a good first one', functio
 
     $this->fail('Expected WooMappingException');
 });
+
+// ------------------------------------------------------------------ refundsCount (P2-08 refund discovery)
+
+it('reads how many refunds Woo says the order has: the length of the payload\'s refunds list', function () {
+    $payload = WooPayloads::set(orderFixture(0), 'refunds', [
+        ['id' => 7001, 'reason' => '', 'total' => '-100000'],
+        ['id' => 7002, 'reason' => '', 'total' => '-50000'],
+    ]);
+
+    expect(mapOrder($payload)->refundsCount)->toBe(2);
+});
+
+it('maps the recorded orders, which list no refunds, to 0', function () {
+    expect(mapOrder(orderFixture(0))->refundsCount)->toBe(0)
+        ->and(mapOrder(orderFixture(1))->refundsCount)->toBe(0);
+});
+
+it('keeps refundsCount null — unknown, never 0 — when the payload has no refunds key or a null one', function () {
+    expect(mapOrder(WooPayloads::without(orderFixture(0), 'refunds'))->refundsCount)->toBeNull()
+        ->and(mapOrder(WooPayloads::set(orderFixture(0), 'refunds', null))->refundsCount)->toBeNull();
+});
+
+it('rejects a refunds value that is not a list of objects, naming the field and never the value', function () {
+    try {
+        mapOrder(WooPayloads::set(orderFixture(0), 'refunds', '09121234567'));
+    } catch (WooMappingException $e) {
+        expect($e->field)->toBe('refunds')->and($e->getMessage())->not->toContain('09121234567');
+
+        return;
+    }
+
+    $this->fail('Expected WooMappingException');
+});
+
+it('does not let refunds decide anything else about the order', function () {
+    $with = mapOrder(WooPayloads::set(orderFixture(0), 'refunds', [['id' => 7001, 'reason' => '', 'total' => '-100000']]));
+    $without = mapOrder(orderFixture(0));
+
+    expect([...(array) $with, 'refundsCount' => null])->toEqual([...(array) $without, 'refundsCount' => null]);
+});
