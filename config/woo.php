@@ -12,7 +12,9 @@
 | realized_statuses = processing + completed per the P0-00 verification (this store
 | has no `shipped` status, ARCHITECTURE.md).
 |
-| webhook_secret / webhook_allowed_ips arrive with P2-09, not here.
+| Webhook (P2-09): `webhook_secret` signs every delivery (HMAC-SHA256, base64) — empty means every delivery is rejected.
+| `webhook_allowed_ips` is a comma-separated list of IPs/CIDRs Woo may call from; EMPTY = the IP check is off (the
+| signature is still mandatory) until the store's addresses are confirmed. Never commit either value.
 */
 return [
     'base_url' => env('WOO_BASE_URL'),
@@ -38,4 +40,7 @@ return [
 
     'realized_statuses' => ['processing', 'completed'],
     'excluded_statuses' => ['pending', 'on-hold', 'cancelled', 'failed', 'trash'],
+
+    'webhook_secret' => env('WOO_WEBHOOK_SECRET'),
+    'webhook_allowed_ips' => env('WOO_WEBHOOK_ALLOWED_IPS', ''),
 ];
