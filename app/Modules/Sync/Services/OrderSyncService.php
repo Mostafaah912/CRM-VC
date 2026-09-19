@@ -14,6 +14,7 @@ use App\Modules\Sync\Exceptions\WooCurrencyMismatchException;
 use App\Modules\Sync\Mappers\OrderMapper;
 use App\Modules\Sync\Support\OrderSyncResult;
 use App\Modules\Sync\Support\SyncWindow;
+use Carbon\CarbonImmutable;
 
 /**
  * Woo -> Orders (P2-06): reads ONE page of orders through the WooClient contract, turns each raw payload into a
@@ -42,6 +43,7 @@ final class OrderSyncService
         $items = 0;
         $pageOrderIds = [];
         $listingRefunds = [];
+        $lastModifiedAt = null;
 
         foreach ($wooPage->items as $raw) {
             $dto = $this->mapper->map($raw);
@@ -52,13 +54,19 @@ final class OrderSyncService
             $orders++;
             $items += count($dto->items);
             $pageOrderIds[] = $dto->wooOrderId;
+            $lastModifiedAt = $this->later($lastModifiedAt, $dto->wooModifiedAt);
 
             if (($dto->refundsCount ?? 0) > 0) {
                 $listingRefunds[$dto->wooOrderId] = true;
             }
         }
 
-        return new OrderSyncResult($orders, $items, $wooPage->hasMore(), $this->ordersNeedingRefunds($pageOrderIds, $listingRefunds));
+        return new OrderSyncResult($orders, $items, $wooPage->hasMore(), $this->ordersNeedingRefunds($pageOrderIds, $listingRefunds), $lastModifiedAt);
+    }
+
+    private function later(?CarbonImmutable $current, CarbonImmutable $candidate): CarbonImmutable
+    {
+        return $current === null || $candidate->greaterThan($current) ? $candidate : $current;
     }
 
     /**

@@ -14,8 +14,9 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 
 /**
- * Starts a run for one entity (PRD §22). No logic: it asks SyncService to open the run, which queues page 1. Unique per
- * entity so the scheduler cannot pile up identical start requests; whether a run is already going is SyncService's call.
+ * Starts a run for one entity (PRD §22): incremental (the scheduled poll, webhook deliveries) or full (`hm:sync --full`).
+ * No logic: it asks SyncService to open the run, which queues page 1. Unique per entity so the scheduler cannot pile up
+ * identical start requests; whether a run is already going is SyncService's call.
  */
 final class SyncEntityJob implements ShouldBeUnique, ShouldQueue
 {

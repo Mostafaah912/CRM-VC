@@ -169,14 +169,14 @@ it('writes a "Run started" log with the frozen window', function () {
         ->and($log->context)->toEqual(['entity' => 'orders', 'mode' => 'incremental', 'cursor_from' => '2026-06-01T11:20:00', 'cursor_to' => '2026-06-01T12:00:00']);
 });
 
-it('only runs incremental: full and webhook belong to later features', function (SyncMode $mode) {
+it('still rejects the webhook mode: webhook deliveries start incremental runs (P2-09)', function () {
     Queue::fake();
 
-    expect(fn () => runService()->run(SyncEntity::Orders, $mode))->toThrow(InvalidArgumentException::class);
+    expect(fn () => runService()->run(SyncEntity::Orders, SyncMode::Webhook))->toThrow(InvalidArgumentException::class);
 
     expect(SyncJob::count())->toBe(0);
     Queue::assertNothingPushed();
-})->with([SyncMode::Full, SyncMode::Webhook]);
+});
 
 // ================================================================== overlapping and stale runs (S-a)
 

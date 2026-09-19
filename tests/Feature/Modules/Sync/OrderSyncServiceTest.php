@@ -278,3 +278,33 @@ it('only reports: it neither fetches refunds nor writes any', function () {
     expect(array_column($fake->requests(), 'endpoint'))->toBe(['orders'])
         ->and(Refund::count())->toBe(0);
 });
+
+// ================================================================== the chunk boundary (P2-10)
+// A run that stops early moves the cursor to the last processed order's modified time, so the page reports the latest
+// modified time among its orders — whatever their order in the page — and nothing when it has none.
+
+it('reports the latest modified time of the page\'s orders as a UTC moment', function () {
+    $orders = WooPayloads::items('orders');
+    $expected = max(array_map(fn (array $o): string => (string) $o['date_modified_gmt'], $orders));
+
+    $result = orderSync(ordersFake($orders))->syncPage(1);
+
+    expect($result->lastModifiedAt)->toBeInstanceOf(CarbonImmutable::class)
+        ->and($result->lastModifiedAt->utc()->format('Y-m-d\TH:i:s'))->toBe($expected)
+        ->and($result->lastModifiedAt->getTimezone()->getName())->toBe('UTC');
+});
+
+it('takes the latest modified time whatever the order of the orders in the page', function () {
+    $orders = WooPayloads::items('orders');
+    $earlier = WooPayloads::set($orders[0], 'date_modified_gmt', '2026-01-01T00:00:00');
+    $later = WooPayloads::set($orders[1], 'date_modified_gmt', '2026-03-03T03:03:03');
+
+    expect(orderSync(ordersFake([$later, $earlier]))->syncPage(1)->lastModifiedAt->utc()->format('Y-m-d\TH:i:s'))->toBe('2026-03-03T03:03:03')
+        ->and(orderSync(ordersFake([$earlier, $later]))->syncPage(1)->lastModifiedAt->utc()->format('Y-m-d\TH:i:s'))->toBe('2026-03-03T03:03:03');
+});
+
+it('reports no modified time for a page without orders', function () {
+    $result = orderSync(ordersFake([]))->syncPage(1);
+
+    expect([$result->orders, $result->lastModifiedAt])->toBe([0, null]);
+});

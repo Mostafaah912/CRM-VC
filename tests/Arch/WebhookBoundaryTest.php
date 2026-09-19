@@ -163,12 +163,12 @@ it('keeps the secret out of the repository: the example env lists the settings, 
         ->and($example)->toMatch('/^TRUSTED_PROXIES=\s*$/m');
 });
 
-it('adds no refund webhook, no registration automation and no command in P2-09', function () {
+it('adds no refund webhook, no registration automation and no webhook command', function () {
     $files = Scanner::phpFiles(['app']);
     $names = array_map(fn (string $f) => basename($f), $files);
 
     expect(array_filter($names, fn (string $n) => preg_match('/Webhook.*Refund|Refund.*Webhook|Register.*Webhook|Webhook.*Register|Reconcil/i', $n) === 1))->toBe([])
-        ->and(Scanner::files(['app/Console'], 'php'))->toBe([]);
+        ->and(Scanner::violations(Scanner::phpFiles(['app/Console']), ['/webhook/i']))->toBe([]);
 });
 
 it('feeds the three settings from their documented env names, through config files only', function () {

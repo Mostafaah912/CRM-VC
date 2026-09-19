@@ -8,6 +8,7 @@ use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Enums\SyncLogLevel;
 use App\Modules\Sync\Enums\SyncMode;
 use App\Modules\Sync\Enums\SyncStatus;
+use App\Modules\Sync\Exceptions\SyncStalledException;
 use App\Modules\Sync\Jobs\SyncPageJob;
 use App\Modules\Sync\Models\SyncCursor;
 use App\Modules\Sync\Models\SyncJob;
@@ -35,7 +36,14 @@ use Throwable;
  *
  * Any failure ends the run `failed`, leaves the cursor alone, and rethrows. A record that fails deterministically
  * therefore holds the cursor at the same place until it is fixed — by design: better a stalled cursor than a hole in
- * the data. Only orders/refunds are run here; full and webhook modes belong to later features.
+ * the data. Only orders/refunds are run here.
+ *
+ * P2-10: a FULL run reads from the epoch (woo.sync_epoch, treated as a cursor: minus the overlap) instead of the stored
+ * cursor; it is run-scoped — the stored cursor is not written when it starts, and only moves when it completes, exactly
+ * like any run. Every run stops after woo.sync_max_pages_per_run pages if Woo still has more: it then COMPLETES with the
+ * cursor set to the last processed order's modified time (the list is ordered by modified), and the next run — the
+ * scheduled poll — continues from there. A chunk whose next window would not start later than this one did fails with
+ * SyncStalledException instead of looping. The webhook mode is not run here: webhook deliveries start incremental runs.
  */
 final class SyncService
 {
@@ -54,6 +62,9 @@ final class SyncService
 
     private const ABANDONED_REASON = 'abandoned';
 
+    /** Used when woo.sync_max_pages_per_run is not a positive whole number. */
+    private const FALLBACK_MAX_PAGES = 500;
+
     public function __construct(
         private readonly OrderSyncService $orders,
         private readonly RefundSyncService $refunds,
@@ -65,8 +76,8 @@ final class SyncService
      */
     public function run(SyncEntity $entity, SyncMode $mode = SyncMode::Incremental): ?SyncJob
     {
-        if ($mode !== SyncMode::Incremental) {
-            throw new InvalidArgumentException("Sync mode {$mode->value} is not run through SyncService yet: only incremental is.");
+        if ($mode === SyncMode::Webhook) {
+            throw new InvalidArgumentException('The webhook mode is not run through SyncService: a webhook delivery starts an incremental run.');
         }
 
         $run = DB::transaction(function () use ($entity, $mode): ?SyncJob {
@@ -83,7 +94,7 @@ final class SyncService
                 $this->log($stale, SyncLogLevel::Warning, self::RUN_ABANDONED, ['age_seconds' => $now->getTimestamp() - $stale->started_at->getTimestamp()]);
             }
 
-            $window = SyncWindow::freeze($cursor->cursor_value);
+            $window = SyncWindow::freeze($mode === SyncMode::Full ? $this->epoch() : $cursor->cursor_value);
             $run = SyncJob::create([
                 'entity' => $entity,
                 'mode' => $mode,
@@ -145,13 +156,19 @@ final class SyncService
             return;
         }
 
-        if ($result->hasMore) {
+        if (! $result->hasMore) {
+            $this->complete($run);
+
+            return;
+        }
+
+        if ($page < $this->maxPagesPerRun()) {
             SyncPageJob::dispatch($run->id, $page + 1);
 
             return;
         }
 
-        $this->complete($run);
+        $this->completeChunk($run, $page, $result->lastModifiedAt);
     }
 
     /**
@@ -209,10 +226,33 @@ final class SyncService
         });
     }
 
-    /** The one place the stored cursor advances: a run that is still running has read its whole frozen window. */
-    private function complete(SyncJob $run): void
+    /**
+     * The run hit its page limit with more to read: it completes, and the cursor goes to the last processed order's
+     * modified time so the next run continues from there — provided that next window (boundary - overlap) starts strictly
+     * later than this run's own window did. If not, more orders were modified within one overlap than a chunk holds, and
+     * the same window would be read forever: fail loudly instead.
+     */
+    private function completeChunk(SyncJob $run, int $page, ?CarbonImmutable $boundary): void
     {
-        DB::transaction(function () use ($run): void {
+        $overlap = (int) config('woo.overlap_minutes');
+
+        if ($boundary === null || ($run->cursor_from !== null && ! $boundary->subMinutes($overlap)->greaterThan($run->cursor_from))) {
+            $stalled = new SyncStalledException($page);
+            $this->failRun($run->id, $stalled, $page);
+
+            throw $stalled;
+        }
+
+        $this->complete($run, $boundary);
+    }
+
+    /**
+     * The one place the stored cursor advances: a run that is still running has read its window — all of it, up to
+     * cursor_to, or a chunk of it, up to $chunkBoundary (the last processed order's modified time).
+     */
+    private function complete(SyncJob $run, ?CarbonImmutable $chunkBoundary = null): void
+    {
+        DB::transaction(function () use ($run, $chunkBoundary): void {
             $cursor = $this->lockedCursor($run->entity);
             $locked = $this->lockedRun($run->id);
 
@@ -225,10 +265,27 @@ final class SyncService
             $locked->finished_at = $now;
             $locked->save();
 
-            $cursor->cursor_value = $locked->cursor_to;
+            $cursor->cursor_value = $chunkBoundary ?? $locked->cursor_to;
             $this->refreshCursorState($cursor, SyncStatus::Completed);
-            $this->log($locked, SyncLogLevel::Info, self::RUN_COMPLETED, ['pages' => $locked->pages_processed, 'records' => $locked->records_processed]);
+            $this->log($locked, SyncLogLevel::Info, self::RUN_COMPLETED, [
+                'pages' => $locked->pages_processed,
+                'records' => $locked->records_processed,
+                'chunked' => $chunkBoundary !== null,
+            ]);
         });
+    }
+
+    /** woo.sync_epoch, the start of a full sync. */
+    private function epoch(): CarbonImmutable
+    {
+        return CarbonImmutable::parse((string) config('woo.sync_epoch'))->utc();
+    }
+
+    private function maxPagesPerRun(): int
+    {
+        $configured = (int) config('woo.sync_max_pages_per_run', self::FALLBACK_MAX_PAGES);
+
+        return $configured >= 1 ? $configured : self::FALLBACK_MAX_PAGES;
     }
 
     private function markFailed(SyncJob $run, string $error, CarbonImmutable $at): void
