@@ -72,6 +72,30 @@ it('does not let a malformed id pass as "no id"', function (mixed $value) {
     failsAt(fn () => reader(['product_id' => $value])->nullableId('product_id'), 'product_id');
 })->with([['101'], [-4], [1.5], [true], [[]]]);
 
+// ------------------------------------------------ ids Woo sends as numbers or digit strings
+
+it('reads a Woo id sent as a positive integer or a canonical digit string (meta values arrive as strings)', function (mixed $raw) {
+    expect(reader(['value' => $raw])->wooId('value'))->toBe(9001);
+})->with([[9001], ['9001']]);
+
+it('rejects anything that is not a real, canonical Woo id', function (mixed $raw) {
+    failsAt(fn () => reader(['value' => $raw])->wooId('value'), 'value');
+})->with([
+    'zero' => [0], 'zero string' => ['0'], 'negative' => [-1], 'negative string' => ['-1'],
+    'leading zero' => ['09001'], 'decimal string' => ['9001.0'], 'float' => [9001.0], 'padded' => [' 9001'],
+    'empty' => [''], 'null' => [null], 'bool' => [true], 'array' => [['9001']], 'word' => ['abc'],
+]);
+
+it('fails on a missing Woo id', function () {
+    failsAt(fn () => reader([])->wooId('value'), 'value');
+});
+
+it('exposes the full path of a key, so a mapper can point at the exact field', function () {
+    $entry = reader(['line_items' => [['meta_data' => [['key' => 'x']]]]])->objects('line_items')[0]->objects('meta_data')[0];
+
+    expect($entry->field('key'))->toBe('line_items.0.meta_data.0.key');
+});
+
 // --------------------------------------------------------------- strings
 
 it('reads required strings', function () {

@@ -40,7 +40,8 @@ it('maps an item-level refund: positive amount and magnitudes, order id from the
         ->and($item->wooVariationId)->toBeNull()
         ->and($item->sku)->toBe('SYN-TEE-001')
         ->and($item->quantity)->toBe(1)
-        ->and($item->amount)->toBe(100000);
+        ->and($item->amount)->toBe(100000)
+        ->and($item->originalWooItemId)->toBe(9001);
 });
 
 it('maps an amount-only refund: empty reason is none, no items', function () {
@@ -108,3 +109,60 @@ it('fails loudly, naming the field, when a required refund field is missing or m
 it('rejects an order id that is not a real id — a caller bug, not payload data', function (int $orderId) {
     mapRefund(refundFixtures()[0], $orderId);
 })->with([[0], [-1]])->throws(InvalidArgumentException::class);
+
+// ------------------------------------------------ the link to the original order item
+
+/** The recorded refund line, with its meta_data replaced. */
+function refundWithMeta(mixed $meta): array
+{
+    return WooPayloads::set(refundFixtures()[0], 'line_items.0.meta_data', $meta);
+}
+
+it('reads the original order item from meta _refunded_item_id — Woo sends it as a string', function (mixed $value) {
+    $item = mapRefund(refundWithMeta([['id' => 1, 'key' => '_refunded_item_id', 'value' => $value]]))->items[0];
+
+    expect($item->originalWooItemId)->toBe(9001);
+})->with([['9001'], [9001]]);
+
+it('ignores unrelated meta entries and finds the link among them', function () {
+    $item = mapRefund(refundWithMeta([
+        ['id' => 1, 'key' => '_reduced_stock', 'value' => 'not an id'],
+        ['id' => 2, 'key' => '_refunded_item_id', 'value' => '9002'],
+    ]))->items[0];
+
+    expect($item->originalWooItemId)->toBe(9002);
+});
+
+it('leaves a line UNATTRIBUTED (null) when Woo gave no link — it never guesses from product, variation or SKU', function (mixed $meta) {
+    $raw = $meta === '__absent__' ? WooPayloads::without(refundFixtures()[0], 'line_items.0.meta_data') : refundWithMeta($meta);
+
+    $item = mapRefund($raw)->items[0];
+
+    expect($item->originalWooItemId)->toBeNull()
+        ->and([$item->wooProductId, $item->sku])->toBe([101, 'SYN-TEE-001']);
+})->with([
+    'no meta_data at all' => ['__absent__'],
+    'null meta_data' => [null],
+    'empty meta_data' => [[]],
+    'only other keys' => [[['id' => 1, 'key' => '_reduced_stock', 'value' => '1']]],
+]);
+
+it('fails loudly on a malformed link instead of treating it as no link', function (mixed $meta, string $field) {
+    try {
+        mapRefund(refundWithMeta($meta));
+    } catch (WooMappingException $e) {
+        expect($e->entity)->toBe('refund')->and($e->field)->toBe($field);
+
+        return;
+    }
+
+    $this->fail("Expected WooMappingException at {$field}");
+})->with([
+    'non-numeric value' => [[['id' => 1, 'key' => '_refunded_item_id', 'value' => 'abc']], 'line_items.0.meta_data.0.value'],
+    'zero value' => [[['id' => 1, 'key' => '_refunded_item_id', 'value' => '0']], 'line_items.0.meta_data.0.value'],
+    'array value' => [[['id' => 1, 'key' => '_refunded_item_id', 'value' => ['9001']]], 'line_items.0.meta_data.0.value'],
+    'value missing' => [[['id' => 1, 'key' => '_refunded_item_id']], 'line_items.0.meta_data.0.value'],
+    'the same link twice' => [[['id' => 1, 'key' => '_refunded_item_id', 'value' => '9001'], ['id' => 2, 'key' => '_refunded_item_id', 'value' => '9002']], 'line_items.0.meta_data.1.key'],
+    'entry without a key' => [[['id' => 1, 'value' => '9001']], 'line_items.0.meta_data.0.key'],
+    'meta_data not a list' => ['nope', 'line_items.0.meta_data'],
+]);

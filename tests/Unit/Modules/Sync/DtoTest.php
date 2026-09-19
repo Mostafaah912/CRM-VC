@@ -25,7 +25,7 @@ function dtoInstances(): array
 {
     $at = CarbonImmutable::parse('2026-05-10 08:30:00', 'UTC');
     $item = new OrderItemDto(9001, 101, null, 'SYN-TEE-001', 'تی‌شرت', 1, 403880, 403880, 403880);
-    $refundItem = new RefundItemDto(9101, 101, null, 'SYN-TEE-001', 1, 100000);
+    $refundItem = new RefundItemDto(9101, 101, null, 'SYN-TEE-001', 1, 100000, 9001);
 
     return [
         'category' => new CategoryDto(31, 'پوشاک', 'apparel', null),
@@ -87,7 +87,8 @@ it('allows null only where Woo genuinely has no value', function () {
 
     expect($d['category']->parentWooCategoryId)->toBeNull()
         ->and($d['order item']->wooVariationId)->toBeNull()
-        ->and($d['refund']->reason)->toBeNull();
+        ->and($d['refund']->reason)->toBeNull()
+        ->and((new RefundItemDto(9102, null, null, null, 1, 1, null))->originalWooItemId)->toBeNull();
 });
 
 it('rejects wrong types at construction: money is never a string or a float', function (callable $build) {

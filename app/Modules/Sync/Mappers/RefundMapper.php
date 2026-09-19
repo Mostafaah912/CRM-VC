@@ -6,6 +6,7 @@ namespace App\Modules\Sync\Mappers;
 
 use App\Modules\Sync\DTOs\RefundDto;
 use App\Modules\Sync\DTOs\RefundItemDto;
+use App\Modules\Sync\Exceptions\WooMappingException;
 use InvalidArgumentException;
 
 /**
@@ -14,6 +15,8 @@ use InvalidArgumentException;
  */
 final class RefundMapper
 {
+    private const ORIGINAL_ITEM_META = '_refunded_item_id';
+
     /**
      * @param  array<array-key, mixed>  $raw
      */
@@ -44,6 +47,27 @@ final class RefundMapper
             $r->nullableString('sku'),
             $r->absoluteInt('quantity'),
             $r->absoluteMoney('total'),
+            $this->originalItemId($r),
         );
+    }
+
+    /** The order item this refund line refunds, from Woo's own meta; null when there is none. Malformed is an error. */
+    private function originalItemId(PayloadReader $line): ?int
+    {
+        $id = null;
+
+        foreach ($line->objectsOrEmpty('meta_data') as $entry) {
+            if ($entry->string('key') !== self::ORIGINAL_ITEM_META) {
+                continue;
+            }
+
+            if ($id !== null) {
+                throw new WooMappingException('refund', $entry->field('key'), 'a single '.self::ORIGINAL_ITEM_META.' entry', 'a repeated entry');
+            }
+
+            $id = $entry->wooId('value');
+        }
+
+        return $id;
     }
 }

@@ -73,6 +73,25 @@ final readonly class PayloadReader
         return $value === 0 ? null : $value;
     }
 
+    /**
+     * A Woo id sent as a positive integer or as a canonical digit string — Woo sends meta values (such as
+     * _refunded_item_id) as strings. Anything else is malformed, never "no id".
+     */
+    public function wooId(string $key): int
+    {
+        $value = $this->required($key, 'a Woo id');
+
+        if (is_int($value) && $value >= 1) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^[1-9][0-9]*$/D', $value) === 1 && (string) (int) $value === $value) {
+            return (int) $value;
+        }
+
+        $this->fail($key, 'a Woo id', $value);
+    }
+
     public function string(string $key): string
     {
         $value = $this->required($key, 'a string');
@@ -233,7 +252,8 @@ final readonly class PayloadReader
         throw new WooMappingException($this->entity, $this->field($key), $expected, get_debug_type($got));
     }
 
-    private function field(string $key): string
+    /** The full path of a key ('line_items.0.meta_data.1.key'), for errors that must point at one field. */
+    public function field(string $key): string
     {
         return $this->path === '' ? $key : "{$this->path}.{$key}";
     }
