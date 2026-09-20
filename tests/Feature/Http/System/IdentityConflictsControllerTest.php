@@ -94,6 +94,14 @@ it('shows a conflict raised without an order as a null order id', function () {
     expect(conflictProps($this)['conflicts']['data'][0]['woo_order_id'])->toBeNull();
 });
 
+it('lists a no_phone conflict, which has no customer, without any name or phone', function () {
+    DB::table('identity_conflicts')->insert(['customer_id' => null, 'woo_order_id' => 15091, 'reason' => 'no_phone', 'status' => 'pending', 'created_at' => '2026-09-20 09:00:00+00']);
+
+    $row = conflictProps($this)['conflicts']['data'][0];
+
+    expect($row)->toBe(['created_at' => '1405/06/29 12:30:00', 'status' => 'pending', 'woo_order_id' => 15091, 'reason' => 'no_phone']);
+});
+
 it('passes the stored reason through untouched — it does not re-read orders or customers to describe it', function () {
     seedConflict(overrides: ['reason' => 'some future reason code']);
 

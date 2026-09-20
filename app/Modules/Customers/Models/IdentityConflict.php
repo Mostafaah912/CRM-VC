@@ -12,7 +12,7 @@ use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
- * @property int $customer_id
+ * @property int|null $customer_id null for a `no_phone` conflict: the order has no customer
  * @property string|null $existing_name
  * @property string|null $incoming_name
  * @property int|null $woo_order_id

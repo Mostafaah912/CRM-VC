@@ -7,7 +7,7 @@ use App\Modules\Catalog\Models\ProductVariation;
 use App\Modules\Customers\Enums\IdentitySource;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Customers\Models\CustomerIdentity;
-use App\Modules\Orders\Exceptions\OrderCustomerUnresolvedException;
+use App\Modules\Customers\Models\IdentityConflict;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Modules\Orders\Models\Refund;
@@ -163,18 +163,16 @@ it('fails loudly on a malformed order, keeping the orders already committed and 
     expect(Order::pluck('woo_order_id')->all())->toBe([5001]);
 });
 
-it('stops on an order with no usable phone without losing the ones before it, and leaks no phone', function () {
+it('does not stop on an order with no usable phone: it is stored flagged for review, after the good one before it, and leaks no phone', function () {
     $good = WooPayloads::items('orders')[0];
     $noPhone = WooPayloads::set(WooPayloads::items('orders')[1], 'billing.phone', '12345');
 
-    try {
-        orderSync(ordersFake([$good, $noPhone]))->syncPage(1);
-        $this->fail('Expected OrderCustomerUnresolvedException');
-    } catch (OrderCustomerUnresolvedException $e) {
-        expect($e->wooOrderId)->toBe(5002)->and($e->getMessage())->not->toContain('12345');
-    }
+    $result = orderSync(ordersFake([$good, $noPhone]))->syncPage(1);
 
-    expect(Order::pluck('woo_order_id')->all())->toBe([5001]);
+    expect($result->orders)->toBe(2)
+        ->and(Order::orderBy('woo_order_id')->pluck('woo_order_id')->all())->toBe([5001, 5002])
+        ->and(Order::where('woo_order_id', 5002)->sole()->only(['customer_id', 'needs_phone_review']))->toBe(['customer_id' => null, 'needs_phone_review' => true])
+        ->and(json_encode(IdentityConflict::all()->toArray()))->not->toContain('12345');
 });
 
 it('does not touch refunds: syncing an order never writes one', function () {

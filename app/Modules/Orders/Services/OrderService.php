@@ -7,7 +7,6 @@ namespace App\Modules\Orders\Services;
 use App\Modules\Catalog\Services\CatalogService;
 use App\Modules\Catalog\Services\ResolvedCatalogItem;
 use App\Modules\Customers\Services\CustomerIdentityService;
-use App\Modules\Orders\Exceptions\OrderCustomerUnresolvedException;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Support\Exceptions\InvalidPhoneException;
@@ -22,7 +21,10 @@ use Illuminate\Support\Facades\Log;
  *  - Identity is woo_order_id (UNIQUE). A repeat of the same order changes nothing; a soft-deleted row is updated
  *    in place, not duplicated and not restored.
  *  - The customer comes from CustomerIdentityService (normalized phone only). A name conflict is recorded there
- *    and never blocks the order; a phone that cannot be normalized cannot yield a customer, so the order is refused.
+ *    and never blocks the order. A phone that cannot be normalized cannot yield a customer, and that never blocks the
+ *    order either (PRD §08 step 1): it is stored with customer_id NULL and needs_phone_review, and Customers records one
+ *    `no_phone` conflict for it. No placeholder customer is ever made. An order that ALREADY has a customer keeps it if
+ *    Woo later drops the phone — a resync never detaches history.
  *  - is_realized comes from OrderStatusMapper (config), never from a status string here.
  *  - Items are replaced (PRD §10: delete-then-insert keyed by order_id). Each is resolved to a catalog variation in
  *    the four steps of PRD §10; an unresolved item is stored with NULL ids and its sku + name snapshot, never rejected.
@@ -63,8 +65,6 @@ final class OrderService
 
     /**
      * @return int the local order id
-     *
-     * @throws OrderCustomerUnresolvedException
      */
     public function upsert(OrderInput $input): int
     {
@@ -76,6 +76,7 @@ final class OrderService
 
             $order->fill([
                 'customer_id' => $customerId,
+                'needs_phone_review' => $customerId === null,
                 'number' => $this->cut($input->number, self::NUMBER_MAX),
                 'status' => $input->status,
                 'is_realized' => $this->statuses->isRealized($input->status),
@@ -100,7 +101,7 @@ final class OrderService
         });
     }
 
-    private function customerId(OrderInput $input): int
+    private function customerId(OrderInput $input): ?int
     {
         try {
             return $this->identities->resolveForWooOrder(
@@ -111,7 +112,14 @@ final class OrderService
                 $input->wooOrderId,
             )->id;
         } catch (InvalidPhoneException) {
-            throw new OrderCustomerUnresolvedException($input->wooOrderId);
+            // Nothing was written (the phone is normalized first). The exception is not chained or logged: its text holds the number.
+            $kept = Order::withTrashed()->where('woo_order_id', $input->wooOrderId)->value('customer_id');
+
+            if ($kept === null) {
+                $this->identities->recordOrderWithoutPhone($input->wooOrderId);
+            }
+
+            return $kept === null ? null : (int) $kept;
         }
     }
 

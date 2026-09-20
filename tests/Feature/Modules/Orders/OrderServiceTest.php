@@ -8,7 +8,6 @@ use App\Modules\Customers\Enums\IdentitySource;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Customers\Models\CustomerIdentity;
 use App\Modules\Customers\Models\IdentityConflict;
-use App\Modules\Orders\Exceptions\OrderCustomerUnresolvedException;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Modules\Orders\Services\OrderInput;
@@ -284,17 +283,14 @@ it('moves an order to the new customer when Woo now says a different phone', fun
         ->and(Customer::count())->toBe(2);
 });
 
-it('fails loudly, writing nothing and leaking no phone, when the order has no usable phone', function (?string $phone) {
-    try {
-        orders()->upsert(orderInput(['billingPhone' => $phone]));
-        $this->fail('Expected OrderCustomerUnresolvedException');
-    } catch (OrderCustomerUnresolvedException $e) {
-        expect($e->wooOrderId)->toBe(5001)
-            ->and($e->getMessage())->toContain('5001')->not->toContain('12345')->not->toContain('0812')
-            ->and($e->getPrevious())->toBeNull();
-    }
+it('stores an order with no usable phone flagged for review — no customer, one no_phone conflict, and no phone leaked', function (?string $phone) {
+    orders()->upsert(orderInput(['billingPhone' => $phone]));
 
-    expect(Order::withTrashed()->count())->toBe(0)->and(Customer::withTrashed()->count())->toBe(0)->and(OrderItem::count())->toBe(0);
+    $order = Order::sole();
+    expect($order->only(['woo_order_id', 'customer_id', 'needs_phone_review']))->toBe(['woo_order_id' => 5001, 'customer_id' => null, 'needs_phone_review' => true])
+        ->and(Customer::withTrashed()->count())->toBe(0)
+        ->and(IdentityConflict::sole()->only(['woo_order_id', 'reason', 'customer_id']))->toBe(['woo_order_id' => 5001, 'reason' => 'no_phone', 'customer_id' => null])
+        ->and(json_encode(IdentityConflict::sole()->toArray()))->not->toContain('12345')->not->toContain('0812');
 })->with([[null], [''], ['12345'], ['08123456789']]);
 
 // ================================================================== items

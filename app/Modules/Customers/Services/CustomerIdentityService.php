@@ -36,6 +36,8 @@ final class CustomerIdentityService
 {
     public const REASON_LAST_NAME_MISMATCH = 'last_name_mismatch';
 
+    public const REASON_NO_PHONE = 'no_phone';
+
     private const FIRST_NAME_MAX = 80;
 
     private const LAST_NAME_MAX = 80;
@@ -127,6 +129,23 @@ final class CustomerIdentityService
         return $wooCustomerId === null
             ? $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooGuestOrder, (string) $wooOrderId, $wooOrderId)
             : $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooUser, (string) $wooCustomerId, $wooOrderId);
+    }
+
+    /**
+     * An order Woo gave no usable phone has no customer, so its conflict hangs on the ORDER: one pending `no_phone` row per
+     * Woo order, no customer, no name, no phone. INSERT ... ON CONFLICT DO NOTHING against the partial unique index makes a
+     * resync or a concurrent worker harmless, and a row a reviewer already dealt with is never raised again.
+     */
+    public function recordOrderWithoutPhone(int $wooOrderId): void
+    {
+        IdentityConflict::query()->insertOrIgnore([[
+            'customer_id' => null,
+            'existing_name' => null,
+            'incoming_name' => null,
+            'woo_order_id' => $wooOrderId,
+            'reason' => self::REASON_NO_PHONE,
+            'status' => IdentityConflictStatus::Pending->value,
+        ]]);
     }
 
     /** Soft-deleted customers included: the UNIQUE index covers them too, and a deleted customer's order must still attach. */

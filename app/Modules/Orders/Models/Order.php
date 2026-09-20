@@ -20,7 +20,8 @@ use Illuminate\Support\Carbon;
  *
  * @property int $id
  * @property int $woo_order_id
- * @property int $customer_id
+ * @property int|null $customer_id null only while needs_phone_review: the order has no usable phone (GATE 1 blocker)
+ * @property bool $needs_phone_review
  * @property string|null $number
  * @property string $status
  * @property bool $is_realized
@@ -47,7 +48,7 @@ class Order extends Model
 
     /** net_revenue is deliberately absent: it is a database-generated column. */
     protected $fillable = [
-        'woo_order_id', 'customer_id', 'number', 'status', 'is_realized',
+        'woo_order_id', 'customer_id', 'needs_phone_review', 'number', 'status', 'is_realized',
         'total', 'subtotal', 'discount_total', 'shipping_total', 'tax_total', 'refunded_total',
         'is_fully_refunded', 'coupon_codes', 'payment_method',
         'ordered_at', 'paid_at', 'completed_at', 'woo_modified_at', 'synced_at',
@@ -57,6 +58,7 @@ class Order extends Model
     {
         return [
             'is_realized' => 'boolean',
+            'needs_phone_review' => 'boolean',
             'is_fully_refunded' => 'boolean',
             'total' => 'integer',
             'subtotal' => 'integer',

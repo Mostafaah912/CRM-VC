@@ -33,6 +33,7 @@ export const conflictStatuses: StatusLabels = {
 /** identity_conflicts.reason codes this build knows how to word; any other code is shown as stored. */
 export const conflictReasons: Record<string, string> = {
     last_name_mismatch: 'نام خانوادگی با مشتری موجود هم‌خوان نیست',
+    no_phone: 'سفارش شماره‌ی تلفن قابل‌استفاده ندارد',
 };
 
 export const syncEntities: Record<string, string> = {
