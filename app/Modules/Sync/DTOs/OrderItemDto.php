@@ -7,7 +7,8 @@ namespace App\Modules\Sync\DTOs;
 /**
  * One order line. Product/variation ids are null when Woo sends 0 or the product no longer exists —
  * the line is kept with its sku and name snapshot (PRD §10: never reject an order over mapping).
- * Amounts are int Toman.
+ * Amounts are int Toman. `unitPrice` is floor(line total / quantity) — 0 for a zero quantity — computed by the mapper in
+ * integer arithmetic; it is never Woo's own `price`, which is a derived float.
  */
 final readonly class OrderItemDto
 {

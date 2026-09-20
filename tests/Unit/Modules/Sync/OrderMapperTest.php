@@ -6,6 +6,7 @@ use App\Modules\Sync\DTOs\OrderDto;
 use App\Modules\Sync\DTOs\OrderItemDto;
 use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Modules\Sync\Mappers\OrderMapper;
+use Tests\Arch\Scanner;
 use Tests\Support\WooPayloads;
 
 /*
@@ -173,7 +174,7 @@ it('fails loudly, naming the field, when a required field is missing', function 
     'id', 'status', 'currency', 'customer_id', 'total', 'discount_total', 'shipping_total', 'total_tax',
     'date_created_gmt', 'date_modified_gmt', 'billing', 'billing.first_name', 'billing.last_name',
     'line_items', 'line_items.0.id', 'line_items.0.name', 'line_items.0.quantity',
-    'line_items.0.price', 'line_items.0.subtotal', 'line_items.0.total',
+    'line_items.0.subtotal', 'line_items.0.total',
 ]);
 
 it('fails loudly, naming the field, when a value is malformed', function (string $path, mixed $value) {
@@ -208,7 +209,6 @@ it('fails loudly, naming the field, when a value is malformed', function (string
     'item quantity string' => ['line_items.0.quantity', '1'],
     'item quantity negative' => ['line_items.0.quantity', -1],
     'item total decimals' => ['line_items.0.total', '10.5'],
-    'item price fractional' => ['line_items.0.price', 403880.5],
     'item product id string' => ['line_items.0.product_id', '101'],
     'item sku number' => ['line_items.0.sku', 12345],
     'coupon code null' => ['coupon_lines.0.code', null],
@@ -280,4 +280,125 @@ it('does not let refunds decide anything else about the order', function () {
     $without = mapOrder(orderFixture(0));
 
     expect([...(array) $with, 'refundsCount' => null])->toEqual([...(array) $without, 'refundsCount' => null]);
+});
+
+// ================================================================== P2-14: unit_price is derived, never Woo's float `price`
+// Woo sends line_items[].price as a DERIVED float (the discounted line total / quantity — live order 22539: 63649.75 for
+// quantity 4, total 254599), which stopped the whole full sync. unit_price = floor(line total / quantity) in integer
+// arithmetic; the line subtotal and total (whole strings) are untouched, and `price` is not read at all.
+
+/** The recorded order, with its first line replaced by exactly these Woo values. */
+function pricedLine(mixed $price, int $quantity, string $total, string $subtotal = '999999'): OrderItemDto
+{
+    $payload = orderFixture(0);
+    $line = $payload['line_items'][0];
+    $line['quantity'] = $quantity;
+    $line['total'] = $total;
+    $line['subtotal'] = $subtotal;
+
+    if ($price === '__absent__') {
+        unset($line['price']);
+    } else {
+        $line['price'] = $price;
+    }
+
+    $payload['line_items'] = [$line];
+
+    return mapOrder($payload)->items[0];
+}
+
+it('derives the unit price from the line total and quantity, floored, when Woo sends a fractional float price', function () {
+    $item = pricedLine(63649.75, quantity: 4, total: '254599');
+
+    expect($item->unitPrice)->toBe(63649)   // floor(254599 / 4) — not 63650
+        ->and($item->lineTotal)->toBe(254599)
+        ->and($item->quantity)->toBe(4);
+});
+
+it('handles every fractional shape live Woo sent: halves, thirds and repeating decimals', function (float $price, int $quantity, string $total, int $expected) {
+    expect(pricedLine($price, $quantity, $total)->unitPrice)->toBe($expected);
+})->with([
+    'half' => [90202.5, 2, '180405', 90202],
+    'two thirds' => [46065.666666666664, 3, '138197', 46065],
+    'another half' => [27597.5, 4, '110390', 27597],
+    'another two thirds' => [36052.666666666664, 3, '108158', 36052],
+    'quarter' => [24652.5, 2, '49305', 24652],
+]);
+
+it('gives the same unit price when Woo sends a whole float price', function () {
+    expect(pricedLine(100000.0, quantity: 2, total: '200000')->unitPrice)->toBe(100000);
+});
+
+it('still works when Woo sends a whole-number string price (regression)', function () {
+    expect(pricedLine('100000', quantity: 2, total: '200000')->unitPrice)->toBe(100000)
+        ->and(pricedLine(100000, quantity: 2, total: '200000')->unitPrice)->toBe(100000);
+});
+
+it('does not read Woo\'s price at all: the same total and quantity give the same unit price whatever price says', function (mixed $price) {
+    expect(pricedLine($price, quantity: 4, total: '254599')->unitPrice)->toBe(63649);
+})->with([
+    'absent' => ['__absent__'],
+    'null' => [null],
+    'garbage text' => ['not a number'],
+    'a wildly different number' => [1],
+    'negative' => [-5.5],
+]);
+
+it('never divides by zero: a zero quantity gives a zero unit price and keeps the line', function () {
+    $item = pricedLine(63649.75, quantity: 0, total: '254599');
+
+    expect($item->unitPrice)->toBe(0)
+        ->and($item->quantity)->toBe(0)
+        ->and($item->lineTotal)->toBe(254599);
+});
+
+it('gives zero for a zero total, and the exact quotient when it divides evenly', function () {
+    expect(pricedLine(0.0, quantity: 5, total: '0')->unitPrice)->toBe(0)
+        ->and(pricedLine(1, quantity: 3, total: '10')->unitPrice)->toBe(3)
+        ->and(pricedLine(1, quantity: 7, total: '700000')->unitPrice)->toBe(100000);
+});
+
+it('uses integer arithmetic: amounts beyond a float\'s exact range stay exact', function () {
+    $twoToThe53Plus1 = '9007199254740993';
+
+    expect(pricedLine(1.5, quantity: 1, total: $twoToThe53Plus1)->unitPrice)->toBe(9007199254740993)
+        ->and(pricedLine(1.5, quantity: 3, total: $twoToThe53Plus1)->unitPrice)->toBe(3002399751580331);
+});
+
+it('leaves the line subtotal and total exactly as Woo sent them', function () {
+    $item = pricedLine(63649.75, quantity: 4, total: '254599', subtotal: '268000');
+
+    expect([$item->lineSubtotal, $item->lineTotal])->toBe([268000, 254599]);
+});
+
+it('keeps a missing quantity a loud mapping error naming the field — never a division by zero', function () {
+    $payload = orderFixture(0);
+    unset($payload['line_items'][0]['quantity']);
+
+    try {
+        mapOrder($payload);
+        $this->fail('Expected WooMappingException');
+    } catch (WooMappingException $e) {
+        expect($e->field)->toBe('line_items.0.quantity');
+    }
+});
+
+it('maps a whole order with several fractional lines (the shape of live order 22539) in one piece', function () {
+    $payload = orderFixture(0);
+    $template = $payload['line_items'][0];
+    $payload['line_items'] = [];
+
+    foreach ([[63649.75, 4, '254599'], [90202.5, 2, '180405'], [46065.666666666664, 3, '138197']] as $n => [$price, $qty, $total]) {
+        $payload['line_items'][] = ['id' => 700 + $n, 'quantity' => $qty, 'price' => $price, 'total' => $total, 'subtotal' => $total] + $template;
+    }
+
+    expect(array_map(fn (OrderItemDto $i) => $i->unitPrice, mapOrder($payload)->items))->toBe([63649, 90202, 46065]);
+});
+
+it('does no floating-point work in the mapper: no cast, no float function, no rounding function', function () {
+    expect(Scanner::violations([Scanner::root().'/app/Modules/Sync/Mappers/OrderMapper.php'], [
+        '/\(\s*(float|double)\s*\)|\bfloatval\b|\bdoubleval\b|\bfdiv\b/',
+        '/\b(round|floor|ceil)\s*\(/',
+        '/\bnumber_format\b|\bbc[a-z]+\s*\(/',
+    ]))->toBe([]);
 });

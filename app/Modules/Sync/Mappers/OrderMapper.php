@@ -46,18 +46,27 @@ final class OrderMapper
         );
     }
 
+    /**
+     * Woo's line-item `price` is NOT read: it is a derived float (the discounted line total / quantity — live order 22539 sent
+     * 63649.75 for quantity 4, total 254599), and the store's amounts are whole Toman everywhere else. The unit price is the
+     * price actually paid, floor(line total / quantity), in integer arithmetic (both are non-negative, so intdiv is the
+     * floor); 0 when the quantity is 0. The line subtotal and total are the whole strings Woo sends, untouched.
+     */
     private function item(PayloadReader $r): OrderItemDto
     {
+        $quantity = $r->nonNegativeInt('quantity');
+        $lineTotal = $r->money('total');
+
         return new OrderItemDto(
             $r->positiveInt('id'),
             $r->nullableId('product_id'),
             $r->nullableId('variation_id'),
             $r->nullableString('sku'),
             $r->string('name'),
-            $r->nonNegativeInt('quantity'),
-            $r->money('price'),
+            $quantity,
+            $quantity === 0 ? 0 : intdiv($lineTotal, $quantity),
             $r->money('subtotal'),
-            $r->money('total'),
+            $lineTotal,
         );
     }
 }
