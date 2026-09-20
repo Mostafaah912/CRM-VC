@@ -7,6 +7,7 @@ import {
     History,
     LayoutGrid,
     ScrollText,
+    Users,
 } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavFooter } from '@/components/nav-footer';
@@ -23,6 +24,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
+import { index as customersIndex } from '@/routes/customers';
 import audit from '@/routes/audit';
 import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
@@ -49,6 +51,15 @@ export function AppSidebar() {
             href: dashboard(),
             icon: LayoutGrid,
         },
+        ...(can('customers', 'view')
+            ? [
+                  {
+                      title: 'مشتریان',
+                      href: customersIndex(),
+                      icon: Users,
+                  },
+              ]
+            : []),
         ...(can('audit', 'view')
             ? [
                   {
