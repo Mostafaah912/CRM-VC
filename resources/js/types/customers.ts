@@ -85,6 +85,26 @@ export type CustomerProfile = {
     recent_orders: CustomerProfileOrder[];
     orders_total: number;
     recent_products: CustomerProfileProduct[];
-    /** Always empty until the timeline (P3-04) has a table to read; the page shows no timeline section for it. */
-    timeline: never[];
+    /** The first page of the timeline; the rest comes from GET /customers/{customer}/timeline with next_cursor. */
+    timeline: TimelineResponse;
+};
+
+/** Only the payload keys the server allowlists can be here, and only plain scalars. */
+export type TimelinePayload = Record<string, string | number | boolean | null>;
+
+export type TimelineEvent = {
+    id: number;
+    event_type: string;
+    /** Jalali date and Tehran time. The raw stored value is never sent. */
+    happened_at_jalali: string;
+    /** ISO 8601 in UTC. */
+    happened_at_iso: string;
+    payload: TimelinePayload | null;
+};
+
+export type TimelineResponse = {
+    data: TimelineEvent[];
+    /** Opaque: handed back unchanged to fetch the next page; null on the last one. */
+    next_cursor: string | null;
+    has_more: boolean;
 };

@@ -66,7 +66,7 @@ it('registers the page as a GET behind auth and customers.view, numeric ids only
 
 // ================================================================== the timeline table
 
-it('reads customer_events only if a migration creates that table — until then the timeline is an empty list', function () {
+it('serves the timeline through CustomerTimelineService once a migration creates customer_events — never by querying the table itself', function () {
     $created = false;
 
     foreach (glob(csbFile('database/migrations/*.php')) ?: [] as $migration) {
@@ -80,10 +80,14 @@ it('reads customer_events only if a migration creates that table — until then 
 
     if (! $created) {
         expect($service)->not->toContain('customer_events')
-            ->and($data)->not->toContain('customer_events')
+            ->and($service)->not->toContain('CustomerTimelineService')
             ->and($data)->toContain("'timeline' => []");
     } else {
-        expect($service)->toContain('customer_events');
+        // The timeline is the timeline service's table: one place decides the order, the cursor and the payload allowlist.
+        expect($service)->toContain('CustomerTimelineService')
+            ->and($service)->toContain('$this->timeline->page($customer)')
+            ->and($service)->not->toContain('customer_events')
+            ->and($data)->toContain("'timeline' => \$this->timeline->toArray()");
     }
 });
 
@@ -164,11 +168,10 @@ it('writes the page in strict TypeScript, reveals the phone only through PhoneRe
         ->and($page)->not->toContain('ریال');
 });
 
-it('hides the metrics and risk sections when there is no metrics row, and shows no timeline section while there is no table', function () {
+it('hides the metrics and risk sections when there is no metrics row', function () {
     $page = (string) file_get_contents(csbFile(CSB_PAGE));
 
     // Both sections carry their own guard: the four metric cards and the RFM/risk card.
     expect($page)->toMatch('/\{metrics !== null && \(\s*<section/')
-        ->and($page)->toMatch('/\{metrics !== null && hasRiskSection\(metrics\) && \(\s*<Card>/')
-        ->and($page)->not->toMatch('/timeline/i');
+        ->and($page)->toMatch('/\{metrics !== null && hasRiskSection\(metrics\) && \(\s*<Card>/');
 });

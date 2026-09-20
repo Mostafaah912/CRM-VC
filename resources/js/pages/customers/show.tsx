@@ -1,4 +1,5 @@
 import { Head, Link } from '@inertiajs/react';
+import { CustomerTimeline } from '@/components/customers/CustomerTimeline';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
 import { StatusBadge } from '@/components/status-badge';
 import {
@@ -78,8 +79,14 @@ function hasRiskSection(metrics: CustomerProfileMetrics): boolean {
 }
 
 export default function CustomerShow({ profile }: Props) {
-    const { customer, metrics, recent_orders, orders_total, recent_products } =
-        profile;
+    const {
+        customer,
+        metrics,
+        recent_orders,
+        orders_total,
+        recent_products,
+        timeline,
+    } = profile;
     const can = useCan();
     const place = [customer.province, customer.city]
         .filter((part): part is string => part !== null && part !== '')
@@ -339,6 +346,20 @@ export default function CustomerShow({ profile }: Props) {
                         </Table>
                     </CardContent>
                 </Card>
+
+                {timeline.data.length > 0 && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>تاریخچه‌ی رویدادها</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <CustomerTimeline
+                                customerId={customer.id}
+                                initialData={timeline}
+                            />
+                        </CardContent>
+                    </Card>
+                )}
             </div>
         </>
     );

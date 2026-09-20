@@ -9,13 +9,13 @@ use App\Modules\Customers\Support\CustomerShowData;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Customer 360 (PRD §18): one customer, read-only, in FIVE queries (the budget is six; a sixth was reserved for a timeline that
- * has no table yet):
+ * Customer 360 (PRD §18): one customer, read-only, in SIX queries — the budget, exactly:
  *
  *   Q1 the customer (a soft-deleted one is a 404)          Q4 the last five products bought, grouped
  *   Q2 its customer_metrics row, if one was computed        Q5 how many orders it has in all
- *   Q3 its last five orders
+ *   Q3 its last five orders                                 Q6 the first page of its timeline (CustomerTimelineService)
  *
+ * The timeline's later pages are not part of this page: the browser asks GET /customers/{customer}/timeline with the cursor.
  * Metrics are only READ from customer_metrics — never computed here. Orders, items and metrics belong to other modules; this
  * service reads their tables with the query builder and never `use`s their classes (a documented exception to the PRD §07
  * dependency table, pinned by CustomerShowBoundaryTest). Nothing here writes, dispatches or logs.
@@ -28,6 +28,8 @@ class CustomerShowService
         'total_orders', 'total_revenue', 'aov', 'first_order_at', 'last_order_at', 'r_score', 'f_score', 'm_score',
         'clv_estimated', 'clv_confidence', 'churn_risk_score', 'churn_risk_level', 'churn_reason',
     ];
+
+    public function __construct(private readonly CustomerTimelineService $timeline) {}
 
     public function show(int $customerId): CustomerShowData
     {
@@ -47,12 +49,15 @@ class CustomerShowService
 
         $ordersTotal = DB::table('orders')->where('customer_id', $customer->id)->whereNull('deleted_at')->count();
 
+        $timeline = $this->timeline->page($customer);
+
         return new CustomerShowData(
             $customer,
             $metrics === null ? null : (array) $metrics,
             array_values($orders->map(fn (object $row): array => (array) $row)->all()),
             $ordersTotal,
             $products,
+            $timeline,
         );
     }
 

@@ -5,14 +5,15 @@ declare(strict_types=1);
 use App\Modules\Catalog\Models\Product;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Customers\Services\CustomerShowService;
+use App\Modules\Customers\Services\CustomerTimelineService;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 
 /*
-| P3-03 — CustomerShowService::show(): everything the Customer 360 page shows, for ONE customer, in five queries (customer,
-| customer_metrics, last five orders, last five products, order count). There is no customer_events table yet, so the sixth query
-| of the budget is not spent and the timeline is an empty list. Read-only; the phone is always masked; no email or name leaves.
+| P3-03 — CustomerShowService::show(): everything the Customer 360 page shows, for ONE customer, in six queries (customer,
+| customer_metrics, last five orders, last five products, order count and — since P3-04 — the first page of the timeline): the
+| budget, exactly. Read-only; the phone is always masked; no email or name leaves.
 */
 
 const CSV_PHONE = '989121234567';
@@ -95,7 +96,7 @@ function csvShow(int $id): array
 
 // ================================================================== query budget
 
-it('loads a fully populated customer in exactly five queries — under the budget of six', function () {
+it('loads a fully populated customer in exactly six queries — the budget, and not one more', function () {
     $product = Product::factory()->create();
     csvMetrics($this->customer->id);
 
@@ -106,27 +107,31 @@ it('loads a fully populated customer in exactly five queries — under the budge
 
     $queries = csvQueries(fn () => csvShow($this->customer->id));
 
-    expect($queries)->toHaveCount(5)
+    expect($queries)->toHaveCount(6)
         ->and(count($queries))->toBeLessThanOrEqual(6);
 });
 
 it('spends no more queries on an empty customer, or one without a metrics row', function () {
-    expect(csvQueries(fn () => csvShow($this->customer->id)))->toHaveCount(5);
+    expect(csvQueries(fn () => csvShow($this->customer->id)))->toHaveCount(6);
 });
 
-it('does not grow with the history: forty orders cost the same five queries as one', function () {
+it('does not grow with the history: forty orders and forty events cost the same six queries as none', function () {
     $product = Product::factory()->create();
 
     foreach (range(1, 40) as $i) {
         csvItem(csvOrder($this->customer->id, CarbonImmutable::parse('2026-01-01', 'UTC')->addDays($i)->toDateTimeString().'+00'), "Item {$i}", $product->id);
     }
 
-    expect(csvQueries(fn () => csvShow($this->customer->id)))->toHaveCount(5);
+    foreach (range(1, 40) as $i) {
+        DB::table('customer_events')->insert(['customer_id' => $this->customer->id, 'event_type' => 'note_added', 'happened_at' => CarbonImmutable::parse('2026-01-01', 'UTC')->addDays($i)->toDateTimeString().'+00']);
+    }
+
+    expect(csvQueries(fn () => csvShow($this->customer->id)))->toHaveCount(6);
 });
 
 it('never touches a table the profile does not need', function () {
     csvMetrics($this->customer->id);
-    $tables = 'customers|customer_metrics|orders|order_items';
+    $tables = 'customers|customer_metrics|orders|order_items|customer_events';
 
     $queries = csvQueries(fn () => csvShow($this->customer->id));
 
@@ -237,7 +242,7 @@ it('gives empty lists and a zero count for a customer with no orders', function 
     expect($profile['recent_orders'])->toBe([])
         ->and($profile['orders_total'])->toBe(0)
         ->and($profile['recent_products'])->toBe([])
-        ->and($profile['timeline'])->toBe([]);
+        ->and($profile['timeline'])->toBe(['data' => [], 'next_cursor' => null, 'has_more' => false]);
 });
 
 it('lists the last five orders newest first, and counts all of them', function () {
@@ -367,4 +372,30 @@ it('writes nothing and logs nothing: viewing a profile changes no row', function
     csvShow($this->customer->id);
 
     expect($count())->toBe($before);
+});
+
+// ================================================================== timeline (P3-04)
+
+it('carries the first page of the timeline: the newest 20 events with a cursor for the rest, exactly what the timeline endpoint gives', function () {
+    foreach (range(1, 25) as $i) {
+        DB::table('customer_events')->insert([
+            'customer_id' => $this->customer->id, 'event_type' => 'order_placed', 'happened_at' => sprintf('2026-03-%02d 10:00:00+00', $i),
+            'payload' => json_encode(['woo_order_id' => $i, 'email' => 'leak@example.test']),
+        ]);
+    }
+
+    $timeline = csvShow($this->customer->id)['timeline'];
+
+    expect($timeline['data'])->toHaveCount(20)
+        ->and($timeline['has_more'])->toBeTrue()
+        ->and($timeline['next_cursor'])->toBeString()
+        ->and($timeline['data'][0]['payload'])->toBe(['woo_order_id' => 25])
+        ->and($timeline)->toBe(app(CustomerTimelineService::class)->pageFor($this->customer->id)->toArray())
+        ->and(json_encode($timeline))->not->toContain('leak@example.test');
+});
+
+it('leaves out another customer\'s events from the timeline it carries', function () {
+    DB::table('customer_events')->insert(['customer_id' => Customer::factory()->create()->id, 'event_type' => 'note_added', 'happened_at' => '2026-03-01 10:00:00+00']);
+
+    expect(csvShow($this->customer->id)['timeline']['data'])->toBe([]);
 });

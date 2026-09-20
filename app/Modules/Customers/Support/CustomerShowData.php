@@ -20,7 +20,10 @@ use Carbon\CarbonImmutable;
  * @phpstan-type MetricsShape array{total_orders: int, total_revenue: int, aov: int, first_order_at: string|null, last_order_at: string|null, r_score: int|null, f_score: int|null, m_score: int|null, clv_estimated: int|null, clv_confidence: string|null, churn_risk_score: string|null, churn_risk_level: string|null, churn_reason: string|null}
  * @phpstan-type OrderShape array{woo_order_id: int, number: string|null, status: string, total: int, ordered_at: string}
  * @phpstan-type ProductShape array{name: string, sku: string|null, purchase_count: int, last_purchased_at: string}
- * @phpstan-type ProfileShape array{customer: array{id: int, display_name: string|null, phone: string, status: string, lifecycle_stage: string, province: string|null, city: string|null, first_seen_at: string|null}, metrics: MetricsShape|null, recent_orders: list<OrderShape>, orders_total: int, recent_products: list<ProductShape>, timeline: list<never>}
+ *
+ * @phpstan-import-type TimelinePageShape from TimelinePage
+ *
+ * @phpstan-type ProfileShape array{customer: array{id: int, display_name: string|null, phone: string, status: string, lifecycle_stage: string, province: string|null, city: string|null, first_seen_at: string|null}, metrics: MetricsShape|null, recent_orders: list<OrderShape>, orders_total: int, recent_products: list<ProductShape>, timeline: TimelinePageShape}
  */
 final readonly class CustomerShowData
 {
@@ -38,6 +41,7 @@ final readonly class CustomerShowData
         private array $orders,
         private int $ordersTotal,
         private array $products,
+        private TimelinePage $timeline,
     ) {}
 
     /** @return ProfileShape */
@@ -60,8 +64,8 @@ final readonly class CustomerShowData
             'recent_orders' => array_map($this->orderShape(...), $this->orders),
             'orders_total' => $this->ordersTotal,
             'recent_products' => array_map($this->productShape(...), $this->products),
-            // No customer_events table exists yet (P3-04 builds the timeline): an empty list, not a missing key.
-            'timeline' => [],
+            // The first page of the timeline (P3-04); the rest comes from GET /customers/{customer}/timeline with the cursor.
+            'timeline' => $this->timeline->toArray(),
         ];
     }
 

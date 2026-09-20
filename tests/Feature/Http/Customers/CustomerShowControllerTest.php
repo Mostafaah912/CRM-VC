@@ -114,7 +114,7 @@ it('renders the customers/show component with exactly the documented props', fun
                 ->where('orders_total', 6)
                 ->has('recent_orders', 5)
                 ->has('recent_products', 1)
-                ->where('timeline', [])
+                ->where('timeline', ['data' => [], 'next_cursor' => null, 'has_more' => false])
                 ->where('customer.id', $this->customer->id)
                 ->where('metrics.churn_risk_level', 'high')
                 ->etc(),
@@ -168,7 +168,7 @@ it('does not reveal anything by being viewed: no audit row, no write of any kind
 
 // ================================================================== the gate
 
-it('loads the profile in five queries on the data tables — and every other query of the request is permission plumbing', function () {
+it('loads the profile in six queries on the data tables — and every other query of the request is permission plumbing', function () {
     showSeed($this->customer);
     $this->actingAs(Fx::userWith('customers.view', 'customers.view_full_phone'));
     $sql = [];
@@ -178,13 +178,28 @@ it('loads the profile in five queries on the data tables — and every other que
 
     $this->get("/customers/{$this->customer->id}")->assertOk();
 
-    $isData = fn (string $q) => preg_match('/\b(from|join)\s+"(customers|customer_metrics|orders|order_items)"/i', $q) === 1;
+    $isData = fn (string $q) => preg_match('/\b(from|join)\s+"(customers|customer_metrics|orders|order_items|customer_events)"/i', $q) === 1;
     $isPermission = fn (string $q) => preg_match('/\b(from|join)\s+"(roles|role_user|permissions|permission_role|permission_overrides)"/i', $q) === 1;
     $data = array_values(array_filter($sql, $isData));
     $rest = array_values(array_filter($sql, fn (string $q) => ! $isData($q)));
 
-    // 5 is under the budget of 6 (PRD §18). The permission stack (middleware + the shared can() props) is Core's and is not
+    // 6 is the budget (PRD §18): five for the profile and one for the first page of the timeline. The permission stack (middleware + the shared can() props) is Core's and is not
     // part of the profile's budget; nothing else may creep in beside it.
-    expect($data)->toHaveCount(5)
+    expect($data)->toHaveCount(6)
         ->and(array_filter($rest, fn (string $q) => ! $isPermission($q)))->toBe([]);
+});
+
+it('sends the first page of the timeline in the profile — filtered and formatted like the timeline endpoint — and none of its raw fields', function () {
+    DB::table('customer_events')->insert(['customer_id' => $this->customer->id, 'event_type' => 'order_placed', 'happened_at' => '2026-03-20 20:30:00+00', 'payload' => json_encode(['woo_order_id' => 77, 'phone' => SHOW_PHONE])]);
+
+    $response = showAs($this, $this->customer, ['customers.view', 'customers.view_full_phone']);
+
+    $response->assertOk()->assertInertia(fn (Assert $page) => $page
+        ->has('profile.timeline.data', 1)
+        ->where('profile.timeline.data.0.happened_at_jalali', '1405/01/01 00:00:00')
+        ->where('profile.timeline.data.0.happened_at_iso', '2026-03-20T20:30:00Z')
+        ->where('profile.timeline.data.0.payload', ['woo_order_id' => 77])
+        ->where('profile.timeline.has_more', false)
+        ->where('profile.timeline.next_cursor', null));
+    expect($response->getContent())->not->toContain(SHOW_PHONE);
 });
