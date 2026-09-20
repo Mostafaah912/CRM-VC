@@ -24,8 +24,12 @@ final class ReconcileMonthJob implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 1;
 
-    /** Reading a month is one list request per 50 orders. Must stay below the queue's retry_after (90), or a running job would be re-reserved. */
-    public int $timeout = 80;
+    /**
+     * Reading a month is one list request per 50 orders, ~65 ms per order: the largest live month (3,169 orders) took ~206 s, and
+     * the old 80 s limit killed the worker on a 1,561-order month. Must stay below the queue's retry_after (330, config/queue.php),
+     * or a running job would be re-reserved and run twice. A month beyond ~4,500 orders needs this raised again (or paging).
+     */
+    public int $timeout = 300;
 
     public int $uniqueFor = 600;
 

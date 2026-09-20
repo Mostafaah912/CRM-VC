@@ -3,7 +3,10 @@
 declare(strict_types=1);
 
 use App\Modules\Sync\Enums\ReconciliationStatus;
+use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Jobs\ReconcileMonthJob;
+use App\Modules\Sync\Jobs\SyncEntityJob;
+use App\Modules\Sync\Jobs\SyncPageJob;
 use App\Modules\Sync\Models\ReconciliationReportModel;
 use App\Modules\Sync\Services\ReconciliationService;
 use App\Modules\Sync\Services\WooClient;
@@ -48,6 +51,20 @@ it('is unique per month, for 600 seconds, above its timeout and below the queue\
         ->and($job->uniqueFor)->toBe(600)
         ->and($job->uniqueFor)->toBeGreaterThan($job->timeout)
         ->and($job->timeout)->toBeLessThan((int) config('queue.connections.redis.retry_after'));
+});
+
+it('gives a month up to 300 seconds: the largest live month (3,169 orders) took ~206 s, and the old 80 s limit killed the worker', function () {
+    expect((new ReconcileMonthJob('1405-05'))->timeout)->toBe(300);
+});
+
+it('keeps the queue\'s retry_after at least 30 seconds above every sync job\'s timeout, so a running month is never re-reserved and run twice', function () {
+    $longest = max(
+        (new ReconcileMonthJob('1405-05'))->timeout,
+        (new SyncEntityJob(SyncEntity::Orders))->timeout,
+        (new SyncPageJob(1, 1))->timeout,
+    );
+
+    expect((int) config('queue.connections.redis.retry_after'))->toBeGreaterThanOrEqual($longest + 30);
 });
 
 it('queues a month once while its job is waiting, and other months separately', function () {
