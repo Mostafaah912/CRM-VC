@@ -61,11 +61,11 @@ it('keeps the controller free of queries, models, config and control flow — on
     expect($services[0])->toHaveCount(1);
 });
 
-it('registers the list as one GET route in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
+it('registers the list and P3-03\'s customer page as the only GET routes in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
     $routes = Scanner::phpCode(clFile('routes/internal.php'));
     $web = (string) file_get_contents(clFile('routes/web.php'));
 
-    expect(substr_count($routes, 'Route::get('))->toBe(1)
+    expect(substr_count($routes, 'Route::get('))->toBe(2) // the list, and P3-03's customers/{customer} page
         ->and($routes)->not->toMatch('/Route::(put|patch|delete|any|match|resource|apiResource)\b/')
         ->and(substr_count($routes, 'Route::post('))->toBe(1) // P3-02's audited reveal, and nothing else that writes
         ->and($routes)->toContain("'auth'")
