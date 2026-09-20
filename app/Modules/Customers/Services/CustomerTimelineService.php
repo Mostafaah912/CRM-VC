@@ -6,21 +6,20 @@ namespace App\Modules\Customers\Services;
 
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Customers\Models\CustomerEvent;
+use App\Modules\Customers\Support\PageCursor;
 use App\Modules\Customers\Support\TimelinePage;
 use App\Support\TehranDateTime;
 use Carbon\CarbonImmutable;
-use Carbon\Exceptions\InvalidFormatException;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
-use JsonException;
 
 /**
  * A customer's timeline (P3-04), read-only, newest first, paged by a CURSOR — the position of the last event shown, never an
  * offset — so a page never repeats or skips an event however many arrive meanwhile.
  *
  *  - Order is (happened_at DESC, id DESC); the id breaks ties, so the position is unique and the next page starts exactly after it.
- *  - The cursor is opaque to the browser: URL-safe base64 of {"happened_at": "<UTC ISO>", "id": <int>}. It is encoded and decoded
- *    ONLY here, decoded strictly (exact keys, real date, positive int) and used only as bound values, never as SQL. It narrows
+ *  - The cursor is opaque to the browser: URL-safe base64 of {"happened_at": "<UTC ISO>", "id": <int>}, made and read ONLY by
+ *    PageCursor (the one codec of every paged endpoint), decoded strictly and used only as bound values, never as SQL. It narrows
  *    the position inside ONE customer's events (customer_id is always in the query), so it cannot reach another customer's.
  *  - One extra row is read to know whether more exist, so has_more is exact even when a page is exactly full.
  *  - Only PAYLOAD_KEYS of an event's payload leave, and only plain scalars: the payload is free-form for its writer.
@@ -39,8 +38,6 @@ class CustomerTimelineService
     public const PAYLOAD_KEYS = ['order_id', 'note', 'old_status', 'new_status', 'woo_order_id'];
 
     private const CURSOR_MAX_LENGTH = 200;
-
-    private const CURSOR_INSTANT = 'Y-m-d\TH:i:s\Z';
 
     public function pageFor(int $customerId, ?string $cursor = null, ?int $perPage = null): TimelinePage
     {
@@ -93,9 +90,7 @@ class CustomerTimelineService
     /** The opaque cursor for "everything older than this event". */
     public function encodeCursor(CarbonImmutable $happenedAt, int $id): string
     {
-        $json = json_encode(['happened_at' => $happenedAt->utc()->format(self::CURSOR_INSTANT), 'id' => $id], JSON_THROW_ON_ERROR);
-
-        return rtrim(strtr(base64_encode($json), '+/', '-_'), '=');
+        return PageCursor::encode(['happened_at' => $happenedAt, 'id' => $id]);
     }
 
     /**
@@ -105,42 +100,9 @@ class CustomerTimelineService
      */
     public function decodeCursor(string $cursor): array
     {
-        if ($cursor === '' || strlen($cursor) > self::CURSOR_MAX_LENGTH || preg_match('/^[A-Za-z0-9_-]+$/', $cursor) !== 1) {
-            throw new InvalidArgumentException('Malformed timeline cursor.');
-        }
+        $position = PageCursor::decode($cursor, ['happened_at' => 'instant', 'id' => 'id'], self::CURSOR_MAX_LENGTH);
 
-        // Strict mode refuses any byte outside the base64 alphabet; PHP accepts the missing '=' padding, so none is restored.
-        $binary = base64_decode(strtr($cursor, '-_', '+/'), true);
-
-        try {
-            $data = $binary === false ? null : json_decode($binary, true, 4, JSON_THROW_ON_ERROR);
-        } catch (JsonException) {
-            $data = null;
-        }
-
-        if (! is_array($data) || array_keys($data) !== ['happened_at', 'id']) {
-            throw new InvalidArgumentException('Malformed timeline cursor.');
-        }
-
-        $stamp = $data['happened_at'];
-        $id = $data['id'];
-
-        if (! is_string($stamp) || ! is_int($id) || $id < 1) {
-            throw new InvalidArgumentException('Malformed timeline cursor.');
-        }
-
-        try {
-            $at = CarbonImmutable::createFromFormat('!'.self::CURSOR_INSTANT, $stamp, 'UTC');
-        } catch (InvalidFormatException) {
-            $at = null;
-        }
-
-        // createFromFormat rolls an impossible date (Feb 31) forward instead of failing: reject anything that does not read back the same.
-        if ($at === null || $at->format(self::CURSOR_INSTANT) !== $stamp) {
-            throw new InvalidArgumentException('Malformed timeline cursor.');
-        }
-
-        return [$at, $id];
+        return [$position->instant('happened_at'), $position->id('id')];
     }
 
     /**

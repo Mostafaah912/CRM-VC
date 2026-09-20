@@ -4,6 +4,7 @@ import {
     RefreshCw,
     ShoppingBag,
     StickyNote,
+    Trash2,
     Undo2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -35,6 +36,7 @@ const KINDS: Record<string, { icon: LucideIcon; label: string }> = {
     order_placed: { icon: ShoppingBag, label: 'ثبت سفارش' },
     order_refunded: { icon: Undo2, label: 'عودت سفارش' },
     note_added: { icon: StickyNote, label: 'یادداشت' },
+    note_deleted: { icon: Trash2, label: 'حذف یادداشت' },
     status_changed: { icon: RefreshCw, label: 'تغییر وضعیت' },
 };
 
@@ -64,6 +66,8 @@ function describe(event: TimelineEvent): string {
             return typeof payload?.note === 'string' && payload.note !== ''
                 ? payload.note
                 : 'یادداشت افزوده شد';
+        case 'note_deleted':
+            return 'یادداشتی حذف شد';
         case 'status_changed':
             return `وضعیت از «${statusLabel(payload?.old_status)}» به «${statusLabel(payload?.new_status)}» تغییر کرد`;
         default:

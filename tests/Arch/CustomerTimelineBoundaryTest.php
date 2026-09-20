@@ -73,25 +73,28 @@ it('refuses a page size above 50 in the request, and the limit is the service co
 
 // ================================================================== the cursor lives in one place
 
-it('encodes and decodes the cursor ONLY in CustomerTimelineService — nowhere else in the backend or the browser code', function () {
+it('makes and reads a cursor ONLY through PageCursor — the timeline service delegates, and no other file of the feature touches base64', function () {
     $service = Scanner::phpCode(ctbFile(CTB_SERVICE));
-    $customersBackend = array_filter(
+    $codec = Scanner::phpCode(ctbFile('app/Modules/Customers/Support/PageCursor.php'));
+    $others = array_filter(
         Scanner::phpFiles(['app/Modules/Customers', 'app/Http/Controllers/Customers', 'app/Http/Requests/Customers']),
-        fn (string $file) => ! str_ends_with($file, 'CustomerTimelineService.php'),
+        fn (string $file) => ! str_ends_with($file, 'Support/PageCursor.php'),
     );
 
-    expect($service)->toContain('function encodeCursor(')->toContain('function decodeCursor(')
-        ->toContain('base64_encode(')->toContain('base64_decode(')->toContain('JSON_THROW_ON_ERROR')
-        ->and(Scanner::violations(array_values($customersBackend), ['/base64_(en|de)code|encodeCursor|decodeCursor|urlsafe/i']))->toBe([])
+    expect($service)->toContain('PageCursor::encode(')->toContain('PageCursor::decode(')
+        ->and($codec)->toContain('base64_encode(')->toContain('base64_decode(')->toContain('JSON_THROW_ON_ERROR')
+        ->and(Scanner::violations(array_values($others), ['/base64_(en|de)code|urlsafe|json_decode/i']))->toBe([])
         ->and(Scanner::violations([ctbFile(CTB_COMPONENT), ctbFile('resources/js/pages/customers/show.tsx')], ['/\batob\s*\(|\bbtoa\s*\(|JSON\.parse\s*\(|base64/i'], false))->toBe([]);
 });
 
-it('decodes the cursor strictly and uses it only as bound values — never as SQL', function () {
+it('decodes the cursor strictly (in PageCursor) and uses it only as bound values — never as SQL', function () {
     $service = Scanner::phpCode(ctbFile(CTB_SERVICE));
+    $codec = Scanner::phpCode(ctbFile('app/Modules/Customers/Support/PageCursor.php'));
 
-    expect($service)->toContain("array_keys(\$data) !== ['happened_at', 'id']")
-        ->and($service)->toContain('$id < 1')
-        ->and($service)->toContain('base64_decode(')->toContain(', true)') // strict mode
+    expect($codec)->toContain('array_keys($data) !== array_keys($shape)')
+        ->and($codec)->toContain('$data[$key] >= 1')
+        ->and($codec)->toContain('base64_decode(')->toContain(', true)') // strict mode
+        ->and($service)->toContain("['happened_at' => 'instant', 'id' => 'id']")
         ->and(Scanner::violations([ctbFile(CTB_SERVICE)], [
             '/\b(whereRaw|selectRaw|orderByRaw|havingRaw|groupByRaw|fromRaw|joinRaw|orWhereRaw)\s*\(|\bDB::|new\s+Expression/',
         ]))->toBe([])
@@ -142,8 +145,8 @@ it('never sends the raw stored date: every event carries its Jalali form and its
 
     expect($service)->toContain("'happened_at_jalali' => TehranDateTime::format(")
         ->and($service)->toContain("'happened_at_iso' => \$at->utc()->toIso8601ZuluString()")
-        // The bare key appears once — inside the cursor's own JSON, which the browser cannot read — and never in an event.
-        ->and(substr_count($service, "'happened_at' =>"))->toBe(1)
+        // The bare key appears only on the two cursor lines (which the browser cannot read) and never in an event.
+        ->and(array_filter(explode("\n", $service), fn (string $line) => str_contains($line, "'happened_at' =>") && ! str_contains($line, 'PageCursor::')))->toBe([])
         ->and(Scanner::violations([ctbFile(CTB_PAGE_VO), ctbFile('app/Modules/Customers/Support/CustomerShowData.php')], ['/[\'"]happened_at[\'"]/']))->toBe([])
         ->and(Scanner::violations([ctbFile(CTB_COMPONENT), ctbFile('resources/js/types/customers.ts'), ctbFile('resources/js/pages/customers/show.tsx')], ['/\bhappened_at\b(?!_(jalali|iso))/'], false))->toBe([]);
 });

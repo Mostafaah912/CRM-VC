@@ -108,3 +108,42 @@ export type TimelineResponse = {
     next_cursor: string | null;
     has_more: boolean;
 };
+
+/** P3-05: the paged lists of Customer 360 (orders, products, notes) share one envelope. */
+export type CursorPage<T> = {
+    data: T[];
+    /** Opaque: handed back unchanged to fetch the next page; null on the last one. */
+    next_cursor: string | null;
+    has_more: boolean;
+    /** Only the orders list carries it. */
+    total_count?: number;
+};
+
+export type OrderTabRow = {
+    woo_order_id: number;
+    status: string;
+    /** int Toman, exactly as stored. */
+    total: number;
+    is_realized: boolean;
+    ordered_at_jalali: string;
+    ordered_at_iso: string;
+};
+
+export type ProductTabRow = {
+    name: string;
+    sku: string | null;
+    total_qty: number;
+    order_count: number;
+    last_ordered_at_jalali: string;
+    last_ordered_at_iso: string;
+};
+
+export type NoteRow = {
+    id: number;
+    author_id: number;
+    author_name: string | null;
+    /** Plain text: rendered as text, never as HTML. */
+    body: string;
+    created_at_jalali: string;
+    created_at_iso: string;
+};

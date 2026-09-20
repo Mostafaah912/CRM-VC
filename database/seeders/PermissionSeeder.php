@@ -29,6 +29,7 @@ class PermissionSeeder extends Seeder
             ['module' => 'customers', 'action' => 'view', 'label' => 'مشاهده مشتریان'],
             ['module' => 'customers', 'action' => 'view_full_phone', 'label' => 'مشاهده شماره موبایل کامل'],
             ['module' => 'customers', 'action' => 'note', 'label' => 'ثبت یادداشت برای مشتری'],
+            ['module' => 'customers', 'action' => 'manage_notes', 'label' => 'حذف یادداشت‌های دیگران'],
             ['module' => 'customers', 'action' => 'export', 'label' => 'خروجی گرفتن از مشتریان'],
             ['module' => 'customers', 'action' => 'anonymize', 'label' => 'ناشناس‌سازی مشتری'],
             ['module' => 'identity', 'action' => 'review', 'label' => 'بازبینی تعارض هویت'],

@@ -61,13 +61,14 @@ it('keeps the controller free of queries, models, config and control flow — on
     expect($services[0])->toHaveCount(1);
 });
 
-it('registers the list, P3-03\'s customer page and P3-04\'s timeline as the only GET routes in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
+it('registers the list and the Customer 360 page and its JSON endpoints (timeline, orders, products, notes) as the only reading routes in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
     $routes = Scanner::phpCode(clFile('routes/internal.php'));
     $web = (string) file_get_contents(clFile('routes/web.php'));
 
-    expect(substr_count($routes, 'Route::get('))->toBe(3) // the list, P3-03's customers/{customer} page and P3-04's timeline JSON
-        ->and($routes)->not->toMatch('/Route::(put|patch|delete|any|match|resource|apiResource)\b/')
-        ->and(substr_count($routes, 'Route::post('))->toBe(1) // P3-02's audited reveal, and nothing else that writes
+    expect(substr_count($routes, 'Route::get('))->toBe(6) // the list; P3-03's page; P3-04's timeline; P3-05's orders, products and notes list
+        ->and($routes)->not->toMatch('/Route::(put|patch|any|match|resource|apiResource)\b/')
+        ->and(substr_count($routes, 'Route::post('))->toBe(2) // P3-02's audited reveal and P3-05's note store — nothing else that writes
+        ->and(substr_count($routes, 'Route::delete('))->toBe(1) // P3-05's note delete
         ->and($routes)->toContain("'auth'")
         ->and($routes)->toContain("'permission:customers,view'")
         ->and($routes)->toContain("'customers'")

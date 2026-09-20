@@ -60,16 +60,19 @@ it('keeps the controller free of queries, models, config and control flow — on
     expect($services[0])->toHaveCount(1);
 });
 
-it('registers one POST route in routes/internal.php, behind auth, customers.view_full_phone and its own throttle', function () {
+it('registers the reveal as a POST in routes/internal.php, behind auth, customers.view_full_phone and its own throttle — the only route that reveals', function () {
     $routes = Scanner::phpCode(prFile('routes/internal.php'));
 
-    expect(substr_count($routes, 'Route::post('))->toBe(1)
+    // Two POSTs in the file now: this reveal and P3-05's notes store (which reveals nothing and has its own boundary test).
+    expect(substr_count($routes, 'Route::post('))->toBe(2)
+        ->and(substr_count($routes, 'reveal-phone'))->toBe(2) // the URL and the route name, both in the ONE reveal route
         ->and($routes)->toContain("'permission:customers,view_full_phone'")
         ->and($routes)->toContain("'throttle:10,1,phone-reveal'")
         ->and($routes)->toContain("'customers/{customer}/reveal-phone'")
         ->and($routes)->toContain("->name('customers.reveal-phone')")
         ->and($routes)->toContain("->whereNumber('customer')")
-        ->and($routes)->not->toMatch('/Route::(put|patch|delete|any|match|resource|apiResource)\b/');
+        ->and(substr_count($routes, 'Route::delete('))->toBe(1) // P3-05's note delete
+        ->and($routes)->not->toMatch('/Route::(put|patch|any|match|resource|apiResource)\b/');
 
     // one group carries all three, and the route sits inside it
     expect($routes)->toMatch("/Route::middleware\(\['auth', 'permission:customers,view_full_phone', 'throttle:10,1,phone-reveal'\]\)/");

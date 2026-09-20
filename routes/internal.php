@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Customers\CustomerListController;
+use App\Http\Controllers\Customers\CustomerNotesController;
+use App\Http\Controllers\Customers\CustomerOrdersController;
+use App\Http\Controllers\Customers\CustomerProductsController;
 use App\Http\Controllers\Customers\CustomerShowController;
 use App\Http\Controllers\Customers\CustomerTimelineController;
 use App\Http\Controllers\Customers\PhoneRevealController;
@@ -14,6 +17,14 @@ Route::middleware(['auth', 'permission:customers,view'])->group(function () {
     Route::get('customers', CustomerListController::class)->name('customers.index');
     Route::get('customers/{customer}', CustomerShowController::class)->whereNumber('customer')->name('customers.show');
     Route::get('customers/{customer}/timeline', CustomerTimelineController::class)->whereNumber('customer')->name('customers.timeline');
+    Route::get('customers/{customer}/orders', CustomerOrdersController::class)->whereNumber('customer')->name('customers.orders');
+    Route::get('customers/{customer}/products', CustomerProductsController::class)->whereNumber('customer')->name('customers.products');
+    Route::get('customers/{customer}/notes', [CustomerNotesController::class, 'index'])->whereNumber('customer')->name('customers.notes.index');
+    // Deleting is allowed to the note's author or a customers.manage_notes holder; CustomerNotesService decides (403 otherwise). The
+    // note is looked up under its customer, so a note id under another customer's URL is a 404.
+    Route::delete('customers/{customer}/notes/{note}', [CustomerNotesController::class, 'destroy'])->whereNumber(['customer', 'note'])->name('customers.notes.destroy');
+    // Writing a note also needs customers.note (the role matrix gives it to Support, Manager and Owner — not to a viewer-only Analyst).
+    Route::post('customers/{customer}/notes', [CustomerNotesController::class, 'store'])->middleware('permission:customers,note')->whereNumber('customer')->name('customers.notes.store');
 });
 
 // P3-02: the audited reveal of ONE customer's full phone. The list never carries a full number, for anyone; a holder of

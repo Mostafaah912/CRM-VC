@@ -1,4 +1,8 @@
 import { Head, Link } from '@inertiajs/react';
+import { useState } from 'react';
+import { CustomerNotes } from '@/components/customers/CustomerNotes';
+import { CustomerTabs } from '@/components/customers/CustomerTabs';
+import type { TabId } from '@/components/customers/CustomerTabs';
 import { CustomerTimeline } from '@/components/customers/CustomerTimeline';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
 import { StatusBadge } from '@/components/status-badge';
@@ -27,10 +31,7 @@ import {
 } from '@/lib/customer-labels';
 import { formatNumber, formatToman } from '@/lib/format';
 import { dashboard } from '@/routes';
-import {
-    index as customersIndex,
-    show as customersShow,
-} from '@/routes/customers';
+import { index as customersIndex } from '@/routes/customers';
 import type {
     CustomerProfile,
     CustomerProfileMetrics,
@@ -88,6 +89,22 @@ export default function CustomerShow({ profile }: Props) {
         timeline,
     } = profile;
     const can = useCan();
+    const [activeTab, setActiveTab] = useState<TabId | null>(null);
+    const [openedTabs, setOpenedTabs] = useState<TabId[]>([]);
+
+    // A tab's panel is mounted by its FIRST selection, and that is when its list is fetched.
+    const selectTab = (tab: TabId) => {
+        setActiveTab(tab);
+        setOpenedTabs((current) =>
+            current.includes(tab) ? current : [...current, tab],
+        );
+    };
+    const showAllOrders = () => {
+        selectTab('orders');
+        document
+            .getElementById('customer-tabs')
+            ?.scrollIntoView({ behavior: 'smooth' });
+    };
     const place = [customer.province, customer.city]
         .filter((part): part is string => part !== null && part !== '')
         .join('، ');
@@ -239,12 +256,13 @@ export default function CustomerShow({ profile }: Props) {
                 <Card>
                     <CardHeader className="flex flex-row items-baseline justify-between gap-4">
                         <CardTitle>آخرین سفارش‌ها</CardTitle>
-                        <Link
-                            href={customersShow(customer.id)}
+                        <button
+                            type="button"
+                            onClick={showAllOrders}
                             className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
                         >
                             مشاهده همه سفارش‌ها ({formatNumber(orders_total)})
-                        </Link>
+                        </button>
                     </CardHeader>
                     <CardContent>
                         <Table>
@@ -344,6 +362,29 @@ export default function CustomerShow({ profile }: Props) {
                                 ))}
                             </TableBody>
                         </Table>
+                    </CardContent>
+                </Card>
+
+                <Card id="customer-tabs">
+                    <CardHeader>
+                        <CardTitle>همه‌ی سفارش‌ها و محصولات</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <CustomerTabs
+                            customerId={customer.id}
+                            active={activeTab}
+                            opened={openedTabs}
+                            onSelect={selectTab}
+                        />
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>یادداشت‌ها</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <CustomerNotes customerId={customer.id} />
                     </CardContent>
                 </Card>
 
