@@ -12,7 +12,7 @@ use Tests\Support\SystemPageFixtures as Fx;
 /*
 | P3-01 — GET /customers (routes/internal.php): behind auth + customers.view. The controller validates, calls ONE service and
 | renders; masking, search and filters are the service's. Phones are masked in the RESPONSE ITSELF (not merely hidden by the
-| page) unless the viewer holds customers.view_full_phone. Data: the deterministic DemoDataSeeder, test database only.
+| page) for EVERYONE — a holder of customers.view_full_phone reveals one number at a time through POST /customers/{id}/reveal-phone (P3-02, audited). Data: the deterministic DemoDataSeeder, test database only.
 */
 
 beforeEach(function () {
@@ -67,7 +67,7 @@ it('sends only the documented row fields, and no email, raw phone, first or last
     $page = Fx::pageProps(clPage($this));
 
     expect(array_keys($page))->toEqualCanonicalizing(['customers', 'filters', 'options'])
-        ->and(array_keys($page['customers']['data'][0]))->toEqualCanonicalizing(['id', 'display_name', 'phone', 'phone_is_masked', 'status', 'lifecycle_stage', 'province', 'city', 'first_seen_at', 'needs_review'])
+        ->and(array_keys($page['customers']['data'][0]))->toEqualCanonicalizing(['id', 'display_name', 'phone', 'status', 'lifecycle_stage', 'province', 'city', 'first_seen_at', 'needs_review'])
         ->and(array_intersect(Fx::keysDeep($page['customers']), [
             'email', 'phone_raw_last', 'phone_normalized', 'first_name', 'last_name', 'metrics_dirty', 'deleted_at',
             'rfm', 'r_score', 'f_score', 'm_score', 'rfm_segment', 'churn_risk_level', 'churn_reason', 'clv_estimated', 'clv_confidence', 'total_orders', 'total_revenue',
@@ -76,13 +76,12 @@ it('sends only the documented row fields, and no email, raw phone, first or last
 
 // ================================================================== phone masking, through the real response
 
-it('masks every phone in the response for a viewer without customers.view_full_phone', function () {
+it('masks every phone in the response, for a viewer without customers.view_full_phone', function () {
     $body = clPage($this);
-    $rows = $body['customers']['data'];
     $byId = Customer::query()->pluck('phone_normalized', 'id');
 
-    foreach ($rows as $row) {
-        expect($row['phone'])->toBe('********'.substr($byId[$row['id']], -4))->and($row['phone_is_masked'])->toBeTrue();
+    foreach ($body['customers']['data'] as $row) {
+        expect($row['phone'])->toBe('********'.substr($byId[$row['id']], -4));
     }
 
     // No full number anywhere in the props — the page could not "unhide" what is not there.
@@ -90,16 +89,20 @@ it('masks every phone in the response for a viewer without customers.view_full_p
         ->and(preg_match('/98\d{10}/', json_encode($body['options'])))->toBe(0);
 });
 
-it('sends the full normalized phone to a viewer with customers.view_full_phone', function () {
-    $rows = clPage($this, keys: ['customers.view', 'customers.view_full_phone'])['customers']['data'];
+it('masks every phone in the response for a holder of customers.view_full_phone too — they reveal one number at a time, audited', function () {
+    $holder = clPage($this, keys: ['customers.view', 'customers.view_full_phone']);
+    $plain = clPage($this);
     $byId = Customer::query()->pluck('phone_normalized', 'id');
 
-    foreach ($rows as $row) {
-        expect($row['phone'])->toBe($byId[$row['id']])->and($row['phone_is_masked'])->toBeFalse();
+    foreach ($holder['customers']['data'] as $row) {
+        expect($row['phone'])->toBe('********'.substr($byId[$row['id']], -4));
     }
+
+    expect(preg_match('/98\d{10}/', json_encode($holder['customers'])))->toBe(0)
+        ->and($holder['customers']['data'])->toBe($plain['customers']['data']);
 });
 
-it('never gives a masked viewer the full number back through the search box', function () {
+it('never gives the full number back through the search box', function () {
     $customer = Customer::query()->where('phone_normalized', DemoDataSeeder::phone(4))->firstOrFail();
 
     $body = clPage($this, '?search='.urlencode('0'.substr($customer->phone_normalized, 2)));

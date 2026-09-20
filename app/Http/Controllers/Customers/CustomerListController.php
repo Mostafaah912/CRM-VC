@@ -15,7 +15,7 @@ class CustomerListController extends Controller
     public function __invoke(CustomerListRequest $request, CustomerListService $customers): Response
     {
         return Inertia::render('customers/index', [
-            'customers' => $customers->paginate($request->viewer(), $request->filters(), $request->page()),
+            'customers' => $customers->paginate($request->filters(), $request->page()),
             'filters' => $request->echo(),
             'options' => $customers->filterOptions($request->filters()->province),
         ]);

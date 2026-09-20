@@ -2,8 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Models\User;
-use App\Modules\Core\Models\Permission;
 use App\Modules\Customers\Enums\CustomerStatus;
 use App\Modules\Customers\Enums\LifecycleStage;
 use App\Modules\Customers\Models\Customer;
@@ -14,7 +12,6 @@ use App\Support\JalaliDate;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DemoDataSeeder;
 use Illuminate\Support\Facades\DB;
-use Tests\Support\SystemPageFixtures as Fx;
 
 /*
 | P3-01 — the customer list: search, filters, offset pagination and phone masking, in ONE service (no controller logic).
@@ -29,17 +26,12 @@ beforeEach(function () {
     app(DemoDataSeeder::class)->run();
 });
 
-function clViewer(bool $fullPhone = false): User
-{
-    return Fx::userWith('customers.view', ...($fullPhone ? ['customers.view_full_phone'] : []));
-}
-
 /** @param  array<string, mixed>  $filters  the CustomerListFilters arguments, plus an optional `perPage` (default 25) */
-function clList(array $filters = [], ?User $viewer = null, int $page = 1): array
+function clList(array $filters = [], int $page = 1): array
 {
     $perPage = $filters['perPage'] ?? 25;
     unset($filters['perPage']);
-    $result = app(CustomerListService::class)->paginate($viewer ?? clViewer(), new CustomerListFilters(...$filters), $page, $perPage);
+    $result = app(CustomerListService::class)->paginate(new CustomerListFilters(...$filters), $page, $perPage);
 
     return ['rows' => $result->items(), 'paginator' => $result, 'ids' => array_column($result->items(), 'id')];
 }
@@ -253,39 +245,20 @@ it('keeps the page inside a filtered set', function () {
 
 // ================================================================== phone masking
 
-it('shows every phone masked — last four digits only — to a viewer without customers.view_full_phone', function () {
+it('shows every phone masked — last four digits only — and never a full number: revealing one is the audited endpoint\'s job', function () {
     $rows = clList(['perPage' => 100])['rows'];
     $byId = Customer::query()->pluck('phone_normalized', 'id');
 
     expect($rows)->toHaveCount(50);
 
     foreach ($rows as $row) {
-        expect($row['phone'])->toBe('********'.substr($byId[$row['id']], -4))
-            ->and($row['phone_is_masked'])->toBeTrue();
+        expect($row['phone'])->toBe('********'.substr($byId[$row['id']], -4));
     }
 
     expect(preg_match('/98\d{10}/', json_encode($rows)))->toBe(0);
 });
 
-it('shows the full normalized phone to a viewer with customers.view_full_phone', function () {
-    $rows = clList(['perPage' => 100], clViewer(fullPhone: true))['rows'];
-    $byId = Customer::query()->pluck('phone_normalized', 'id');
-
-    foreach ($rows as $row) {
-        expect($row['phone'])->toBe($byId[$row['id']])->and($row['phone_is_masked'])->toBeFalse();
-    }
-});
-
-it('decides per viewer, and an explicit deny beats the role grant', function () {
-    $viewer = clViewer(fullPhone: true);
-    $permission = Permission::query()->where('module', 'customers')->where('action', 'view_full_phone')->firstOrFail();
-    $viewer->permissionOverrides()->create(['permission_id' => $permission->id, 'effect' => 'deny']);
-
-    expect(clList(viewer: $viewer)['rows'][0]['phone_is_masked'])->toBeTrue()
-        ->and(clList(viewer: clViewer(fullPhone: true))['rows'][0]['phone_is_masked'])->toBeFalse();
-});
-
-it('does not leak a number through the search: a masked viewer who searches by phone still sees only the masked form', function () {
+it('does not leak a number through the search: searching by a phone still shows only the masked form', function () {
     $customer = Customer::query()->where('phone_normalized', DemoDataSeeder::phone(9))->firstOrFail();
 
     $row = clList(['search' => $customer->phone_normalized])['rows'][0];
@@ -299,7 +272,7 @@ it('does not leak a number through the search: a masked viewer who searches by p
 it('carries only what the list shows — no email, no raw phone, no first/last name, no metric', function () {
     $row = clList()['rows'][0];
 
-    expect(array_keys($row))->toEqualCanonicalizing(['id', 'display_name', 'phone', 'phone_is_masked', 'status', 'lifecycle_stage', 'province', 'city', 'first_seen_at', 'needs_review']);
+    expect(array_keys($row))->toEqualCanonicalizing(['id', 'display_name', 'phone', 'status', 'lifecycle_stage', 'province', 'city', 'first_seen_at', 'needs_review']);
 });
 
 it('formats the first-seen day in Jalali, and gives null for a customer that has none', function () {

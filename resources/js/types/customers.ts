@@ -3,8 +3,8 @@
 export type CustomerRow = {
     id: number;
     display_name: string | null;
+    /** Always the masked form; the full number comes only from the audited reveal endpoint. */
     phone: string;
-    phone_is_masked: boolean;
     status: string;
     lifecycle_stage: string;
     province: string | null;

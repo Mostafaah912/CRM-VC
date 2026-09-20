@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace App\Modules\Customers\Services;
 
-use App\Models\User;
-use App\Modules\Core\Services\PermissionService;
 use App\Modules\Customers\Enums\CustomerStatus;
 use App\Modules\Customers\Enums\LifecycleStage;
 use App\Modules\Customers\Models\Customer;
@@ -26,8 +24,8 @@ use Illuminate\Database\Eloquent\Builder;
  *  - Filters narrow with AND, and only on columns of `customers`. There is deliberately no filter on customer_metrics
  *    (RFM/churn/CLV): that table is Sprint 4's and still empty.
  *  - Order is newest-created first, ties by id: one stable order, so a page never repeats or skips a customer.
- *  - Phones: masked unless the viewer holds customers.view_full_phone (decided by PermissionService, deny > allow > role > closed).
- *    The row class does the masking, so the full number is not in the response at all for a masked viewer.
+ *  - Phones: ALWAYS masked (the row class), for every viewer — there is no full-number path here. Revealing one number is
+ *    PhoneRevealService's audited endpoint (P3-02), for holders of customers.view_full_phone.
  *
  * @phpstan-import-type CustomerListShape from CustomerListRow
  */
@@ -35,12 +33,9 @@ final class CustomerListService
 {
     private const PER_PAGE = 25;
 
-    public function __construct(private readonly PermissionService $permissions) {}
-
     /** @return LengthAwarePaginator<int, CustomerListShape> */
-    public function paginate(User $viewer, CustomerListFilters $filters, int $page = 1, int $perPage = self::PER_PAGE): LengthAwarePaginator
+    public function paginate(CustomerListFilters $filters, int $page = 1, int $perPage = self::PER_PAGE): LengthAwarePaginator
     {
-        $fullPhone = $this->permissions->allows($viewer, 'customers', 'view_full_phone');
         $term = $filters->search === null ? '' : trim($filters->search);
 
         return Customer::query()
@@ -57,7 +52,7 @@ final class CustomerListService
             ->orderByDesc('id')
             ->paginate($perPage, ['*'], 'page', $page)
             ->withQueryString()
-            ->through(fn (Customer $customer): array => CustomerListRow::fromModel($customer, $fullPhone)->toArray());
+            ->through(fn (Customer $customer): array => CustomerListRow::fromModel($customer)->toArray());
     }
 
     /**

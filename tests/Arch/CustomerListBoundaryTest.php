@@ -61,12 +61,13 @@ it('keeps the controller free of queries, models, config and control flow — on
     expect($services[0])->toHaveCount(1);
 });
 
-it('registers one GET route in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
+it('registers the list as one GET route in routes/internal.php, behind auth and customers.view, loaded from web.php', function () {
     $routes = Scanner::phpCode(clFile('routes/internal.php'));
     $web = (string) file_get_contents(clFile('routes/web.php'));
 
     expect(substr_count($routes, 'Route::get('))->toBe(1)
-        ->and($routes)->not->toMatch('/Route::(post|put|patch|delete|any|match|resource|apiResource)\b/')
+        ->and($routes)->not->toMatch('/Route::(put|patch|delete|any|match|resource|apiResource)\b/')
+        ->and(substr_count($routes, 'Route::post('))->toBe(1) // P3-02's audited reveal, and nothing else that writes
         ->and($routes)->toContain("'auth'")
         ->and($routes)->toContain("'permission:customers,view'")
         ->and($routes)->toContain("'customers'")
@@ -95,12 +96,15 @@ it('never reads a phone or a personal column beyond what the row shows', functio
     ]))->toBe([]);
 });
 
-it('masks in the row, from the permission the service checks — the only place the full phone can pass through', function () {
+it('masks in the row, unconditionally — the list has no path that can carry a full phone', function () {
     $row = Scanner::phpCode(clFile('app/Modules/Customers/Support/CustomerListRow.php'));
     $service = Scanner::phpCode(clFile('app/Modules/Customers/Services/CustomerListService.php'));
 
     expect($row)->toContain('PhoneMask::mask(')
-        ->and($service)->toContain("'view_full_phone'")
+        ->and(substr_count($row, '->phone_normalized'))->toBe(1)
+        ->and($row)->not->toMatch('/fullPhone|canReveal|view_full_phone/')
+        ->and($service)->not->toContain('view_full_phone')
+        ->and($service)->not->toContain('PermissionService')
         ->and($service)->toContain('PhoneNormalizer::normalize(')
         ->and($service)->toContain('InvalidPhoneException');
 

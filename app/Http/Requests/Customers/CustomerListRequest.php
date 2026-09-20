@@ -4,13 +4,11 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Customers;
 
-use App\Models\User;
 use App\Modules\Customers\Enums\CustomerStatus;
 use App\Modules\Customers\Enums\LifecycleStage;
 use App\Modules\Customers\Support\CustomerListFilters;
 use App\Modules\Customers\Support\JalaliDay;
 use Closure;
-use Illuminate\Auth\AuthenticationException;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -93,13 +91,6 @@ class CustomerListRequest extends FormRequest
     public function page(): int
     {
         return max(1, $this->integer('page', 1));
-    }
-
-    public function viewer(): User
-    {
-        $user = $this->user();
-
-        return $user instanceof User ? $user : throw new AuthenticationException;
     }
 
     private function jalaliDay(): Closure

@@ -1,6 +1,7 @@
 import { Head, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
 import { Pagination } from '@/components/pagination';
 import { StatusBadge } from '@/components/status-badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +23,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { useCan } from '@/hooks/use-can';
 import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
 import { statusInfo } from '@/lib/system-status';
 import { dashboard } from '@/routes';
@@ -132,6 +134,8 @@ function ChoiceSelect({
 
 export default function CustomersIndex({ customers, filters, options }: Props) {
     const [state, setState] = useState<FormState>(initialState(filters));
+    const can = useCan();
+    const canRevealPhone = can('customers', 'view_full_phone');
     const { errors } = usePage<{ errors: Record<string, string> }>().props;
     const messages = Object.values(errors ?? {});
 
@@ -340,9 +344,11 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                                         {customer.display_name ?? '—'}
                                     </TableCell>
                                     <TableCell className="text-sm">
-                                        <span dir="ltr" className="font-mono">
-                                            {customer.phone}
-                                        </span>
+                                        <PhoneRevealButton
+                                            customerId={customer.id}
+                                            maskedPhone={customer.phone}
+                                            hasPermission={canRevealPhone}
+                                        />
                                     </TableCell>
                                     <TableCell>
                                         <StatusBadge
