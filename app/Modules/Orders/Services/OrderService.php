@@ -7,6 +7,7 @@ namespace App\Modules\Orders\Services;
 use App\Modules\Catalog\Services\CatalogService;
 use App\Modules\Catalog\Services\ResolvedCatalogItem;
 use App\Modules\Customers\Services\CustomerIdentityService;
+use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Support\Exceptions\InvalidPhoneException;
@@ -31,6 +32,8 @@ use Illuminate\Support\Facades\Log;
  *  - Refund figures belong to P2-07 (recomputed, never incremented): refunded_total and is_fully_refunded are not
  *    written here, and an item's refunded_qty/refunded_amount are carried over to its replacement so a resync cannot
  *    silently zero what refund sync computed.
+ *  - P4-07: OrderSynced fires after commit (same pattern as Catalog\Events\ProductSynced) so Metrics can mark the
+ *    customer dirty for a delayed recompute; it carries ids only, exactly like the write itself never logs PII.
  */
 final class OrderService
 {
@@ -96,6 +99,8 @@ final class OrderService
             $order->save();
 
             $this->replaceItems($order, $input);
+
+            DB::afterCommit(fn () => OrderSynced::dispatch($order->id, $order->customer_id));
 
             return $order->id;
         });

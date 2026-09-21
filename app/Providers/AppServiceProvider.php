@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
+use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
@@ -9,6 +11,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
 
@@ -44,6 +47,11 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureDefaults();
+
+        // P4-07: this Laravel skeleton ships no EventServiceProvider (no listener has needed registering
+        // before this one, and MarkCustomerMetricsDirty lives under app/Modules, outside the default
+        // app/Listeners auto-discovery path) — Event::listen() here is the idiomatic Laravel 11+ alternative.
+        Event::listen(OrderSynced::class, MarkCustomerMetricsDirty::class);
     }
 
     /**

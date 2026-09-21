@@ -15,10 +15,19 @@ function syncCommandFile(): string
     return Scanner::root().'/app/Console/Commands/SyncCommand.php';
 }
 
-it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and nothing else under app/Console', function () {
+/*
+| The list below grows one file per sprint that adds its own top-level command (same pattern as
+| CustomerListBoundaryTest's route count): P4-07 added MetricsRecompute (`metrics:recompute`, PRD
+| §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile.
+*/
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and P4-07\'s metrics:recompute, nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
-    expect($names)->toBe(['app/Console/Commands/ReconcileCommand.php', 'app/Console/Commands/SyncCommand.php'])
+    expect($names)->toBe([
+        'app/Console/Commands/MetricsRecompute.php',
+        'app/Console/Commands/ReconcileCommand.php',
+        'app/Console/Commands/SyncCommand.php',
+    ])
         ->and(Scanner::phpCode(syncCommandFile()))->toMatch('/hm:sync \{--entity=orders[^}]*\} \{--full[^}]*\}/');
 });
 
