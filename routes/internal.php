@@ -9,6 +9,8 @@ use App\Http\Controllers\Customers\CustomerProductsController;
 use App\Http\Controllers\Customers\CustomerShowController;
 use App\Http\Controllers\Customers\CustomerTimelineController;
 use App\Http\Controllers\Customers\PhoneRevealController;
+use App\Http\Controllers\Orders\OrderListController;
+use App\Http\Controllers\Orders\OrderShowController;
 use Illuminate\Support\Facades\Route;
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
@@ -36,4 +38,11 @@ Route::middleware(['auth', 'permission:customers,view_full_phone', 'throttle:10,
     Route::post('customers/{customer}/reveal-phone', PhoneRevealController::class)
         ->whereNumber('customer')
         ->name('customers.reveal-phone');
+});
+
+// P3-06: the order list and one order's detail — read-only, behind orders.view. Orders has no soft delete, so a missing id is
+// simply a 404.
+Route::middleware(['auth', 'permission:orders,view'])->group(function () {
+    Route::get('orders', OrderListController::class)->name('orders.index');
+    Route::get('orders/{order}', OrderShowController::class)->whereNumber('order')->name('orders.show');
 });

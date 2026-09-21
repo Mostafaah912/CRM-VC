@@ -7,6 +7,7 @@ import {
     History,
     LayoutGrid,
     ScrollText,
+    ShoppingCart,
     Users,
 } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
@@ -25,6 +26,7 @@ import {
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
 import { index as customersIndex } from '@/routes/customers';
+import { index as ordersIndex } from '@/routes/orders';
 import audit from '@/routes/audit';
 import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
@@ -57,6 +59,15 @@ export function AppSidebar() {
                       title: 'مشتریان',
                       href: customersIndex(),
                       icon: Users,
+                  },
+              ]
+            : []),
+        ...(can('orders', 'view')
+            ? [
+                  {
+                      title: 'سفارش‌ها',
+                      href: ordersIndex(),
+                      icon: ShoppingCart,
                   },
               ]
             : []),
