@@ -42,6 +42,16 @@ it('rfm calculator segment mapping has cant_lose before lost', function () {
     expect($cantLosePos)->toBeLessThan($lostPos);
 });
 
+/** P4-04: margin_rate/horizon_years always come from config, never a hardcoded literal (CLAUDE.md §3/§12). */
+it('clv calculator reads margin and horizon from config not hardcoded', function () {
+    $content = file_get_contents(Scanner::root().'/app/Modules/Metrics/Services/ClvCalculator.php');
+    expect($content)->not->toContain('0.17');
+    expect($content)->not->toContain('0.20');
+    expect($content)->not->toContain('2.0');
+    expect($content)->toContain("config('metrics.margin_rate')");
+    expect($content)->toContain("config('metrics.horizon_years')");
+});
+
 it('never puts a customer\'s name or phone in error_message or a log line', function () {
     expect(Scanner::violations(Scanner::phpFiles(['app/Modules/Metrics']), [
         '/error_message/i',
