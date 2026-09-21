@@ -52,6 +52,14 @@ it('clv calculator reads margin and horizon from config not hardcoded', function
     expect($content)->toContain("config('metrics.horizon_years')");
 });
 
+/** P4-05: churn_reason is built only from recency_days/purchase_cycle_days/p75 — never a name or phone column. */
+it('churn reason never references customer name or phone columns', function () {
+    $content = file_get_contents(Scanner::root().'/app/Modules/Metrics/Services/ChurnCalculator.php');
+    expect($content)->not->toContain('billing_phone');
+    expect($content)->not->toContain('full_name');
+    expect($content)->not->toContain('phone');
+});
+
 it('never puts a customer\'s name or phone in error_message or a log line', function () {
     expect(Scanner::violations(Scanner::phpFiles(['app/Modules/Metrics']), [
         '/error_message/i',
