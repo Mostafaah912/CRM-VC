@@ -24,11 +24,13 @@ type State =
 const MESSAGES = {
     tooMany: 'تعداد درخواست‌ها بیش از حد مجاز است',
     forbidden: 'دسترسی ندارید',
+    serverError: 'خطای سرور، لطفاً بعداً تلاش کنید',
     failed: 'خطا در نمایش شماره',
     hint: 'برای مشاهده کلیک کنید',
     locked: 'مشاهده‌ی شماره‌ی کامل نیاز به دسترسی دارد',
 };
 
+/** 429 and 403 get their own wording; a server error (500+) is distinct too, so an outage never reads as a permission problem. */
 function messageFor(status: number): string {
     if (status === 429) {
         return MESSAGES.tooMany;
@@ -36,6 +38,10 @@ function messageFor(status: number): string {
 
     if (status === 403) {
         return MESSAGES.forbidden;
+    }
+
+    if (status >= 500) {
+        return MESSAGES.serverError;
     }
 
     return MESSAGES.failed;
