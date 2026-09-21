@@ -24,6 +24,14 @@ it('never puts a Doctrine-style bound user value straight into a Metrics service
         ]))->toBe([]);
 });
 
+/** P4-02: ChurnThresholdService's percentile SQL is a fixed heredoc — no `$` ever reaches it. */
+it('churn threshold service has no raw string interpolation in sql', function () {
+    $content = file_get_contents(
+        base_path('app/Modules/Metrics/Services/ChurnThresholdService.php')
+    );
+    expect($content)->not->toMatch('/(?:whereRaw|selectRaw|DB::raw|DB::statement)\([^;]*\$[^;]*\)/s');
+});
+
 it('never puts a customer\'s name or phone in error_message or a log line', function () {
     expect(Scanner::violations(Scanner::phpFiles(['app/Modules/Metrics']), [
         '/error_message/i',
