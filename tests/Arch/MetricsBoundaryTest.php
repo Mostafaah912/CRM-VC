@@ -60,6 +60,12 @@ it('churn reason never references customer name or phone columns', function () {
     expect($content)->not->toContain('phone');
 });
 
+/** P4-06: every threshold is a bound parameter, never a literal number compared against recency_days. */
+it('lifecycle resolver reads thresholds from parameter not hardcoded', function () {
+    $content = file_get_contents(Scanner::root().'/app/Modules/Metrics/Services/LifecycleStageResolver.php');
+    expect($content)->not->toMatch('/recency_days\s*[<>]=?\s*\d+/');
+});
+
 it('never puts a customer\'s name or phone in error_message or a log line', function () {
     expect(Scanner::violations(Scanner::phpFiles(['app/Modules/Metrics']), [
         '/error_message/i',
