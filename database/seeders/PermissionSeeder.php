@@ -36,6 +36,8 @@ class PermissionSeeder extends Seeder
 
             ['module' => 'orders', 'action' => 'view', 'label' => 'مشاهده سفارش‌ها'],
 
+            ['module' => 'catalog', 'action' => 'view', 'label' => 'مشاهده محصولات'],
+
             ['module' => 'segments', 'action' => 'view', 'label' => 'مشاهده سگمنت‌ها'],
             ['module' => 'segments', 'action' => 'create', 'label' => 'ساخت سگمنت'],
             ['module' => 'segments', 'action' => 'edit', 'label' => 'ویرایش سگمنت'],

@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Catalog\ProductListController;
 use App\Http\Controllers\Customers\CustomerListController;
 use App\Http\Controllers\Customers\CustomerNotesController;
 use App\Http\Controllers\Customers\CustomerOrdersController;
@@ -45,4 +46,9 @@ Route::middleware(['auth', 'permission:customers,view_full_phone', 'throttle:10,
 Route::middleware(['auth', 'permission:orders,view'])->group(function () {
     Route::get('orders', OrderListController::class)->name('orders.index');
     Route::get('orders/{order}', OrderShowController::class)->whereNumber('order')->name('orders.show');
+});
+
+// P3-07, Sprint 3's last task: the product list with lifetime sales — read-only, behind catalog.view.
+Route::middleware(['auth', 'permission:catalog,view'])->group(function () {
+    Route::get('products', ProductListController::class)->name('products.index');
 });

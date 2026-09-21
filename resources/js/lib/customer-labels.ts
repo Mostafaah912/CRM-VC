@@ -44,3 +44,11 @@ export const orderStatuses: StatusLabels = {
     refunded: { label: 'مسترد‌شده', tone: 'neutral' },
     failed: { label: 'ناموفق', tone: 'danger' },
 };
+
+/** products.status (Catalog's own ProductStatus enum) */
+export const productStatuses: StatusLabels = {
+    publish: { label: 'منتشرشده', tone: 'success' },
+    draft: { label: 'پیش‌نویس', tone: 'neutral' },
+    pending: { label: 'در انتظار بررسی', tone: 'warning' },
+    private: { label: 'خصوصی', tone: 'neutral' },
+};

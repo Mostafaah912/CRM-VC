@@ -6,6 +6,7 @@ import {
     GitMerge,
     History,
     LayoutGrid,
+    Package,
     ScrollText,
     ShoppingCart,
     Users,
@@ -27,6 +28,7 @@ import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
 import { index as customersIndex } from '@/routes/customers';
 import { index as ordersIndex } from '@/routes/orders';
+import { index as productsIndex } from '@/routes/products';
 import audit from '@/routes/audit';
 import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
@@ -68,6 +70,15 @@ export function AppSidebar() {
                       title: 'سفارش‌ها',
                       href: ordersIndex(),
                       icon: ShoppingCart,
+                  },
+              ]
+            : []),
+        ...(can('catalog', 'view')
+            ? [
+                  {
+                      title: 'محصولات',
+                      href: productsIndex(),
+                      icon: Package,
                   },
               ]
             : []),
