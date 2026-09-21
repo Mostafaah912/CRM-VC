@@ -152,8 +152,15 @@ it('changes the reports table only by a NEW migration: the published P1-04 one i
         ->and($additions)->toHaveCount(1);
 });
 
+/*
+| This scans app/Modules/Sync — the module P2-11 actually touched — not the whole app tree: Sprint 4
+| legitimately added RfmCalculator etc. under app/Modules/Metrics afterwards (P4-01/02/03), and a
+| repo-wide scan would flag that real, separately-scoped work as scope creep from a Sprint 2 commit.
+| The intent this guards is still exactly P2-11's: no health check, no UI page and no metrics code
+| smuggled into Sync's reconciliation feature itself.
+*/
 it('adds no health check, no UI page and no metrics code in P2-11', function () {
-    $names = array_map(fn (string $f) => basename($f), Scanner::phpFiles(['app']));
+    $names = array_map(fn (string $f) => basename($f), Scanner::phpFiles(['app/Modules/Sync']));
 
     expect(array_filter($names, fn (string $n) => preg_match('/HealthCheck|Metrics(Engine|Service)|RfmCalculator/i', $n) === 1))->toBe([])
         ->and(Scanner::files(['resources/js/pages'], 'tsx'))->each->not->toMatch('/reconcil/i');

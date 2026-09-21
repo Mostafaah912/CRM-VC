@@ -24,12 +24,22 @@ it('never puts a Doctrine-style bound user value straight into a Metrics service
         ]))->toBe([]);
 });
 
-/** P4-02: ChurnThresholdService's percentile SQL is a fixed heredoc — no `$` ever reaches it. */
+/**
+ * P4-02: ChurnThresholdService's percentile SQL is a fixed heredoc — no `$` ever reaches it.
+ * Uses Scanner::root() rather than base_path(): tests/Arch is not bound to the Feature/Integration
+ * TestCase (tests/Pest.php), so the app container isn't guaranteed booted when this file runs alone.
+ */
 it('churn threshold service has no raw string interpolation in sql', function () {
-    $content = file_get_contents(
-        base_path('app/Modules/Metrics/Services/ChurnThresholdService.php')
-    );
+    $content = file_get_contents(Scanner::root().'/app/Modules/Metrics/Services/ChurnThresholdService.php');
     expect($content)->not->toMatch('/(?:whereRaw|selectRaw|DB::raw|DB::statement)\([^;]*\$[^;]*\)/s');
+});
+
+/** P4-03: the CASE in mapSegments() must check cant_lose (specific) before lost (general), PRD §12. */
+it('rfm calculator segment mapping has cant_lose before lost', function () {
+    $content = file_get_contents(Scanner::root().'/app/Modules/Metrics/Services/RfmCalculator.php');
+    $cantLosePos = strpos($content, 'cant_lose');
+    $lostPos = strrpos($content, "'lost'");
+    expect($cantLosePos)->toBeLessThan($lostPos);
 });
 
 it('never puts a customer\'s name or phone in error_message or a log line', function () {
