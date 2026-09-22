@@ -16,17 +16,21 @@ use Illuminate\Support\Facades\DB;
  *
  * clv_historical is never NULL: customer_metrics.clv_historical is NOT NULL DEFAULT 0 (P1-04), and a
  * customer with no orders has total_revenue=0, so the formula already lands on 0 with no CASE needed.
- * clv_estimated and clv_confidence are NULL together whenever there isn't enough of a pattern to
- * project from (fewer than 2 orders, or no measurable purchase cycle) — PRD's own worked SQL in §13
- * computes clv_confidence unconditionally from total_orders alone, which would hand out a 'low'
- * confidence to a customer whose clv_estimated is NULL; that contradicts the very next line of the
- * same PRD section ("wherever clv_estimated is shown, clv_confidence sits beside it") since a
- * confidence label with nothing to be confident about is not what that display contract means. Both
- * columns share the same NULL condition here so a confidence label never appears without a value.
+ *
+ * clv_confidence is set from total_orders alone (PRD §13's own worked SQL), for every customer with
+ * total_orders >= 1 — INCLUDING one whose clv_estimated is NULL (fewer than 2 orders). An earlier
+ * version of this file paired both columns under one shared NULL condition, reasoning that a
+ * confidence label with nothing to be confident about contradicted PRD's display-contract sentence;
+ * Gate 2 (tests/fixtures/expected_metrics.json, e.g. a single-order customer with clv_estimated=null
+ * and clv_confidence="low") proved that reasoning wrong — the ORIGINAL PRD formula was correct all
+ * along. `clv_confidence` here reads as "how much history we have on this customer," a fact independent
+ * of whether that history is enough to project a number from — a single-order customer legitimately has
+ * "low" confidence in the FUTURE numbers we don't have yet, same as anyone else with few orders.
  *
  * Display contract: clv_estimated is ALWAYS shown alongside clv_confidence. A dedicated <ClvValue />
  * React component enforces this — see P4-08. NULL clv_estimated means "insufficient data", never
- * display as zero.
+ * display as zero; showing a confidence label next to that "insufficient data" text is still correct
+ * ("low confidence" reads naturally next to "not enough data yet").
  */
 final class ClvCalculator
 {
@@ -44,10 +48,6 @@ final class ClvCalculator
                     ELSE (aov * ?::numeric * (365.0 / purchase_cycle_days) * ?::numeric)::bigint
                 END,
                 clv_confidence = CASE
-                    WHEN total_orders < 2
-                      OR purchase_cycle_days IS NULL
-                      OR purchase_cycle_days <= 0
-                    THEN NULL
                     WHEN total_orders < 3 THEN 'low'
                     WHEN total_orders < 6 THEN 'medium'
                     ELSE 'high'

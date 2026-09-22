@@ -28,6 +28,12 @@ use Illuminate\Support\Facades\DB;
  * SQL string concatenation with bound values only — never sprintf/interpolation with a `$` — and
  * never references a name, contact detail, or any other PII column; only recency_days,
  * purchase_cycle_days and the store's own p75 threshold ever appear in it.
+ *
+ * churn_risk_score casts to `numeric(5,2)`, never `::integer`: the column keeps two decimal places
+ * (e.g. 21.67), and an earlier version of this file rounded the whole expression to a whole number
+ * before storage — invisible to every P4-05 test because they all compared `(int) $score` on both
+ * sides, until Gate 2 (P4-08, tests/fixtures/expected_metrics.json) compared the real decimal value
+ * against a real customer and caught the lost precision.
  */
 final class ChurnCalculator
 {
@@ -76,7 +82,7 @@ final class ChurnCalculator
                                AND li.last_interval_days > cm.purchase_cycle_days * 1.5
                                THEN 10 ELSE 0 END
                         - CASE WHEN cm.m_score = 5 THEN 5 ELSE 0 END
-                    )::integer)),
+                    )::numeric(5,2))),
                     churn_risk_level = CASE
                         WHEN cm.recency_days > ?::integer THEN 'lost'
                         WHEN cm.recency_days > ?::integer THEN 'high'

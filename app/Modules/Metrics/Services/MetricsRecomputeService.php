@@ -6,6 +6,7 @@ namespace App\Modules\Metrics\Services;
 
 use App\Modules\Metrics\Enums\MetricRunMode;
 use App\Modules\Metrics\Events\MetricsRecomputed;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Throwable;
 
@@ -43,19 +44,25 @@ final class MetricsRecomputeService
         private readonly LifecycleStageResolver $lifecycle,
     ) {}
 
-    public function run(string $runType): void
+    /**
+     * `$asOf` (P4-08, Gate 2): overrides the instant base aggregates measures recency against — only
+     * ever passed explicitly by the Gate 2 test, which anchors the whole pipeline to
+     * DemoDataSeeder::AS_OF so it can be compared against a fixture frozen at that same instant.
+     * Production callers (the Job, the console command) never pass it, so behavior there is unchanged.
+     */
+    public function run(string $runType, ?CarbonImmutable $asOf = null): void
     {
         $mode = MetricRunMode::from($runType);
         $run = $this->runs->start($mode);
 
         try {
-            $count = DB::transaction(function () use ($mode, $run): int {
+            $count = DB::transaction(function () use ($mode, $run, $asOf): int {
                 $thresholds = $this->churnThresholds->percentiles();
                 $this->churnThresholds->saveToRun($run, $thresholds);
 
                 $count = $mode === MetricRunMode::Full
-                    ? $this->baseAggregates->computeAll($run->id)
-                    : $this->baseAggregates->computeDirty($run->id);
+                    ? $this->baseAggregates->computeAll($run->id, $asOf)
+                    : $this->baseAggregates->computeDirty($run->id, $asOf);
 
                 $this->purchaseCycle->compute($thresholds);
                 $this->rfm->compute();

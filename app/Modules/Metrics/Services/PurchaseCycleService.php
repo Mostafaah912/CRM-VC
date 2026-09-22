@@ -22,6 +22,11 @@ use Illuminate\Support\Facades\DB;
  * Assumes customer_metrics already has a row per customer (BaseAggregateService, PRD §11 step 3) —
  * a customer with zero realized orders never appears in `intervals` and is left untouched (its
  * purchase_cycle_days stays NULL, "unknown" is not "the store average").
+ *
+ * `median_days_between`/`avg_days_between` (P4-08, Gate 2) store the customer's TRUE personal
+ * figures — NULL for a single-order customer, never the store fallback that only ever lives in
+ * `purchase_cycle_days`. `purchase_cycle_days` always tracks the median, never the average: a lone
+ * unusually long or short gap should not move the number the churn/CLV steps rely on.
  */
 final class PurchaseCycleService
 {
@@ -45,12 +50,16 @@ final class PurchaseCycleService
                     SELECT
                         customer_id,
                         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY days)
-                            FILTER (WHERE days > 0 AND days <= 730) AS personal_median
+                            FILTER (WHERE days > 0 AND days <= 730) AS personal_median,
+                        AVG(days) FILTER (WHERE days > 0 AND days <= 730) AS personal_avg
                     FROM intervals
                     GROUP BY customer_id
                 )
                 UPDATE customer_metrics cm
-                SET purchase_cycle_days = COALESCE(ci.personal_median, ?)::numeric
+                SET
+                    purchase_cycle_days = COALESCE(ci.personal_median, ?)::numeric,
+                    median_days_between = ci.personal_median,
+                    avg_days_between = ci.personal_avg
                 FROM customer_medians ci
                 WHERE ci.customer_id = cm.customer_id
                 SQL,

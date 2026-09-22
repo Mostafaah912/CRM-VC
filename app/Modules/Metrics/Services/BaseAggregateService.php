@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Metrics\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,22 +21,28 @@ use Illuminate\Support\Facades\DB;
  * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. It also never
  * touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not just
  * this step) has recomputed a customer, which is P4-07's job.
+ *
+ * `$asOf` (P4-08, Gate 2): `recency_days` is bound to this instant, never Postgres's own `NOW()` —
+ * a literal NOW() can never be reproduced by a test asserting against a fixture frozen at a fixed
+ * historical moment (tests/fixtures/expected_metrics.json is anchored at DemoDataSeeder::AS_OF).
+ * Defaults to the real current time, so production behavior is unchanged; `computed_at` always stays
+ * the true wall-clock instant this row was actually written, regardless of `$asOf`.
  */
 final class BaseAggregateService
 {
     /** Every customer, full recompute. Returns the number of customers processed. */
-    public function computeAll(int $metricRunId): int
+    public function computeAll(int $metricRunId, ?CarbonImmutable $asOf = null): int
     {
-        return $this->upsert($metricRunId, dirtyOnly: false);
+        return $this->upsert($metricRunId, dirtyOnly: false, asOf: $asOf ?? CarbonImmutable::now());
     }
 
     /** Only customers with `customers.metrics_dirty = true`. Returns the number of customers processed. */
-    public function computeDirty(int $metricRunId): int
+    public function computeDirty(int $metricRunId, ?CarbonImmutable $asOf = null): int
     {
-        return $this->upsert($metricRunId, dirtyOnly: true);
+        return $this->upsert($metricRunId, dirtyOnly: true, asOf: $asOf ?? CarbonImmutable::now());
     }
 
-    private function upsert(int $metricRunId, bool $dirtyOnly): int
+    private function upsert(int $metricRunId, bool $dirtyOnly, CarbonImmutable $asOf): int
     {
         // A fixed choice between two literals from config — never a value built from request input.
         $monetaryShippingTerm = config('metrics.include_shipping', false) ? '0' : 'o.shipping_total';
@@ -63,7 +70,7 @@ final class BaseAggregateService
                     END,
                     CASE
                         WHEN agg.last_order_at IS NULL THEN NULL
-                        ELSE GREATEST(0, EXTRACT(EPOCH FROM (NOW() - agg.last_order_at)) / 86400.0)::integer
+                        ELSE GREATEST(0, EXTRACT(EPOCH FROM (?::timestamptz - agg.last_order_at)) / 86400.0)::integer
                     END,
                     to_jalali_month(agg.first_order_at),
                     ?,
@@ -98,7 +105,7 @@ final class BaseAggregateService
                     metric_run_id   = EXCLUDED.metric_run_id,
                     computed_at     = EXCLUDED.computed_at
                 SQL,
-            [$metricRunId],
+            [$asOf->format('Y-m-d H:i:sP'), $metricRunId],
         );
     }
 }

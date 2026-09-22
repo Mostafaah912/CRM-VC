@@ -9,11 +9,18 @@ use Illuminate\Support\Facades\DB;
 /*
 | P4-04 (TEST FIRST, PRD §13). clv_historical is always (total_revenue * margin_rate)::bigint — never
 | NULL, since customer_metrics.clv_historical is NOT NULL DEFAULT 0 (P1-04 migration) and a customer
-| with no orders naturally has total_revenue=0, so this needs no special-casing at all. clv_estimated
-| and clv_confidence are the pair that can be NULL together ("insufficient data", never zero, never a
-| confidence label with nothing to be confident about). margin_rate/horizon_years always come from
-| config('metrics.*'), never a literal, so a store's real margin/horizon can change without a
-| code change (CLAUDE.md §3/§12).
+| with no orders naturally has total_revenue=0, so this needs no special-casing at all.
+|
+| clv_confidence is set from total_orders alone, for every customer with total_orders >= 1 —
+| INDEPENDENTLY of clv_estimated's nullability. A single-order customer legitimately gets 'low'
+| confidence even though clv_estimated is NULL (not enough orders to project from): confidence
+| here means "how much history do we have," a fact regardless of whether that history is enough to
+| project a number. Gate 2 (tests/fixtures/expected_metrics.json) is what proved this — an earlier
+| version of this file paired both columns under one shared NULL condition, which Gate 2's real
+| pipeline run against the frozen demo dataset showed was wrong (see ARCHITECTURE.md P4-08).
+|
+| margin_rate/horizon_years always come from config('metrics.*'), never a literal, so a store's real
+| margin/horizon can change without a code change (CLAUDE.md §3/§12).
 */
 
 function clvCustomer(array $metrics = []): Customer
@@ -69,13 +76,14 @@ it('rounds clv_historical to an integer, matching Postgres\'s numeric-to-bigint 
 
 // ================================================================== clv_estimated
 
-it('leaves clv_estimated (and clv_confidence) null for a single-order customer', function () {
+it('leaves clv_estimated null for a single-order customer, but still gives a real clv_confidence', function () {
     $customer = clvCustomer(['total_orders' => 1, 'total_revenue' => 500_000, 'aov' => 500_000, 'purchase_cycle_days' => 90]);
 
     app(ClvCalculator::class)->compute();
 
     $row = clvRow($customer);
-    expect([$row->clv_estimated, $row->clv_confidence])->toBe([null, null]);
+    expect($row->clv_estimated)->toBeNull()
+        ->and($row->clv_confidence)->toBe('low');
 });
 
 it('leaves clv_estimated null when purchase_cycle_days is zero, never divides by zero', function () {
@@ -86,13 +94,14 @@ it('leaves clv_estimated null when purchase_cycle_days is zero, never divides by
     expect(clvRow($customer)->clv_estimated)->toBeNull();
 });
 
-it('leaves both clv_estimated and clv_confidence null when purchase_cycle_days is null', function () {
+it('leaves clv_estimated null when purchase_cycle_days is null, but still gives a real clv_confidence', function () {
     $customer = clvCustomer(['total_orders' => 3, 'total_revenue' => 1_500_000, 'aov' => 500_000, 'purchase_cycle_days' => null]);
 
     app(ClvCalculator::class)->compute();
 
     $row = clvRow($customer);
-    expect([$row->clv_estimated, $row->clv_confidence])->toBe([null, null]);
+    expect($row->clv_estimated)->toBeNull()
+        ->and($row->clv_confidence)->toBe('medium');
 });
 
 it('computes clv_estimated with the exact PRD §13 formula', function () {
@@ -149,17 +158,17 @@ it('gives clv_confidence high for six or more orders', function () {
         ->and(clvRow($ten)->clv_confidence)->toBe('high');
 });
 
-it('gives clv_confidence null, never \'low\', when clv_estimated is null', function () {
+it('gives clv_confidence low even though clv_estimated is null for a single-order customer', function () {
     $customer = clvCustomer(['total_orders' => 1, 'total_revenue' => 500_000, 'aov' => 500_000, 'purchase_cycle_days' => 90]);
 
     app(ClvCalculator::class)->compute();
 
-    expect(clvRow($customer)->clv_confidence)->toBeNull();
+    expect(clvRow($customer)->clv_confidence)->toBe('low');
 });
 
-// ================================================================== display contract
+// ================================================================== confidence's own nullability
 
-it('never leaves clv_confidence null while clv_estimated is set — the mandatory display pairing', function () {
+it('leaves clv_confidence null only for a prospect (total_orders=0), regardless of clv_estimated elsewhere', function () {
     clvCustomer(['total_orders' => 0, 'total_revenue' => 0, 'aov' => 0]);
     clvCustomer(['total_orders' => 1, 'total_revenue' => 500_000, 'aov' => 500_000, 'purchase_cycle_days' => 90]);
     clvCustomer(['total_orders' => 2, 'total_revenue' => 1_000_000, 'aov' => 500_000, 'purchase_cycle_days' => 0]);
@@ -168,7 +177,8 @@ it('never leaves clv_confidence null while clv_estimated is set — the mandator
 
     app(ClvCalculator::class)->compute();
 
-    expect(DB::table('customer_metrics')->whereNotNull('clv_estimated')->whereNull('clv_confidence')->count())->toBe(0);
+    expect(DB::table('customer_metrics')->where('total_orders', '>=', 1)->whereNull('clv_confidence')->count())->toBe(0)
+        ->and(DB::table('customer_metrics')->where('total_orders', 0)->whereNotNull('clv_confidence')->count())->toBe(0);
 });
 
 // ================================================================== compute() return value

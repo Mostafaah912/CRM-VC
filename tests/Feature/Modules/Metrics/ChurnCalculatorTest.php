@@ -63,6 +63,15 @@ it('leaves expected_next_order_at null when there are no orders', function () {
 
 // ================================================================== base score
 
+it('keeps two decimal places, never rounds to a whole integer', function () {
+    // single-order penalty: base = 10/60*40 = 6.666... + 15 = 21.666... -> 21.67, never 22.
+    $customer = churnCustomer(['total_orders' => 1, 'recency_days' => 10, 'purchase_cycle_days' => 60]);
+
+    app(ChurnCalculator::class)->compute(CHURN_THRESHOLDS);
+
+    expect((float) churnRow($customer)->churn_risk_score)->toEqual(21.67);
+});
+
 it('gives base score 40 for a ratio of exactly 1', function () {
     $customer = churnCustomer(['total_orders' => 5, 'recency_days' => 90, 'purchase_cycle_days' => 90]);
 

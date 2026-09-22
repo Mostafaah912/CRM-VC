@@ -31,6 +31,17 @@ function purchaseCycleFor(Customer $customer): ?float
     return $value === null ? null : (float) $value;
 }
 
+/** @return array{median: float|null, avg: float|null} */
+function intervalStatsFor(Customer $customer): array
+{
+    $row = DB::table('customer_metrics')->where('customer_id', $customer->id)->first(['median_days_between', 'avg_days_between']);
+
+    return [
+        'median' => $row->median_days_between === null ? null : (float) $row->median_days_between,
+        'avg' => $row->avg_days_between === null ? null : (float) $row->avg_days_between,
+    ];
+}
+
 it('gives a single-order customer the store p50', function () {
     $customer = Customer::factory()->create();
     Order::factory()->for($customer)->create(['is_realized' => true]);
@@ -96,6 +107,47 @@ it('never counts an unrealized order towards a customer\'s interval', function (
     app(PurchaseCycleService::class)->compute(STORE_THRESHOLDS);
 
     expect(purchaseCycleFor($customer))->toBeNull();
+});
+
+it('leaves median_days_between and avg_days_between null for a single-order customer (never the store p50)', function () {
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true]);
+    seedBaseMetrics();
+
+    app(PurchaseCycleService::class)->compute(STORE_THRESHOLDS);
+
+    expect(intervalStatsFor($customer))->toBe(['median' => null, 'avg' => null])
+        ->and(purchaseCycleFor($customer))->toBe(60.0); // the fallback stays only in purchase_cycle_days
+});
+
+it('stores the true personal median and average, not the COALESCEd fallback', function () {
+    // Three intervals (60, 90, 30 days) via four orders: median=60, avg=(60+90+30)/3=60 too here,
+    // so also cover a case where they diverge below.
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(180)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(120)]); // interval 60
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(30)]); // interval 90
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(0)]); // interval 30
+    seedBaseMetrics();
+
+    app(PurchaseCycleService::class)->compute(STORE_THRESHOLDS);
+
+    expect(intervalStatsFor($customer))->toBe(['median' => 60.0, 'avg' => 60.0]);
+});
+
+it('gives a divergent median and average when intervals are skewed, and purchase_cycle_days follows the median', function () {
+    // Intervals 10, 10, 100: median=10, average=40 — purchase_cycle_days must track the median.
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(120)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(110)]); // interval 10
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(100)]); // interval 10
+    Order::factory()->for($customer)->create(['is_realized' => true, 'ordered_at' => now()->subDays(0)]); // interval 100
+    seedBaseMetrics();
+
+    app(PurchaseCycleService::class)->compute(STORE_THRESHOLDS);
+
+    expect(intervalStatsFor($customer))->toBe(['median' => 10.0, 'avg' => 40.0])
+        ->and(purchaseCycleFor($customer))->toBe(10.0);
 });
 
 it('returns the number of customers with at least one realized order', function () {

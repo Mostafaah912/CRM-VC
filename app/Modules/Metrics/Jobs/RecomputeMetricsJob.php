@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Metrics\Jobs;
 
 use App\Modules\Metrics\Services\MetricsRecomputeService;
+use Carbon\CarbonImmutable;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -35,7 +36,8 @@ final class RecomputeMetricsJob implements ShouldBeUnique, ShouldQueue
 
     public int $uniqueFor = 1800;
 
-    public function __construct(public readonly string $runType = 'full')
+    /** `$asOf` (P4-08, Gate 2 only): see MetricsRecomputeService::run(). Never passed in production. */
+    public function __construct(public readonly string $runType = 'full', public readonly ?CarbonImmutable $asOf = null)
     {
         $this->onQueue('metrics');
     }
@@ -47,6 +49,6 @@ final class RecomputeMetricsJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(MetricsRecomputeService $service): void
     {
-        $service->run($this->runType);
+        $service->run($this->runType, $this->asOf);
     }
 }
