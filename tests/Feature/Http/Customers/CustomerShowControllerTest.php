@@ -168,7 +168,7 @@ it('does not reveal anything by being viewed: no audit row, no write of any kind
 
 // ================================================================== the gate
 
-it('loads the profile in six queries on the data tables — and every other query of the request is permission plumbing', function () {
+it('loads the profile in seven queries on the data tables (with metrics) — and every other query of the request is permission plumbing', function () {
     showSeed($this->customer);
     $this->actingAs(Fx::userWith('customers.view', 'customers.view_full_phone'));
     $sql = [];
@@ -178,14 +178,17 @@ it('loads the profile in six queries on the data tables — and every other quer
 
     $this->get("/customers/{$this->customer->id}")->assertOk();
 
-    $isData = fn (string $q) => preg_match('/\b(from|join)\s+"(customers|customer_metrics|orders|order_items|customer_events)"/i', $q) === 1;
+    $isData = fn (string $q) => preg_match('/\b(from|join)\s+"(customers|customer_metrics|orders|order_items|customer_events|metric_runs)"/i', $q) === 1;
     $isPermission = fn (string $q) => preg_match('/\b(from|join)\s+"(roles|role_user|permissions|permission_role|permission_overrides)"/i', $q) === 1;
     $data = array_values(array_filter($sql, $isData));
     $rest = array_values(array_filter($sql, fn (string $q) => ! $isData($q)));
 
-    // 6 is the budget (PRD §18): five for the profile and one for the first page of the timeline. The permission stack (middleware + the shared can() props) is Core's and is not
-    // part of the profile's budget; nothing else may creep in beside it.
-    expect($data)->toHaveCount(6)
+    // 6 is P3-03's original budget (PRD §18): five for the profile and one for the first page of the
+    // timeline. P4-08 adds a seventh (isMetricsStale's metric_runs check), only when a customer_metrics
+    // row exists — this scenario always seeds one, so 7 is the correct count here. The permission stack
+    // (middleware + the shared can() props) is Core's and is not part of the profile's budget; nothing
+    // else may creep in beside it.
+    expect($data)->toHaveCount(7)
         ->and(array_filter($rest, fn (string $q) => ! $isPermission($q)))->toBe([]);
 });
 

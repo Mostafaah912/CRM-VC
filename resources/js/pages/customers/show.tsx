@@ -5,7 +5,11 @@ import { CustomerTabs } from '@/components/customers/CustomerTabs';
 import type { TabId } from '@/components/customers/CustomerTabs';
 import { CustomerTimeline } from '@/components/customers/CustomerTimeline';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
+import { ClvValue } from '@/components/metrics/ClvValue';
+import { RfmBadge } from '@/components/metrics/RfmBadge';
+import { RiskBar } from '@/components/metrics/RiskBar';
 import { StatusBadge } from '@/components/status-badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
     Card,
     CardContent,
@@ -23,8 +27,6 @@ import {
 } from '@/components/ui/table';
 import { useCan } from '@/hooks/use-can';
 import {
-    churnLevels,
-    clvConfidences,
     customerStatuses,
     lifecycleStages,
     orderStatuses,
@@ -116,9 +118,12 @@ export default function CustomerShow({ profile }: Props) {
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <header className="border-sidebar-border/70 dark:border-sidebar-border flex flex-col gap-3 rounded-xl border p-4">
                     <div className="flex items-start justify-between gap-4">
-                        <h1 className="text-2xl font-semibold">
-                            {customer.display_name ?? 'بدون نام'}
-                        </h1>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h1 className="text-2xl font-semibold">
+                                {customer.display_name ?? 'بدون نام'}
+                            </h1>
+                            <RfmBadge segment={metrics?.rfm_segment ?? null} />
+                        </div>
                         <Link
                             href={customersIndex()}
                             className="text-muted-foreground hover:text-foreground text-sm underline-offset-4 hover:underline"
@@ -155,6 +160,16 @@ export default function CustomerShow({ profile }: Props) {
                     </div>
                 </header>
 
+                {metrics !== null && metrics.metrics_stale && (
+                    <Alert>
+                        <AlertTitle>در انتظار بازمحاسبه</AlertTitle>
+                        <AlertDescription>
+                            معیارهای این مشتری از آخرین بازمحاسبه‌ی کلی
+                            به‌روزرسانی نشده‌اند؛ ممکن است اعداد زیر قدیمی باشند.
+                        </AlertDescription>
+                    </Alert>
+                )}
+
                 {metrics !== null && (
                     <section
                         aria-label="معیارها"
@@ -190,65 +205,39 @@ export default function CustomerShow({ profile }: Props) {
                         <CardHeader>
                             <CardTitle>RFM و ریسک ریزش</CardTitle>
                         </CardHeader>
-                        <CardContent className="flex flex-col gap-4">
-                            <div className="flex flex-wrap items-center gap-8">
-                                <div className="flex gap-6">
-                                    <Score
-                                        label="تازگی (R)"
-                                        value={metrics.r_score}
-                                    />
-                                    <Score
-                                        label="تکرار (F)"
-                                        value={metrics.f_score}
-                                    />
-                                    <Score
-                                        label="ارزش (M)"
-                                        value={metrics.m_score}
-                                    />
-                                </div>
-
-                                {metrics.churn_risk_level !== null && (
-                                    <div className="flex items-center gap-2">
-                                        <StatusBadge
-                                            status={metrics.churn_risk_level}
-                                            labels={churnLevels}
-                                        />
-                                        {metrics.churn_risk_score !== null && (
-                                            <span className="text-muted-foreground text-sm">
-                                                امتیاز ریسک:{' '}
-                                                <Ltr>
-                                                    {metrics.churn_risk_score}
-                                                </Ltr>
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
-
-                                {metrics.clv_estimated !== null && (
-                                    <div className="flex flex-col">
-                                        <span className="text-muted-foreground text-xs">
-                                            ارزش طول عمر (CLV) برآوردی
-                                        </span>
-                                        <span className="text-lg font-medium">
-                                            {formatToman(metrics.clv_estimated)}
-                                        </span>
-                                        {metrics.clv_confidence !== null && (
-                                            <span className="text-muted-foreground text-xs">
-                                                {clvConfidences[
-                                                    metrics.clv_confidence
-                                                ] ?? metrics.clv_confidence}
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
+                        <CardContent className="flex flex-col gap-6 lg:flex-row lg:items-start">
+                            <div className="flex gap-6">
+                                <Score
+                                    label="تازگی (R)"
+                                    value={metrics.r_score}
+                                />
+                                <Score
+                                    label="تکرار (F)"
+                                    value={metrics.f_score}
+                                />
+                                <Score
+                                    label="ارزش (M)"
+                                    value={metrics.m_score}
+                                />
                             </div>
 
-                            {metrics.churn_reason !== null &&
-                                metrics.churn_reason !== '' && (
-                                    <p className="text-muted-foreground text-sm">
-                                        {metrics.churn_reason}
-                                    </p>
-                                )}
+                            <RiskBar
+                                score={metrics.churn_risk_score}
+                                level={metrics.churn_risk_level}
+                                reason={metrics.churn_reason}
+                                nextOrderAtJalali={
+                                    metrics.expected_next_order_at
+                                }
+                                nextOrderAtIso={
+                                    metrics.expected_next_order_at_iso
+                                }
+                            />
+
+                            <ClvValue
+                                historical={metrics.clv_historical}
+                                estimated={metrics.clv_estimated}
+                                confidence={metrics.clv_confidence}
+                            />
                         </CardContent>
                     </Card>
                 )}

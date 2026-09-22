@@ -110,11 +110,12 @@ it('never `use`s a class of another module besides Customers — it reads their 
     ]))->toBe([]);
 });
 
-it('names only customer_metrics, orders and order_items besides customers — and no table that holds audit or identity data', function () {
+it('names only customer_metrics, metric_runs, orders and order_items besides customers — and no table that holds audit or identity data', function () {
     $service = Scanner::phpCode(csbFile(CSB_SERVICE));
     preg_match_all('/(?:DB::table|->join)\(\s*\'(\w+)(?: as \w+)?\'/', $service, $named);
 
-    expect(array_values(array_unique($named[1])))->toEqualCanonicalizing(['customer_metrics', 'orders', 'order_items'])
+    // metric_runs (P4-08): isMetricsStale() reads the latest completed run — never the order tables.
+    expect(array_values(array_unique($named[1])))->toEqualCanonicalizing(['customer_metrics', 'metric_runs', 'orders', 'order_items'])
         ->and($service)->not->toMatch('/phone_reveal_logs|customer_identities|customer_addresses|audit_logs|identity_conflicts/');
 });
 
@@ -154,6 +155,9 @@ it('formats money as int and dates through TehranDateTime / JalaliDate — no fl
 
 it('writes the page in strict TypeScript, reveals the phone only through PhoneRevealButton, and takes the churn level from the server', function () {
     $page = (string) file_get_contents(csbFile(CSB_PAGE));
+    // P4-08: churn rendering (churnLevels, the score) moved into components/metrics/RiskBar.tsx —
+    // the assertions about how churn_risk_score/level are handled now apply there, not to show.tsx.
+    $riskBar = (string) file_get_contents(csbFile('resources/js/components/metrics/RiskBar.tsx'));
 
     expect($page)->not->toMatch('/:\s*any\b|\bas\s+any\b|<any>|Array<any>|@ts-(ignore|nocheck|expect-error)/')
         ->and($page)->not->toContain('dangerouslySetInnerHTML')
@@ -161,11 +165,13 @@ it('writes the page in strict TypeScript, reveals the phone only through PhoneRe
         ->and($page)->not->toMatch('/\b(fetch|axios|XMLHttpRequest)\s*\(/')
         ->and($page)->toContain('@/components/customers/PhoneRevealButton')
         ->and($page)->toMatch('/export default function CustomerShow\(/')
-        // The score is 0..100 and its level is the engine's decision: the page does not apply cut-offs of its own.
-        ->and($page)->not->toMatch('/churn_risk_score\)?\s*(>=|<=|>|<)|(Number|parseFloat|parseInt)\([^)]*churn_risk_score/')
-        ->and($page)->toContain('churnLevels')
         // Money is Toman (CLAUDE.md §2).
         ->and($page)->not->toContain('ریال');
+
+    // The score is 0..100 and its level is the engine's decision: RiskBar never derives `level` from
+    // `score` itself — the only numeric use of `score` is clamping the progress-bar width.
+    expect($riskBar)->not->toMatch('/\bscore\)?\s*(>=|<=|>|<)\s*\d/')
+        ->and($riskBar)->toContain('churnLevels');
 });
 
 it('hides the metrics and risk sections when there is no metrics row', function () {

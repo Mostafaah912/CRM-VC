@@ -13,7 +13,8 @@ use Illuminate\Support\Facades\DB;
 /*
 | P3-03 — CustomerShowService::show(): everything the Customer 360 page shows, for ONE customer, in six queries (customer,
 | customer_metrics, last five orders, last five products, order count and — since P3-04 — the first page of the timeline): the
-| budget, exactly. Read-only; the phone is always masked; no email or name leaves.
+| budget, exactly (SEVEN when a customer_metrics row exists — P4-08's isMetricsStale() check). Read-only; the phone is always
+| masked; no email or name leaves.
 */
 
 const CSV_PHONE = '989121234567';
@@ -96,7 +97,7 @@ function csvShow(int $id): array
 
 // ================================================================== query budget
 
-it('loads a fully populated customer in exactly six queries — the budget, and not one more', function () {
+it('loads a fully populated customer in exactly seven queries with metrics — the budget, and not one more', function () {
     $product = Product::factory()->create();
     csvMetrics($this->customer->id);
 
@@ -107,11 +108,13 @@ it('loads a fully populated customer in exactly six queries — the budget, and 
 
     $queries = csvQueries(fn () => csvShow($this->customer->id));
 
-    expect($queries)->toHaveCount(6)
-        ->and(count($queries))->toBeLessThanOrEqual(6);
+    // Six is P3-03's own budget; P4-08 adds a seventh — the latest completed metric_run — only when
+    // a customer_metrics row exists at all (see the next test).
+    expect($queries)->toHaveCount(7)
+        ->and(count($queries))->toBeLessThanOrEqual(7);
 });
 
-it('spends no more queries on an empty customer, or one without a metrics row', function () {
+it('spends no more queries on an empty customer, or one without a metrics row — the 7th is skipped entirely', function () {
     expect(csvQueries(fn () => csvShow($this->customer->id)))->toHaveCount(6);
 });
 
@@ -131,7 +134,7 @@ it('does not grow with the history: forty orders and forty events cost the same 
 
 it('never touches a table the profile does not need', function () {
     csvMetrics($this->customer->id);
-    $tables = 'customers|customer_metrics|orders|order_items|customer_events';
+    $tables = 'customers|customer_metrics|orders|order_items|customer_events|metric_runs';
 
     $queries = csvQueries(fn () => csvShow($this->customer->id));
 
@@ -197,7 +200,10 @@ it('gives null metrics — no row of zeros — when customer_metrics has no row 
 });
 
 it('reads the metrics row as stored: money as ints, the score as an exact decimal string, dates in Jalali/Tehran time', function () {
-    csvMetrics($this->customer->id);
+    csvMetrics($this->customer->id, [
+        'rfm_score' => '534', 'rfm_segment' => 'loyal', 'clv_historical' => 765_000,
+        'expected_next_order_at' => '2026-05-01 08:30:00+00',
+    ]);
 
     expect(csvShow($this->customer->id)['metrics'])->toBe([
         'total_orders' => 3,
@@ -208,11 +214,18 @@ it('reads the metrics row as stored: money as ints, the score as an exact decima
         'r_score' => 5,
         'f_score' => 3,
         'm_score' => 4,
+        'rfm_score' => '534',
+        'rfm_segment' => 'loyal',
+        'clv_historical' => 765_000,
         'clv_estimated' => 9_000_000,
         'clv_confidence' => 'medium',
         'churn_risk_score' => '72.50',
         'churn_risk_level' => 'high',
         'churn_reason' => 'فاصله‌ی خرید از چرخه‌ی معمول بیشتر شده',
+        'expected_next_order_at' => '1405/02/11 12:00:00',
+        'expected_next_order_at_iso' => '2026-05-01T08:30:00Z',
+        'computed_at' => '1405/06/29 03:30:00',
+        'metrics_stale' => false,
     ]);
 });
 
@@ -232,6 +245,51 @@ it('does not read another customer\'s metrics', function () {
     csvMetrics(Customer::factory()->create()->id, ['total_revenue' => 999]);
 
     expect(csvShow($this->customer->id)['metrics'])->toBeNull();
+});
+
+it('leaves clv_estimated null (never zero) for a single-order customer, alongside a real clv_historical', function () {
+    csvMetrics($this->customer->id, [
+        'total_orders' => 1, 'clv_historical' => 84_915, 'clv_estimated' => null, 'clv_confidence' => 'low',
+    ]);
+
+    $metrics = csvShow($this->customer->id)['metrics'];
+
+    expect($metrics['clv_estimated'])->toBeNull()
+        ->and($metrics['clv_historical'])->toBe(84_915)
+        ->and($metrics['clv_confidence'])->toBe('low');
+});
+
+// ================================================================== metrics_stale (P4-08)
+
+function csvMetricRun(string $status, ?string $finishedAt): void
+{
+    DB::table('metric_runs')->insert([
+        'mode' => 'full', 'status' => $status, 'started_at' => now(), 'finished_at' => $finishedAt,
+        // isMetricsStale() identifies "completed" structurally (finished_at set, no error) — a failed
+        // run in a test must set error too, or it would be indistinguishable from a completed one.
+        'error' => $status === 'failed' ? 'x' : null,
+    ]);
+}
+
+it('flags metrics_stale when a later metric run completed after this row was computed', function () {
+    csvMetrics($this->customer->id, ['computed_at' => '2026-09-01 00:00:00+00']);
+    csvMetricRun('completed', '2026-09-15 00:00:00+00');
+
+    expect(csvShow($this->customer->id)['metrics']['metrics_stale'])->toBeTrue();
+});
+
+it('does not flag metrics_stale when no run has completed after this row was computed', function () {
+    csvMetrics($this->customer->id, ['computed_at' => '2026-09-20 00:00:00+00']);
+    csvMetricRun('completed', '2026-09-01 00:00:00+00'); // older than computed_at
+    csvMetricRun('failed', '2026-09-25 00:00:00+00'); // newer, but not completed — must not count
+
+    expect(csvShow($this->customer->id)['metrics']['metrics_stale'])->toBeFalse();
+});
+
+it('does not flag metrics_stale when no metric run has ever completed', function () {
+    csvMetrics($this->customer->id);
+
+    expect(csvShow($this->customer->id)['metrics']['metrics_stale'])->toBeFalse();
 });
 
 // ================================================================== orders

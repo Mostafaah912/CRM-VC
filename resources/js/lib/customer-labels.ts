@@ -34,6 +34,23 @@ export const clvConfidences: Record<string, string> = {
     high: 'اطمینان بالا',
 };
 
+/**
+ * customer_metrics.rfm_segment (PRD §12, 8 segments) — null (not RFM-eligible) is handled separately
+ * by RfmBadge, not listed here. Colors are per-segment, not the shared 4-tone StatusBadge system:
+ * champion/loyal/lost each need a shade distinct from their nearest neighbor (promising/new_customer,
+ * cant_lose/lost), which StatusLabels' tone can't express.
+ */
+export const rfmSegments: Record<string, string> = {
+    champion: 'قهرمان',
+    loyal: 'وفادار',
+    promising: 'امیدبخش',
+    new_customer: 'مشتری جدید',
+    at_risk: 'در معرض ریزش',
+    cant_lose: 'نباید از دست برود',
+    hibernating: 'رخوت‌زده',
+    lost: 'ازدست‌رفته',
+};
+
 /** orders.status (WooCommerce slugs); any other slug is shown as stored. */
 export const orderStatuses: StatusLabels = {
     pending: { label: 'در انتظار پرداخت', tone: 'warning' },

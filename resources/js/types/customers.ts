@@ -54,13 +54,26 @@ export type CustomerProfileMetrics = {
     r_score: number | null;
     f_score: number | null;
     m_score: number | null;
+    /** e.g. "534"; null exactly when the r/f/m scores are null (customer is not RFM-eligible). */
+    rfm_score: string | null;
+    rfm_segment: string | null;
+    /** Always a real number (never null) — an approximate, margin-based figure, shown labeled as such. */
+    clv_historical: number;
     /** null when the customer has fewer than two orders: never 0, and shown together with clv_confidence. */
     clv_estimated: number | null;
+    /** Independent of clv_estimated's nullability: reflects order-count history, not whether a specific estimate exists. */
     clv_confidence: string | null;
     /** numeric(5,2) on a 0..100 scale, as an exact decimal string. */
     churn_risk_score: string | null;
     churn_risk_level: string | null;
     churn_reason: string | null;
+    /** Jalali/Tehran-formatted, for display. */
+    expected_next_order_at: string | null;
+    /** ISO 8601 UTC, for the "is this in the future" comparison — never displayed directly. */
+    expected_next_order_at_iso: string | null;
+    computed_at: string | null;
+    /** True when a later metric run finished after this row was computed — show "بازمحاسبه در انتظار است". */
+    metrics_stale: boolean;
 };
 
 export type CustomerProfileOrder = {

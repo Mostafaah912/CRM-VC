@@ -17,7 +17,7 @@ use Carbon\CarbonImmutable;
  *
  * Money is int Toman and is passed through untouched. Dates are stored UTC and shown as Jalali / Tehran time.
  *
- * @phpstan-type MetricsShape array{total_orders: int, total_revenue: int, aov: int, first_order_at: string|null, last_order_at: string|null, r_score: int|null, f_score: int|null, m_score: int|null, clv_estimated: int|null, clv_confidence: string|null, churn_risk_score: string|null, churn_risk_level: string|null, churn_reason: string|null}
+ * @phpstan-type MetricsShape array{total_orders: int, total_revenue: int, aov: int, first_order_at: string|null, last_order_at: string|null, r_score: int|null, f_score: int|null, m_score: int|null, rfm_score: string|null, rfm_segment: string|null, clv_historical: int, clv_estimated: int|null, clv_confidence: string|null, churn_risk_score: string|null, churn_risk_level: string|null, churn_reason: string|null, expected_next_order_at: string|null, expected_next_order_at_iso: string|null, computed_at: string|null, metrics_stale: bool}
  * @phpstan-type OrderShape array{woo_order_id: int, number: string|null, status: string, total: int, ordered_at: string}
  * @phpstan-type ProductShape array{name: string, sku: string|null, purchase_count: int, last_purchased_at: string}
  *
@@ -38,6 +38,7 @@ final readonly class CustomerShowData
     public function __construct(
         private Customer $customer,
         private ?array $metrics,
+        private bool $metricsStale,
         private array $orders,
         private int $ordersTotal,
         private array $products,
@@ -60,7 +61,7 @@ final readonly class CustomerShowData
                 'city' => $c->city,
                 'first_seen_at' => $c->first_seen_at === null ? null : JalaliDate::format($c->first_seen_at),
             ],
-            'metrics' => $this->metrics === null ? null : $this->metricsShape($this->metrics),
+            'metrics' => $this->metrics === null ? null : $this->metricsShape($this->metrics, $this->metricsStale),
             'recent_orders' => array_map($this->orderShape(...), $this->orders),
             'orders_total' => $this->ordersTotal,
             'recent_products' => array_map($this->productShape(...), $this->products),
@@ -73,7 +74,7 @@ final readonly class CustomerShowData
      * @param  array<string, mixed>  $m
      * @return MetricsShape
      */
-    private function metricsShape(array $m): array
+    private function metricsShape(array $m, bool $metricsStale): array
     {
         return [
             'total_orders' => (int) $m['total_orders'],
@@ -84,6 +85,10 @@ final readonly class CustomerShowData
             'r_score' => $this->intOrNull($m['r_score']),
             'f_score' => $this->intOrNull($m['f_score']),
             'm_score' => $this->intOrNull($m['m_score']),
+            'rfm_score' => $m['rfm_score'] === null ? null : (string) $m['rfm_score'],
+            'rfm_segment' => $m['rfm_segment'] === null ? null : (string) $m['rfm_segment'],
+            // Always a real int (NOT NULL DEFAULT 0 on the column) — an "approximate" margin-based figure, never exact.
+            'clv_historical' => (int) $m['clv_historical'],
             // NULL when there were fewer than two orders — never 0, never invented (CLAUDE.md §4).
             'clv_estimated' => $this->intOrNull($m['clv_estimated']),
             'clv_confidence' => $m['clv_confidence'] === null ? null : (string) $m['clv_confidence'],
@@ -91,6 +96,14 @@ final readonly class CustomerShowData
             'churn_risk_score' => $m['churn_risk_score'] === null ? null : (string) $m['churn_risk_score'],
             'churn_risk_level' => $m['churn_risk_level'] === null ? null : (string) $m['churn_risk_level'],
             'churn_reason' => $m['churn_reason'] === null ? null : (string) $m['churn_reason'],
+            'expected_next_order_at' => $this->when($m['expected_next_order_at']),
+            'expected_next_order_at_iso' => $m['expected_next_order_at'] === null
+                ? null
+                : CarbonImmutable::parse((string) $m['expected_next_order_at'], 'UTC')->toIso8601ZuluString(),
+            'computed_at' => $this->when($m['computed_at']),
+            // Whether a LATER metric run finished after this row was computed (P4-08) — the page reads
+            // this as "بازمحاسبه در انتظار است", never silently shows numbers it knows are outdated.
+            'metrics_stale' => $metricsStale,
         ];
     }
 

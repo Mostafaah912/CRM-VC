@@ -10,6 +10,7 @@ use App\Http\Controllers\Customers\CustomerProductsController;
 use App\Http\Controllers\Customers\CustomerShowController;
 use App\Http\Controllers\Customers\CustomerTimelineController;
 use App\Http\Controllers\Customers\PhoneRevealController;
+use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
 use Illuminate\Support\Facades\Route;
@@ -51,4 +52,9 @@ Route::middleware(['auth', 'permission:orders,view'])->group(function () {
 // P3-07, Sprint 3's last task: the product list with lifetime sales — read-only, behind catalog.view.
 Route::middleware(['auth', 'permission:catalog,view'])->group(function () {
     Route::get('products', ProductListController::class)->name('products.index');
+});
+
+// P4-08 part B: the RFM distribution page — read-only, behind metrics.view (existing since P0-05).
+Route::middleware(['auth', 'permission:metrics,view'])->group(function () {
+    Route::get('metrics/rfm', RfmPageController::class)->name('metrics.rfm');
 });
