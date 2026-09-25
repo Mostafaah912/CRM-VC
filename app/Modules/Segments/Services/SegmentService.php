@@ -11,11 +11,16 @@ use App\Modules\Segments\Enums\SegmentType;
 use App\Modules\Segments\Events\CustomerEnteredSegment;
 use App\Modules\Segments\Events\CustomerLeftSegment;
 use App\Modules\Segments\Events\SegmentEvaluated;
+use App\Modules\Segments\Exceptions\RuleValidationException;
 use App\Modules\Segments\Exceptions\SegmentException;
 use App\Modules\Segments\Models\Segment;
+use App\Modules\Segments\Support\RuleWhitelistPresenter;
 use App\Modules\Segments\Support\SegmentEvaluationResult;
+use App\Modules\Segments\Support\SegmentListRow;
+use App\Modules\Segments\Support\SegmentMemberRow;
 use App\Support\PhoneMask;
 use App\Support\PostgresStatementTimeout;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -26,6 +31,9 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * run. Every compile always goes through RuleCompiler (P5-03), which itself runs RuleValidator
  * (P5-02) first — this class never touches customers/customer_metrics/order_items rows on its own,
  * only through that one compiled query.
+ *
+ * @phpstan-import-type SegmentListShape from SegmentListRow
+ * @phpstan-import-type SegmentMemberShape from SegmentMemberRow
  */
 final class SegmentService
 {
@@ -35,10 +43,187 @@ final class SegmentService
     /** PRD §17: "bulk INSERT", chunked so a large segment never builds one giant INSERT statement. */
     private const INSERT_CHUNK_SIZE = 1000;
 
+    /** PostgreSQL SQLSTATE for "unique_violation" — the `segments_name_unique` (lower(name)) index. */
+    private const UNIQUE_VIOLATION_SQLSTATE = '23505';
+
+    private const LIST_PER_PAGE = 25;
+
+    private const MEMBERS_PER_PAGE = 25;
+
     public function __construct(
         private readonly AuditService $audit,
         private readonly PermissionService $permissions,
     ) {}
+
+    /** P5-06: the Rule Builder's field/operator whitelist for the create/edit pages — a one-line passthrough so a Controller only ever imports a Service (CLAUDE.md §1), never RuleWhitelistPresenter directly.
+     *
+     * @return array<string, mixed>
+     */
+    public function whitelist(): array
+    {
+        return RuleWhitelistPresenter::toArray();
+    }
+
+    /**
+     * P5-06: the segment list page (PRD §25) — name, type, member_count, last_evaluated_at, is_active, is_system.
+     *
+     * @return LengthAwarePaginator<int, SegmentListShape>
+     */
+    public function paginate(int $page = 1): LengthAwarePaginator
+    {
+        return Segment::query()
+            ->select(SegmentListRow::COLUMNS)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate(self::LIST_PER_PAGE, ['*'], 'page', $page)
+            ->withQueryString()
+            ->through(fn (Segment $segment): array => SegmentListRow::fromModel($segment)->toArray());
+    }
+
+    /**
+     * P5-06: a segment's member list (PRD §25's detail page), paginated, phone always masked — the same
+     * rule as the customer list (P3-01): PhoneRevealButton's audited endpoint is the only reveal path.
+     *
+     * @return LengthAwarePaginator<int, SegmentMemberShape>
+     */
+    public function members(Segment $segment, int $page = 1): LengthAwarePaginator
+    {
+        return DB::table('segment_members')
+            ->join('customers', 'customers.id', '=', 'segment_members.customer_id')
+            ->where('segment_members.segment_id', $segment->id)
+            ->orderByDesc('segment_members.added_at')
+            ->orderBy('customers.id')
+            ->select(SegmentMemberRow::COLUMNS)
+            ->paginate(self::MEMBERS_PER_PAGE, ['*'], 'page', $page)
+            ->withQueryString()
+            ->through(fn (\stdClass $row): array => SegmentMemberRow::fromRow($row)->toArray());
+    }
+
+    /**
+     * PRD §25: create a `dynamic` segment (the only type this UI offers — P5-06 names this default: PRD
+     * gives `static`/`manual` no UI). `rule` always goes through RuleValidator (P5-02) before it is ever
+     * persisted, exactly like preview()/evaluate() go through it via RuleCompiler.
+     *
+     * @param  array{name: string, description: string|null, rule: array<mixed>}  $attributes
+     *
+     * @throws RuleValidationException when the rule fails validation
+     * @throws SegmentException when the name is already taken (race backstop; the FormRequest already checks this)
+     */
+    public function create(array $attributes, User $actor): Segment
+    {
+        RuleValidator::validate($attributes['rule']);
+
+        return DB::transaction(function () use ($attributes, $actor): Segment {
+            try {
+                $segment = Segment::query()->create([
+                    'name' => $attributes['name'],
+                    'description' => $attributes['description'],
+                    'type' => SegmentType::Dynamic,
+                    'rule' => $attributes['rule'],
+                    'created_by' => $actor->id,
+                ]);
+            } catch (QueryException $e) {
+                throw $this->translateUniqueViolation($e);
+            }
+
+            $this->audit->recordUser(
+                user: $actor,
+                action: 'segment.created',
+                auditableType: Segment::class,
+                auditableId: $segment->id,
+                after: ['name' => $segment->name, 'rule' => $segment->rule],
+                source: 'segments',
+            );
+
+            return $segment;
+        });
+    }
+
+    /**
+     * PRD §25/P5-06: update a segment's name/description/rule. Named `modify()`, not `update()` — the
+     * Controller arch test's DB-access scanner matches `->update(` as text regardless of receiver type,
+     * same reason `destroy()` is not called `delete()` elsewhere in this codebase.
+     *
+     * An `is_system` segment (P5-07's 12 seed segments) is entirely locked — not just its rule — because
+     * this UI has one combined form that always submits name+description+rule together, so there is no
+     * partial "name-only" edit path to distinguish; a real need for that would be a separate, later
+     * decision (named ambiguity, P5-06).
+     *
+     * @param  array{name: string, description: string|null, rule: array<mixed>}  $attributes
+     *
+     * @throws SegmentException when the segment is `is_system`, or the name is already taken (race backstop)
+     * @throws RuleValidationException when the rule fails validation
+     */
+    public function modify(Segment $segment, array $attributes, User $actor): Segment
+    {
+        if ($segment->is_system) {
+            throw SegmentException::isSystem();
+        }
+
+        RuleValidator::validate($attributes['rule']);
+
+        $before = ['name' => $segment->name, 'description' => $segment->description, 'rule' => $segment->rule];
+
+        return DB::transaction(function () use ($segment, $attributes, $actor, $before): Segment {
+            try {
+                $segment->forceFill([
+                    'name' => $attributes['name'],
+                    'description' => $attributes['description'],
+                    'rule' => $attributes['rule'],
+                ])->save();
+            } catch (QueryException $e) {
+                throw $this->translateUniqueViolation($e);
+            }
+
+            $this->audit->recordUser(
+                user: $actor,
+                action: 'segment.updated',
+                auditableType: Segment::class,
+                auditableId: $segment->id,
+                before: $before,
+                after: ['name' => $segment->name, 'description' => $segment->description, 'rule' => $segment->rule],
+                source: 'segments',
+            );
+
+            return $segment;
+        });
+    }
+
+    /**
+     * PRD §25/P5-06: soft-delete a segment. An `is_system` segment can never be deleted.
+     *
+     * @throws SegmentException when the segment is `is_system`
+     */
+    public function destroy(Segment $segment, User $actor): void
+    {
+        if ($segment->is_system) {
+            throw SegmentException::isSystem();
+        }
+
+        DB::transaction(function () use ($segment, $actor): void {
+            $segment->delete();
+
+            $this->audit->recordUser(
+                user: $actor,
+                action: 'segment.deleted',
+                auditableType: Segment::class,
+                auditableId: $segment->id,
+                before: ['name' => $segment->name],
+                source: 'segments',
+            );
+        });
+    }
+
+    /** P5-06: EvaluateSegmentJob's entry point — the lookup-by-id lives here (a Job may never import a module Model). */
+    public function evaluateById(int $segmentId): SegmentEvaluationResult
+    {
+        return $this->evaluate(Segment::query()->findOrFail($segmentId));
+    }
+
+    private function translateUniqueViolation(QueryException $e): SegmentException|QueryException
+    {
+        return $e->getCode() === self::UNIQUE_VIOLATION_SQLSTATE ? SegmentException::nameTaken() : $e;
+    }
 
     /**
      * PRD §17: compile -> pluck ids -> transaction (DELETE members; bulk INSERT) -> UPDATE

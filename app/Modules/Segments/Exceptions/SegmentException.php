@@ -16,6 +16,10 @@ final class SegmentException extends RuntimeException
 
     public const EXPORT_FORBIDDEN = 'export_forbidden';
 
+    public const IS_SYSTEM = 'is_system';
+
+    public const NAME_TAKEN = 'name_taken';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -36,5 +40,17 @@ final class SegmentException extends RuntimeException
     public static function exportForbidden(): self
     {
         return new self(self::EXPORT_FORBIDDEN, 'شما مجوز خروجی‌گیری از مشتریان را ندارید.');
+    }
+
+    /** P5-06: a Seed segment (P5-07) may never be edited or deleted (PRD §17's 12 seed segments). */
+    public static function isSystem(): self
+    {
+        return new self(self::IS_SYSTEM, 'سگمنت‌های سیستمی قابل ویرایش یا حذف نیستند.');
+    }
+
+    /** Backstop for the `segments_name_unique` (lower(name)) index — the FormRequest already checks this; this covers the race. */
+    public static function nameTaken(): self
+    {
+        return new self(self::NAME_TAKEN, 'این نام قبلاً برای سگمنت دیگری استفاده شده است.');
     }
 }

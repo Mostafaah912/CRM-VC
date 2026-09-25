@@ -93,6 +93,27 @@ export function addChild(
     return tree;
 }
 
+/** P5-06: the reverse of toWireRule — a saved segment's rule (no `id`/`kind`) becomes an editable tree, generating fresh client-only ids. */
+export function fromWireRule(rule: WireRule): RuleTreeNode {
+    if ('children' in rule) {
+        return {
+            id: makeId(),
+            kind: 'group',
+            op: rule.op,
+            children: rule.children.map(fromWireRule),
+        };
+    }
+
+    return {
+        id: makeId(),
+        kind: 'condition',
+        field: rule.field,
+        operator: rule.operator,
+        value: rule.value ?? null,
+        unit: rule.unit ?? null,
+    };
+}
+
 /** Strips client-only `id`/`kind` fields for the wire format the server's RuleValidator/RuleCompiler expect. */
 export function toWireRule(node: RuleTreeNode): WireRule {
     if (node.kind === 'group') {

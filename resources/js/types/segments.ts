@@ -71,3 +71,47 @@ export type WireGroup = {
 };
 
 export type WireRule = WireGroup | WireCondition;
+
+/** P5-06: one segment as the list page shows it (SegmentListRow). */
+export type SegmentListRow = {
+    id: number;
+    name: string;
+    type: string;
+    member_count: number;
+    last_evaluated_at: string | null;
+    is_active: boolean;
+    is_system: boolean;
+};
+
+/** P5-06: one segment as the detail page shows it (SegmentDetail). `rule` is the raw PRD §17 tree, rendered read-only. */
+export type SegmentDetail = {
+    id: number;
+    name: string;
+    description: string | null;
+    type: string;
+    rule: WireRule | null;
+    member_count: number;
+    last_evaluated_at: string | null;
+    last_eval_ms: number | null;
+    is_active: boolean;
+    is_system: boolean;
+};
+
+/** P5-06: one member as a segment's member list shows it (SegmentMemberRow) — phone always masked. */
+export type SegmentMemberRow = {
+    id: number;
+    display_name: string | null;
+    phone: string | null;
+    status: string;
+    lifecycle_stage: string;
+    added_at: string;
+};
+
+/** P5-06: the create/edit form's own segment fields, as SegmentEditController pre-fills them. */
+export type SegmentFormValues = {
+    id: number;
+    name: string;
+    description: string | null;
+    rule: WireRule;
+    is_system: boolean;
+};
