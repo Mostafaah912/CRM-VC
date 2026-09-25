@@ -80,6 +80,26 @@ final class AuditService
         return $this->record(AuditActorType::System, $action, $auditableType, $auditableId, $before, $after, null, $source);
     }
 
+    /**
+     * record() for work a real user did, from a module that (by the same rule as recordSystem())
+     * cannot import AuditActorType itself — this fixes the actor to User and changes nothing else.
+     * P5-04: SegmentService::export() is the first caller (PRD §21 T1: bulk PII export is audited).
+     *
+     * @param  array<string, mixed>|null  $before
+     * @param  array<string, mixed>|null  $after
+     */
+    public function recordUser(
+        User $user,
+        string $action,
+        string $auditableType,
+        int|string $auditableId,
+        ?array $before = null,
+        ?array $after = null,
+        ?string $source = null,
+    ): AuditLog {
+        return $this->record(AuditActorType::User, $action, $auditableType, $auditableId, $before, $after, $user, $source);
+    }
+
     /** @return LengthAwarePaginator<int, AuditLog> */
     public function paginate(int $perPage = 25): LengthAwarePaginator
     {
