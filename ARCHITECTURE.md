@@ -896,3 +896,21 @@ _Label note: the section headed "P3-01" above is commit **P2-15** (renamed, beca
 **تست:** ۲ سوییت جدید در `tests/Unit/Modules/Segments/` — `RuleFieldWhitelistTest.php` (هر ۲۵ فیلد PRD + رد فیلد خارج از لیست + تلاش تزریق SQL به‌جای نام فیلد + حساسیت به بزرگ/کوچکی حروف) و `RuleOperatorTest.php` (هر ۱۹ عملگر + یک تست «هیچ عملگر اضافه/کم نیست» با `RuleOperator::cases()` + رد عملگر خارج از لیست + تلاش تزریق SQL به‌جای عملگر). کل سوییت **۲۵۵۷ ← ۲۶۱۰ سبز** (۱۲۷۹۰ Assertion)، PHPStan ۰ خطا (۲ خطای اولیه‌ی Type روی امضای `toThrow(Closure)` با الگوی try/catch موجود در `RefundServiceTest`/`CatalogServiceTest` رفع شد)، Pint تمیز، Arch Suite دست‌نخورده (بدون نقض قانون «بدون Raw SQL در Segments» و بدون نقض جدول وابستگی ماژول‌ها).
 
 **عمداً ساخته نشد (برای P5-02/۰۳):** `RuleValidator` (اعتبارسنجی همخوانی فیلد↔عملگر↔مقدار، عمق/تعداد گره‌ها، `unit`)، `RuleCompiler` (تبدیل به Query Builder واقعی)، نگاشت هر فیلد به نوع مقدار مجاز.
+
+## P5-02 — RuleValidator (TEST FIRST)
+
+**چه چیزی ساخته شد:** `app/Modules/Segments/Services/RuleValidator.php` — اعتبارسنجی کامل درخت قانون (Group|Condition، PRD §17) پیش از رسیدن به `RuleCompiler` (P5-03)، با روش TEST FIRST (۴۶ تست نوشته و اجرا شد، ابتدا با خطای «Class not found» قرمز، سپس حداقل کد لازم برای سبزشدن اضافه شد). دو فایل همراه: `Exceptions/RuleValidationException.php` (۱۱ کد `reason` پایدار، پیام‌ها فارسی چون مصرف‌کننده Rule Builder UI است، برخلاف `RuleWhitelistException` P5-01 که یک نگهبان داخلی است) و تست `tests/Unit/Modules/Segments/RuleValidatorTest.php`.
+
+**قوانین اعمال‌شده (همه از PRD §17، هیچ‌کدام حدسی):**
+- ساختار: هر گره یا Group (`op`∈{AND,OR} + `children`) یا Condition (`field`+`operator`+`value`?) است؛ هرچیز دیگر رد می‌شود.
+- محدودیت‌ها: عمق تودرتوی Group ≤ ۴ (تعریف عمق: فقط سطوح Group شمرده می‌شود، Condition برگ عمق اضافه نمی‌کند)، تعداد کل گره ≤ ۱۰۰، فرزندان هر Group بین ۱ تا ۲۰، طول آرایه‌ی مقدار برای عملگرهای لیستی (`in`/`not_in`/`in_segment`/`not_in_segment`) ≤ ۲۰۰.
+- فیلد/عملگر: از طریق `RuleFieldWhitelist`/`RuleOperator` (P5-01) بررسی می‌شود؛ `RuleWhitelistException` داخلی گرفته و به `RuleValidationException` فارسی تبدیل می‌شود — دو Whitelist دوباره تعریف نشدند.
+- **سازگاری فیلد↔عملگر (تصمیم تازه‌ی این تسک، از ساختار PRD استخراج شد):** ۷ عملگر رفتاری (`bought_product`، `not_bought_product`، `bought_category`، `not_bought_category`، `bought_variation`، `in_segment`، `not_in_segment`) فقط روی فیلدهای گروه `behavior` مجازند؛ ۱۲ عملگر باقی‌مانده فقط روی فیلدهای `customer`/`metrics`. بدون این بررسی، `RuleCompiler` می‌توانست ترکیب بی‌معنی مثل `field=province, operator=bought_product` را ببیند و مجبور به حدس زدن رفتار شود.
+- شکل مقدار بر اساس دسته‌ی عملگر: لیستی → آرایه (≤۲۰۰)؛ `between` → آرایه‌ی دقیقاً ۲ عضوی؛ `is_null`/`is_not_null` → کلید `value` اصلاً نباید وجود داشته باشد؛ بقیه (اسکالر) → کلید `value` باید باشد و آرایه نباشد.
+- `unit` اختیاری است؛ اگر باشد فقط `days` یا `toman`.
+
+**تست:** ۴۶ تست جدید (هر ۱۹ عملگر با مقدار سازگار، AND/OR تودرتو، مرز دقیق عمق ۴/۵، مرز دقیق گره ۱۰۰+، مرز دقیق فرزند ۲۰/۲۱، مرز دقیق لیست ۲۰۰/۲۰۱، فیلد خارج Whitelist، عملگر خارج Whitelist، دو تلاش تزریق SQL به‌جای فیلد/عملگر، ناسازگاری فیلد↔عملگر در هر دو جهت، شکل مقدار نامعتبر برای هر دسته، `unit` نامعتبر، و یک تست عمومی که پیام هر Exception فارسی است). کل سوییت **۲۶۱۰ ← ۲۶۵۶ سبز** (۱۲۸۱۰ Assertion)، PHPStan ۰ خطا (۱ خطای اولیه‌ی «no value type specified» روی PHPDoc کمکی‌های تست رفع شد)، Pint تمیز.
+
+**⚠ یافته‌ی محیطی (بدون ربط به کد):** حین اجرای سوییت کامل، Redis محلی پایین بود (۹۶ تست با «Connection refused» شکست خوردند — دقیقاً همان ریسک ثبت‌شده در ابتدای این فایل: Redis روی این مک خودکار بالا نمی‌آید). با `redis-server --daemonize yes` رفع و سوییت کامل دوباره اجرا شد: ۲۶۵۶/۲۶۵۶ سبز.
+
+**عمداً ساخته نشد (برای P5-03):** `RuleCompiler` (تبدیل درخت معتبرشده به Query Builder واقعی با `whereExists` برای `behavior.*`)، هیچ تغییری در `RuleFieldWhitelist`/`RuleOperator` (P5-01) نداشت.
