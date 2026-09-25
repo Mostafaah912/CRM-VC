@@ -15,6 +15,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 ## P5-01 — Field + operator whitelist (شروع Sprint 5)
 
 **چه چیزی ساخته شد:** خط اول دفاع در برابر SQL Injection در `RuleCompiler` (P5-03)، طبق قانون امنیتی مطلق PRD §۱۷ («نام ستون همیشه از Whitelist، هرگز از ورودی»). چهار فایل تازه، همه داخل `app/Modules/Segments`:
+
 - `Enums/RuleFieldGroup.php` — سه گروه PRD (`customer`/`metrics`/`behavior`) به‌عنوان Enum، برای این‌که P5-03 بداند هر فیلد به کدام جدول/Subquery می‌رود.
 - `Support/RuleFieldWhitelist.php` — سه آرایه‌ی `const` عیناً از جدول PRD §۱۷ (۵ فیلد Customer، ۱۶ فیلد Metrics، ۴ فیلد Behavior، جمعاً ۲۵ فیلد، هیچ‌کدام حدسی)؛ متد `group()`/`assertValid()` برای فیلد خارج از لیست `RuleWhitelistException` پرتاب می‌کند، هرگز `null` یا عبور بی‌صدا.
 - `Enums/RuleOperator.php` — Enum رشته‌ای با تمام ۱۹ عملگر از Union Type بخش ۱۷ (`=`، `!=`، `>`، `>=`، `<`، `<=`، `in`، `not_in`، `between`، `is_null`، `is_not_null`، `contains`، `bought_product`، `not_bought_product`، `bought_category`، `not_bought_category`، `bought_variation`، `in_segment`، `not_in_segment`)؛ متد `fromWhitelist()` برای رشته‌ی نامعتبر پرتاب می‌کند.
@@ -31,6 +32,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **چه چیزی ساخته شد:** `app/Modules/Segments/Services/RuleValidator.php` — اعتبارسنجی کامل درخت قانون (Group|Condition، PRD §17) پیش از رسیدن به `RuleCompiler` (P5-03)، با روش TEST FIRST (۴۶ تست نوشته و اجرا شد، ابتدا با خطای «Class not found» قرمز، سپس حداقل کد لازم برای سبزشدن اضافه شد). دو فایل همراه: `Exceptions/RuleValidationException.php` (۱۱ کد `reason` پایدار، پیام‌ها فارسی چون مصرف‌کننده Rule Builder UI است، برخلاف `RuleWhitelistException` P5-01 که یک نگهبان داخلی است) و تست `tests/Unit/Modules/Segments/RuleValidatorTest.php`.
 
 **قوانین اعمال‌شده (همه از PRD §17، هیچ‌کدام حدسی):**
+
 - ساختار: هر گره یا Group (`op`∈{AND,OR} + `children`) یا Condition (`field`+`operator`+`value`?) است؛ هرچیز دیگر رد می‌شود.
 - محدودیت‌ها: عمق تودرتوی Group ≤ ۴ (تعریف عمق: فقط سطوح Group شمرده می‌شود، Condition برگ عمق اضافه نمی‌کند)، تعداد کل گره ≤ ۱۰۰، فرزندان هر Group بین ۱ تا ۲۰، طول آرایه‌ی مقدار برای عملگرهای لیستی (`in`/`not_in`/`in_segment`/`not_in_segment`) ≤ ۲۰۰.
 - فیلد/عملگر: از طریق `RuleFieldWhitelist`/`RuleOperator` (P5-01) بررسی می‌شود؛ `RuleWhitelistException` داخلی گرفته و به `RuleValidationException` فارسی تبدیل می‌شود — دو Whitelist دوباره تعریف نشدند.
@@ -51,11 +53,12 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **لایه‌ی دفاعی دوگانه (تصمیم این تسک):** `compile()` ابتدا `RuleValidator::validate($rule)` (P5-02) را صدا می‌زند — یک قانون ساختاری نامعتبر هرگز به مرحله‌ی ساخت SQL نمی‌رسد. اما فیلد/عملگر هر Condition **دوباره و مستقل** از طریق `RuleFieldWhitelist::group()`/`RuleOperator::fromWhitelist()` (P5-01) Resolve می‌شود — نه صرفاً اعتماد به این‌که Validator قبلاً چک کرده. دلیل: PRD §17 می‌گوید «نام ستون همیشه از Whitelist، هرگز از ورودی» به‌صورت یک قانون مطلق، نه مشروط به این‌که تابع دیگری قبلاً صدا زده شده باشد؛ این یعنی حتی اگر `RuleCompiler::compile()` مستقیم و بدون عبور از `RuleValidator` در جایی از کد آینده صدا زده شود (مثلاً یک باگ در P5-04)، باز هم نمی‌تواند یک رشته‌ی دلخواه را به نام ستون تبدیل کند.
 
 **نگاشت فیلد→ستون:** `COLUMN_MAP` (ثابت PHP، نه Config — همان تصمیم P5-01: تغییرش بدون Migration معنی ندارد) هر ۲۱ فیلد غیر-رفتاری را به ستون کامل (`customers.xxx` یا `customer_metrics.xxx`) نگاشت می‌کند. فیلدهای رفتاری (`product`/`category`/`variation`/`segment`) ستون مستقیم ندارند؛ هرکدام به یک Subquery `whereExists`/`whereNotExists` تبدیل می‌شوند:
+
 - `bought_product`/`not_bought_product` → `order_items.product_id` روی سفارش‌های `is_realized=true` همان مشتری.
 - `bought_category`/`not_bought_category` → همان، به‌علاوه Join با پیوت `product_category_product`.
 - `bought_variation` → `order_items.variation_id` (بدون `not_bought_variation`؛ در Union Type PRD §17 اصلاً وجود ندارد).
 - `in_segment`/`not_in_segment` → `whereIn` روی `segment_members.segment_id` (مقدار آرایه‌ای، طبق دسته‌بندی P5-02).
-`match(operator)` در هر دو مسیر (رفتاری/غیررفتاری) **همه‌ی ۱۹ Case** را صریح فهرست می‌کند، بدون `default` — دقیقاً طبق PRD («no default passthrough»)؛ اگر یک Case اشتباه به مسیر دیگری برسد (که با لایه‌ی دفاعی بالا عملاً غیرممکن است)، `RuleWhitelistException` می‌دهد نه سکوت.
+  `match(operator)` در هر دو مسیر (رفتاری/غیررفتاری) **همه‌ی ۱۹ Case** را صریح فهرست می‌کند، بدون `default` — دقیقاً طبق PRD («no default passthrough»)؛ اگر یک Case اشتباه به مسیر دیگری برسد (که با لایه‌ی دفاعی بالا عملاً غیرممکن است)، `RuleWhitelistException` می‌دهد نه سکوت.
 
 **نتیجه‌ی GATE 3 — عبور کرد ✓ (PRD §26: «تست SQL-injection روی RuleCompiler سبز؛ Whitelist اعمال‌شده»):** `tests/Feature/Modules/Segments/Gate3SqlInjectionTest.php` — ۱۲ Payload کلاسیک (`' OR 1=1--`، `; DROP TABLE customers; --`، `' UNION SELECT * FROM users--`، `admin'--`، تلاش نام‌گذاری یک ستون واقعی `customers.id` برای دور زدن Whitelist، و…) روی ۶ مسیر حمله جدا اجرا شد: نام فیلد، عملگر، مقدار اسکالر، آرایه‌ی `in`، آرایه‌ی `between`، و مقدار دفن‌شده در گره‌های تودرتوی AND/OR — جمعاً ۷۲ تست. هر Payload به‌عنوان فیلد/عملگر رد شد (`RuleValidationException`، پیش از ساخت هر Query)؛ هر Payload به‌عنوان مقدار، Binding پارامتری شد (با `toSql()`/`getBindings()` مستقیماً تأیید شد که متن Payload هرگز داخل رشته‌ی SQL نیست ولی عیناً در Bindings هست) و Query بدون خطای نحوی روی PostgreSQL واقعی اجرا شد. `tests/Arch/ArchitectureTest.php` («bans raw SQL in the Segments module outright») بدون تغییر روی فایل تازه هم سبز ماند (بدون `whereRaw`/`selectRaw`/`DB::raw` در `RuleCompiler.php`).
 
@@ -80,6 +83,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **⚠ یافته‌ی جانبی — نقض مرز ماژول با `AuditActorType` (رفع شد، به‌عنوان بهبود Core ثبت شد):** پیاده‌سازی اول `export()` مستقیم `App\Modules\Core\Enums\AuditActorType::User` را Import می‌کرد تا `AuditService::record()` را صدا بزند — Arch Test «فقط از طریق Service/Event به ماژول دیگر» بلافاصله این را گرفت (Enum یک ماژول دیگر، نه Service/Event). دقیقاً همان مشکلی که کامنت خودِ `AuditService::recordSystem()` از قبل توضیح داده بود («ماژول‌های دیگر برای همین نمی‌توانند AuditActorType را Import کنند»)، ولی تا این تسک فقط نسخه‌ی System آن ساخته شده بود. رفع شد با افزودن `AuditService::recordUser(User $user, ...)` — دقیقاً همان الگوی `recordSystem()`، این‌بار Actor را به `User` قفل می‌کند؛ `export()` اکنون هیچ Enum‌ای از Core Import نمی‌کند.
 
 **تصمیم‌های مبهم در PRD (نام‌گذاری‌شده، پیش‌فرض با دلیل):**
+
 1. **فرمت Export:** PRD فرمت را نگفته. پیش‌فرض انتخاب‌شده: CSV با UTF-8 BOM (اکسل ویندوز بدون BOM متن فارسی را Mojibake نشان می‌دهد) + `cursor()` روی `DB::table` (Streaming واقعی، بدون بافر کامل در حافظه برای سگمنت‌های بزرگ) — دقیقاً همان پیشنهاد کاربر، با همان دلیل.
 2. **ستون‌های Export:** PRD شِمای Export را مشخص نکرده. مجموعه‌ی حداقلی انتخاب شد: `customer_id, phone, display_name, province, city, status, lifecycle_stage, total_orders, total_revenue, rfm_segment` — بدون هیچ فیلد اضافه‌ی حدسی؛ گسترش آن (مثلاً CLV/Churn) تصمیم جدا نیاز دارد.
 3. **رویدادهای `CustomerEntered/LeftSegment`:** PRD می‌گوید «recorded only». این تسک آن‌ها را فقط Dispatch می‌کند (`Event::fake()`/`assertDispatched` در تست)؛ **هیچ Listener که آن‌ها را در `customer_events` بنویسد ساخته نشد** — چون این نیازمند افزودن Case تازه به `CustomerEventType` (ماژول Customers، تغییر CHECK Constraint) است، یک تصمیم جدا و خارج از Scope «یک Feature در هر Session».
@@ -102,6 +106,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 ## P5-05 — RuleBuilder UI + مسیر Preview
 
 **چه چیزی ساخته شد (Backend):**
+
 - `App\Modules\Segments\Support\RuleWhitelistPresenter::toArray()` — سریالایز کردن Whitelist P5-01 + محدودیت‌های P5-02 (`MAX_DEPTH` و بقیه، که برای همین از `private` به `public const` در `RuleValidator` تغییر کردند) به شکل دقیقی که فرانت انتظار دارد: ۲۵ فیلد با برچسب فارسی، ۱۹ عملگر با برچسب فارسی + `behaviorOnly` + `valueShape` (`scalar`/`list`/`range`/`none`)، و ۵ محدودیت ساختاری. برچسب‌های فارسی فقط همین‌جا تعریف شده‌اند.
 - `POST /segments/preview` (`routes/internal.php`, پشت `permission:segments,create`) → `SegmentPreviewRequest` (فقط `rule` را الزامی/آرایه می‌کند) → `SegmentPreviewController` (یک خط: `$segments->previewRule($request->rule())`) → `SegmentService::previewRule(array $rule): int` (متد تازه‌ی P5-05؛ یک `Segment` هرگز-ذخیره‌نشده می‌سازد و `preview()` موجود P5-04 را صدا می‌زند — دقیقاً همان چیزی که Rule Builder برای پیش‌نمایش یک قانون هنوز-ذخیره‌نشده لازم دارد).
 - ترجمه‌ی Exception به پاسخ: `SegmentException`/`RuleValidationException` در `bootstrap/app.php` (`$exceptions->render(...)`) به ۴۲۲ فارسی نگاشت می‌شوند — نه در Controller، تا Controller «فقط یک Service صدا بزن» بماند (CLAUDE.md §۱).
@@ -111,12 +116,14 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **⚠ به‌روزرسانی دو تست مرزبندی موجود:** افزودن یک `Route::post` تازه به `routes/internal.php` شمارش دقیق POSTها را در دو تست از‌پیش‌موجود (`CustomerListBoundaryTest`، `PhoneRevealBoundaryTest`) از ۲ به ۳ رساند — همان الگوی محافظ دامنه‌ی مستندشده در P2-10/P4-03؛ هر دو عدد و کامنتشان به‌روز شد.
 
 **چه چیزی ساخته شد (Frontend، TypeScript strict، بدون `any`):**
+
 - `resources/js/types/segments.ts` — نوع‌های `RuleWhitelist` (از Backend) و درخت داخلی `RuleTreeNode` (با `id` سمت کلاینت برای React key/خطا؛ هرگز به سرور نمی‌رود).
 - `resources/js/lib/segment-rule-tree.ts` — توابع خالص برای افزودن/حذف/ویرایش گره و تبدیل درخت داخلی به فرمت Wire دقیق PRD §۱۷ (`toWireRule`).
 - `resources/js/lib/segment-rule-validation.ts` — بازتاب سمت کلاینت محدودیت‌های `RuleValidator` (عمق/گره/فرزند/طول لیست/سازگاری فیلد↔عملگر/شکل مقدار) — **فقط UX**؛ مرجع نهایی همیشه سرور است و هر کلیک Preview واقعاً `RuleValidator` را دوباره اجرا می‌کند.
 - `resources/js/components/segments/{RuleBuilder,RuleNodeEditor,RuleValueInput}.tsx` — `RuleBuilder` وضعیت درخت + دکمه‌ی Preview (Loading/خطای فارسی/تعداد) را نگه می‌دارد؛ `RuleNodeEditor` بازگشتی است (Group یا Condition)؛ `RuleValueInput` شکل ورودی را از `valueShape` سرور تعیین می‌کند (نه حدس در فرانت).
 
 **تصمیم‌های مبهم در PRD/تسک (نام‌گذاری‌شده، پیش‌فرض با دلیل):**
+
 1. **مجوز مسیر Preview:** فقط `segments.create` (میدلور فعلی OR بین دو Permission را پشتیبانی نمی‌کند). یک کاربر با فقط `segments.edit` (بدون `create`) نمی‌تواند Preview بزند — نقص شناخته‌شده، موکول به P5-06 وقتی صفحات واقعی Create/Edit ساخته شوند و معلوم شود این ترکیب واقعاً لازم است یا نه.
 2. **مقدار چندتایی (`in`/`not_in`/`in_segment`):** ورودی متن جداشده با کاما، نه یک Tag-Input واقعی — ساده‌ترین راه بدون افزودن کتابخانه‌ی تازه (قانون صریح تسک: «فریمورک/کتابخانه‌ی جدید اضافه نکن»).
 3. **مقدار تاریخ:** هیچ کامپوننت Date-Picker شمسی در پروژه وجود ندارد (بررسی شد: `resources/js/components` فاقد آن است؛ تاریخ‌ها همه‌جا فقط نمایشی‌اند، نه ورودی). پیش‌فرض: `<input type="date">` بومی مرورگر (میلادی روی سیم، تبدیل سمت سرور در صورت نیاز) — ساخت یک Date-Picker شمسی کامل خارج از Scope این تسک است.
@@ -144,6 +151,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **اندازه‌گیری evaluate پیش از تصمیم Job/Sync (PRD §۱۸، CLAUDE.md §۱ «بیش از ~۲ ثانیه یعنی Job»):** روی داده‌ی dev (۱۹٬۵۸۶ مشتری)، `SegmentService::evaluate()` برای قانونی با گزینش‌پذیری متوسط (۱٬۰۴۸ عضو) **~۲۴۰-۳۰۰ میلی‌ثانیه** طول کشید؛ برای گسترده‌ترین قانون ممکن (منطبق با همه‌ی ۱۹٬۵۸۶ مشتری) **~۲٬۲۴۰-۲٬۴۶۵ میلی‌ثانیه** — دقیقاً روی/بالای خط ۲ ثانیه. چون گزینش‌پذیری قانون از پیش قابل پیش‌بینی نیست، دکمه‌ی «ارزیابی» **همیشه** `EvaluateSegmentJob` (Queue، `ShouldBeUnique` بر اساس id سگمنت، `tries=1`) را صف می‌کند، هرگز `evaluate()` را همزمان صدا نمی‌زند. `RebuildAllSegmentsJob` و Listener مربوطه طبق تسک، ساخته نشدند (کار P5-08).
 
 **چه چیزی ساخته شد (Backend):**
+
 - `SegmentService`: متدهای تازه‌ی `whitelist()` (پاس‌کاری `RuleWhitelistPresenter` — تا Controller فقط از Service وارد کند)، `paginate()` (لیست)، `members()` (اعضای یک سگمنت، صفحه‌بندی‌شده، موبایل ماسک‌شده)، `create()`، `modify()`، `destroy()`، `evaluateById()` (نقطه‌ی ورود Job).
 - `SegmentException`: دو دلیل تازه — `IS_SYSTEM`، `NAME_TAKEN` (Backstop برای تضاد race با ایندکس `segments_name_unique`).
 - `App\Modules\Segments\Support\{SegmentListRow, SegmentMemberRow, SegmentDetail}` — سه DTO فقط-خواندنی، هم‌الگوی `CustomerListRow`.
@@ -159,6 +167,7 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **⚠ یافته‌ی سوم — `object` در برابر `stdClass` در PHPStan:** در `export()`ی موجود (P5-04)، خواص یک ردیف `DB::table()->select([...])->cursor()->each(closure)` داخل همان Closure بدون خطا خوانده می‌شوند (Larastan نوع را از همان زنجیره‌ی Fluent استنتاج می‌کند)، اما وقتی همان شیء به یک کلاس/متد دیگر (این‌جا `SegmentMemberRow`) پاس داده شود، آن استنتاج از دست می‌رود و `object` یک نوع عمومی بدون خاصیت شناخته‌شده می‌ماند. راه‌حل: پارامتر را صریحاً `\stdClass` تایپ کردیم (PHPStan دسترسی پویا به خاصیت را روی `stdClass` — برخلاف `object` — خطا نمی‌گیرد).
 
 **تصمیم‌های مبهم (نام‌گذاری‌شده، پیش‌فرض با دلیل):**
+
 1. **فعل مسیر Update:** `POST /segments/{segment}`، نه PUT/PATCH. در کل `routes/internal.php` تا امروز هیچ `Route::put`/`Route::patch`ی وجود ندارد و یک تست معماری صریحاً آن را `not->toMatch` می‌کند؛ به‌جای شل‌کردن آن Guard برای یک مسیر، از الگوی موجود (POST برای هر نوشتن) پیروی شد.
 2. **مجوز Evaluate:** فقط `segments.edit` (نه OR با create) — چون در ماتریس PRD §۲۰ هر کسی که `segments.create` دارد `segments.edit` هم دارد (Analyst، Manager، Owner یکسان)، یک مجوز واحد برای این اکشن کافی بود؛ مسیر Preview همچنان OR است چون از صفحه‌ی Create (که Edit ندارد) هم صدا زده می‌شود.
 3. **قفل کامل ویرایش سگمنت سیستمی:** تسک گفته بود «rule آن قابل ویرایش نباشد»؛ چون فرم این صفحه نام/توضیح/rule را همیشه یک‌جا می‌فرستد (بدون مسیر ویرایش «فقط‌نام»)، `SegmentService::modify()` کل درخواست را برای `is_system=true` رد می‌کند، نه فقط تغییر `rule` را. نیاز واقعی به ویرایش جزئی سگمنت سیستمی، تصمیم جدایی می‌خواهد.
@@ -180,19 +189,20 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 
 **⚠ ابهام #۱ — «در معرض ریزش» PRD در برابر برچسب صفحه‌ی RFM، با اعداد dev واقعی:** PRD §17 این سگمنت را «(churn medium)» می‌نویسد و «از دست رفته» را «(churn lost)» — یعنی فیلد `churn_risk_level`، نه `rfm_segment`. اما صفحه‌ی RFM (P4-08) برچسب «در معرض ریزش» را برای `rfm_segment=at_risk` به کار می‌برد، و کلمه‌ی «از دست رفته/Lost» هم در `rfm_segment` (بخش §12) و هم در `churn_risk_level` (بخش §14) به‌طور مستقل وجود دارد — دو مقدار متفاوت با نام مشابه. **تصمیم: PRD را عیناً دنبال کردیم** — هر دو سگمنت از `churn_risk_level` می‌سازند، نه `rfm_segment`، بدون حدس. عدد dev واقعی این تفاوت را به‌روشنی نشان می‌دهد:
 
-| سگمنت | فیلد استفاده‌شده | عدد Preview (dev) |
-|---|---|---|
-| در معرض ریزش | `churn_risk_level = medium` | ۲٬۲۱۷ |
-| از دست رفته | `churn_risk_level = lost` | ۳٬۴۲۶ |
-| (مقایسه، نه یک سگمنت Seed) `rfm_segment = at_risk` | — | ۴۰ |
-| (مقایسه، نه یک سگمنت Seed) `rfm_segment = lost` | — | **۱۳** ← عدد داده‌شده توسط کاربر برای «lost» دقیقاً همین است |
+| سگمنت                                              | فیلد استفاده‌شده            | عدد Preview (dev)                                            |
+| -------------------------------------------------- | --------------------------- | ------------------------------------------------------------ |
+| در معرض ریزش                                       | `churn_risk_level = medium` | ۲٬۲۱۷                                                        |
+| از دست رفته                                        | `churn_risk_level = lost`   | ۳٬۴۲۶                                                        |
+| (مقایسه، نه یک سگمنت Seed) `rfm_segment = at_risk` | —                           | ۴۰                                                           |
+| (مقایسه، نه یک سگمنت Seed) `rfm_segment = lost`    | —                           | **۱۳** ← عدد داده‌شده توسط کاربر برای «lost» دقیقاً همین است |
 
 عدد ۱۳ که در دستور تسک برای «lost» آمده بود، با `rfm_segment=lost` مطابقت کامل دارد، نه با `churn_risk_level=lost` (۳٬۴۲۶) که سگمنت «از دست رفته» واقعاً از آن ساخته شده. این اختلاف عمداً حل نشد — طبق PRD پیش رفتیم و اختلاف را همین‌جا با اعداد واقعی ثبت کردیم؛ اگر منظور PRD واقعاً `rfm_segment` بوده (نه `churn_risk_level`)، این یک تصمیم محصول جداست، نه چیزی که بشود در کد حدس زد.
 
 **⚠ ابهام #۲ — «سررسید خرید مجدد» (`expected_next_order_at ±7d`) — به تسک بعد موکول شد، ۱۱ از ۱۲ سگمنت ساخته شد:** PRD §17 JSON Rule Schema هیچ نوع مقداری برای «بازه‌ی نسبی به today» ندارد — هر `value` یک ثابت است، نه عبارتی که باید در لحظه‌ی evaluate دوباره محاسبه شود. دو راه واقعی وجود داشت:
+
 1. **بازه‌ی مطلق در لحظه‌ی Seed:** یک تاریخ ثابت (مثلاً `now-7d`..`now+7d` در زمان اجرای Seeder) در `rule` بنویسیم. **رد شد** — این نادرست است، نه فقط ساده‌سازی: چند روز بعد «امروز» جابه‌جا می‌شود ولی rule ذخیره‌شده ثابت می‌ماند، پس این سگمنت به‌تدریج غلط می‌شود — دقیقاً برخلاف هدف یک سگمنت پویا.
 2. **افزودن نوع مقدار نسبی به Schema/Validator/Compiler** (مثلاً عملگر یا شکل مقدار تازه‌ای مثل `{"relative_days": 7}` که RuleCompiler هر بار در لحظه‌ی Compile با `now() ± interval` واقعی می‌سازد): تنها راه درست، اما دقیقاً همان چیزی است که دستور صریح تسک گفت «بدون تصمیم گسترش نده».
-طبق تصریح خود دستور («یا گذاشتن این یک سگمنت به تسک بعدی» به‌عنوان یک پیش‌فرض معتبر که نیازی به توقف ندارد، چون هیچ تغییر Schema‌ای رخ نمی‌دهد) — **پیش‌فرض انتخاب‌شده: این یک سگمنت ساخته نشد**، ۱۱ سگمنت دیگر کامل و تست‌شده تحویل داده شدند. پیشنهاد برای تسک بعد: راه‌حل #۲ بالا (یک عملگر/شکل‌مقدار تازه در Whitelist P5-01، تست‌محور مثل RuleValidator/RuleCompiler خودشان) — تصمیم و پیاده‌سازی آن باید جدا و با تأیید صریح باشد.
+   طبق تصریح خود دستور («یا گذاشتن این یک سگمنت به تسک بعدی» به‌عنوان یک پیش‌فرض معتبر که نیازی به توقف ندارد، چون هیچ تغییر Schema‌ای رخ نمی‌دهد) — **پیش‌فرض انتخاب‌شده: این یک سگمنت ساخته نشد**، ۱۱ سگمنت دیگر کامل و تست‌شده تحویل داده شدند. پیشنهاد برای تسک بعد: راه‌حل #۲ بالا (یک عملگر/شکل‌مقدار تازه در Whitelist P5-01، تست‌محور مثل RuleValidator/RuleCompiler خودشان) — تصمیم و پیاده‌سازی آن باید جدا و با تأیید صریح باشد.
 
 **پیش‌فرض `created_by = null`:** ستون به‌همین‌خاطر Nullable است. هاردکد‌کردن هر id/ایمیل کاربر خاص (مثلاً «اولین Owner») روی نصب تازه‌ای که هنوز آن کاربر ساخته نشده می‌شکند؛ این سگمنت‌ها نویسنده‌ی انسانی ندارند — Seed سیستمی‌اند، نه کار یک کاربر.
 
@@ -205,3 +215,25 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **تأیید روی dev:** فقط `app(DefaultSegmentSeeder::class)->run()` (نه `db:seed` کامل — که `DemoDataSeeder` را هم با ۵۰ مشتری جعلی روی داده‌ی واقعی اجرا می‌کرد). ۶ سگمنت مبتنی بر `rfm_segment` دقیقاً با اعداد داده‌شده در دستور تطابق داشتند: قهرمانان ۵۷، وفادار ۱۴۳، نویدبخش ۵٬۶۴۲، مشتری جدید ۲٬۴۲۳، نباید‌از‌دست‌برود ۵، خوابیده ۵٬۴۵۳ — همگی ✓. عدد «lost» (۱۳) داده‌شده در دستور، بالاتر توضیح داده شد (ابهام #۱).
 
 **عمداً ساخته نشد:** سگمنت دوازدهم («سررسید خرید مجدد» — ابهام #۲ بالا)، `RebuildAllSegmentsJob`/Listener و فراخوانی `evaluate()` روی این سگمنت‌ها (صریحاً P5-08).
+
+## P5-07b — تاریخ نسبی در Rule + سگمنت دوازدهم + اصلاح «در معرض ریزش»
+
+**تاریخ نسبی (`within_days_of_now`):** یک عملگر تازه در `RuleOperator`، فقط روی دو فیلد تاریخی سفارش‌محور (`RuleFieldWhitelist::DATE_FIELDS = ['first_seen_at', 'expected_next_order_at']`)، با `value` یک عدد صحیح روز (۰ تا ۳۶۵۰، سقف Sanity نه عدد کسب‌وکاری). `RuleValidator` هم سازگاری فیلد/عملگر و هم شکل مقدار را رد می‌کند؛ `RuleCompiler::applyWithinDaysOfNow` هر بار از `CarbonImmutable::now()` واقعی (نه مقدار ذخیره‌شده) بازه‌ی `[now-N, now+N]` را می‌سازد و با `whereBetween` (Binding کامل، بدون SQL خام) اعمال می‌کند — در تست با `Carbon::setTestNow()` قطعی می‌شود.
+
+**باگ کامپایلر بررسی‌شده و رفع‌شده:** تست اولیه‌ی `first_seen_at` با `Carbon::setTestNow('2026-06-15 12:00:00')` و بازه‌ی ۳ روزه، مقدار Fixture را `'2026-06-12 00:00:00'` گذاشته بود — نیم روز **قبل** از کران پایین واقعی بازه (`2026-06-12 12:00:00`)، پس به‌درستی خارج از بازه بود و نتیجه خالی برمی‌گشت. این باگ داده‌ی تست بود، نه باگ کامپایلر یا طراحی تاریخ نسبی؛ با تغییر مقدار Fixture به `'2026-06-13 00:00:00'` رفع شد. بدون اثر روی GATE 3 (هیچ Binding/Injection‌ای درگیر نبود).
+
+**Gate3SqlInjectionTest گسترش یافت:** هر Payload کلاسیک به‌عنوان مقدار `within_days_of_now` باید پیش از ساخت هر Queryای رد شود (RuleValidator: `is_int` رد می‌کند)؛ و یک تست تأیید می‌کند حتی در کران مجاز (۳۶۵۰) عدد روز هرگز در SQL Concatenate نمی‌شود، فقط Bound می‌شود.
+
+**Frontend:** `RuleWhitelistPresenter` یک `valueShape` تازه به نام `relative_days` برمی‌گرداند (نه `scalar` — چون فیلدهای `_at` به‌طور پیش‌فرض Input تاریخ می‌گیرند، در حالی‌که مقدار این عملگر یک عدد روز است، نه تاریخ) + `limits.maxRelativeDays` برای اعتبارسنجی سمت کلاینت بدون هاردکد‌کردن ۳۶۵۰ در فرانت. `RuleValueInput.tsx` برای این Shape یک Input عددی با پیشوند/پسوند «± ... روز از امروز» رندر می‌کند؛ `segment-rule-validation.ts` عدد صحیح غیرمنفی و سقف را روی کلاینت هم چک می‌کند (فقط UX — سرور تنها مرجع است).
+
+**سگمنت دوازدهم («سررسید خرید مجدد»):** طبق PRD §17 دقیقاً `expected_next_order_at ± 7 روز`، حالا با `within_days_of_now` قابل بیان است. به `DefaultSegmentSeeder::definitions()` اضافه شد؛ Seeder اکنون هر ۱۲ سگمنت PRD §17 را می‌سازد.
+
+**اصلاح «در معرض ریزش»:** تصمیم این تسک (نه فرضِ تحت‌اللفظیِ P5-07 که `churn_risk_level = medium` تنها بود): `churn_risk_level in [medium, high]` — با عملگر `in` به‌جای `=`. دلیل: خواندن تک‌مقداری P5-07 با معنای «در معرض ریزش» صفحه‌ی RFM هم‌خوانی نداشت (کم‌شمار بود)؛ مقایسه‌ی دقیق روی dev در پایین.
+
+**Seeder: به‌روزرسانی بدون تکرار/بدون دست‌زدن به سگمنت کاربر:** منطق موجود P5-07 («اگر با نام پیدا شد، بازنویسی کن») یک باگ واقعی داشت — بدون توجه به `is_system`، حتی سگمنت **کاربر** را هم بازنویسی و `is_system=true` می‌کرد اگر نامش تصادفاً با یکی از ۱۲ نام Seed یکی بود. رفع شد: اگر سگمنتِ پیداشده `is_system=false` باشد، Seeder کاملاً دست نگه می‌دارد (نه بازنویسی، نه تبدیل) و فقط یک `Log::warning` ثبت می‌کند (نه `$this->command->warn` — چون فراخوانی واقعی همیشه `app(...)->run()` مستقیم است، جایی که `$command` هرگز Set نمی‌شود و هشدار کنسول اصلاً دیده نمی‌شد؛ با Reflection در همین تسک تأیید شد که `Seeder::$command` اصلاً Type ندارد و پیش‌فرض null است، برخلاف تشخیص اولیه‌ی PHPStan/Larastan از PHPDoc آن).
+
+**تست (TEST FIRST برای این ناحیه‌ی بحرانی):** `RuleValidatorTest`/`RuleCompilerTest`/`Gate3SqlInjectionTest`/`RuleOperatorTest`/`RuleWhitelistPresenterTest` هر کدام گسترش یافتند؛ `DefaultSegmentSeederTest` دو تست تازه گرفت («به‌روزرسانی سگمنت is_system موجود» و «دست‌نخورده ماندن سگمنت غیر-system هم‌نام»)، به‌علاوه شمارش سگمنت‌ها از ۱۱ به ۱۲ در سه تست موجود. مقایسه‌ی «سررسید خرید مجدد» با `expected_metrics.json` با `Carbon::setTestNow(DemoDataSeeder::asOf())` قطعی شد (نه ساعت واقعی). نتیجه: سوییت کامل Backend ۲۸۷۷/۲۸۷۷ سبز، PHPStan کل پروژه ۰ خطا، Pint تمیز، `npm run types:check`/`npm run build` سبز.
+
+**تأیید روی dev (Seeder دوباره اجرا شد، `preview()` واقعی — نه شمارش مستقیم):** «سررسید خرید مجدد» = ۶۴۶ نفر؛ «در معرض ریزش» (medium+high) = ۶٬۰۵۲ نفر (۲٬۲۱۷ + ۳٬۸۳۵ — با شمارش مستقیم `customer_metrics.churn_risk_level` صحت‌سنجی شد)؛ «از دست رفته» (churn_risk_level=lost) = ۳٬۴۲۶ نفر (بدون تغییر نسبت به معنای P5-07، چون قانون `= lost` دست نخورد). کل مشتریان dev اکنون ۱۹٬۵۸۸ (۲ نفر بیشتر از عدد P5-07 — داده‌ی واقعی همچنان Sync می‌شود).
+
+**عمداً ساخته نشد:** P5-08 (`RebuildAllSegmentsJob`/Listener/`evaluate()` خودکار) — طبق تصریح صریح دستور این تسک.

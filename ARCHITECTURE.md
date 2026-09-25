@@ -51,63 +51,64 @@ conflict.
 
 Each row links to the sprint archive file; open the file and search the heading to read the full entry.
 
-| Task   | File        | What / why (1 line)                                               |
-| ------ | ----------- | ----------------------------------------------------------------- |
-| P0-01  | sprint-0.md | RTL + shadcn/ui scaffold, real installed versions recorded        |
-| P0-02  | sprint-0.md | Horizon wired to Redis, queue verified                            |
-| P0-03  | sprint-0.md | `PhoneNormalizer`, `JalaliDate`, Money helpers (TEST FIRST)       |
-| P0-04  | sprint-0.md | PL/pgSQL Jalali conversion functions                              |
-| P0-05  | sprint-0.md | Core migrations; found + fixed the UTC connection-timezone bug    |
-| P0-06  | sprint-0.md | Auth + 2FA (starter kit), Persian RTL auth pages                  |
-| P0-07  | sprint-0.md | Permissions (deny>allow>role>default-deny), CRITICAL test         |
-| P0-08  | sprint-0.md | Audit log                                                         |
-| P0-09  | sprint-0.md | Settings + AlertService                                           |
-| P0-10  | sprint-0.md | Architecture arch-tests (module boundaries, layering)             |
-| GATE 0 | sprint-0.md | Passed — end of Sprint 0                                          |
-| P1-01  | sprint-1.md | Customers + identities + conflicts + addresses + notes            |
-| P1-02  | sprint-1.md | Catalog module (products, categories, variations)                 |
-| P1-03  | sprint-1.md | Orders + items + status history + refunds                         |
-| P1-04  | sprint-1.md | Migrations for Metrics / Segments / Analytics / Sync / AI         |
-| P1-05  | sprint-1.md | Enums pass across all modules                                     |
-| P1-06  | sprint-1.md | `DemoDataSeeder` + `expected_metrics.json` fixture                |
-| P2-01  | sprint-2.md | `WooClient` / `HttpWooClient` transport layer                     |
-| P2-02  | sprint-2.md | `FakeWooClient` + recorded fixtures for tests                     |
-| P2-03  | sprint-2.md | DTOs + Mappers + `OrderStatusMapper` (TEST FIRST)                 |
-| P2-04  | sprint-2.md | `CustomerIdentityService` + identity conflicts (TEST FIRST)       |
-| P2-05  | sprint-2.md | Category + Product + Variation sync                               |
-| P2-06  | sprint-2.md | Order + items sync, 4-step product resolution                     |
-| P2-07  | sprint-2.md | Refund sync                                                       |
-| P2-08  | sprint-2.md | `SyncService`, cursor, jobs                                       |
-| P2-09  | sprint-2.md | Webhook: HMAC + IP + dedupe                                       |
-| P2-10  | sprint-2.md | `hm:sync`, resumable full sync in pages                           |
-| P2-11  | sprint-2.md | Reconciliation service, job, monthly report                       |
-| P2-12  | sprint-2.md | System pages: Health, Sync Logs, Identity Conflicts               |
-| P2-13  | sprint-2.md | Made phone-less orders usable (GATE 1 blocker #1)                 |
-| P2-14  | sprint-2.md | `unit_price` from line sum/qty (GATE 1 blocker #2)                |
-| GATE 1 | sprint-2.md | Passed — 2026-09-20, Sprint 2 closed                              |
-| P2-15  | sprint-2.md | Reconcile job timeout 80s -> 300s (mislabeled "P3-01" in the log) |
-| P3-01  | sprint-3.md | Customer list, search, filters                                    |
-| P3-02  | sprint-3.md | Audited full-phone reveal                                         |
-| P3-03  | sprint-3.md | Customer 360 page                                                 |
-| P3-04  | sprint-3.md | Customer timeline, cursor pagination                              |
-| P3-05  | sprint-3.md | Orders/products tabs + notes on Customer 360                      |
-| P3-06  | sprint-3.md | Order list + detail page                                          |
-| P3-07  | sprint-3.md | Product list with lifetime sales stats                            |
-| P4-01  | sprint-4.md | Base aggregates + `metric_runs` (Sprint 4 start)                  |
-| P4-02  | sprint-4.md | Purchase cycle + churn thresholds + low-sample guard              |
-| P4-03  | sprint-4.md | `RfmCalculator` (TEST FIRST — E1/E2/E3)                           |
-| P4-04  | sprint-4.md | `ClvCalculator` + confidence                                      |
-| P4-05  | sprint-4.md | `ChurnCalculator` + level + Persian reason                        |
-| P4-06  | sprint-4.md | `LifecycleStageResolver`                                          |
-| P4-07  | sprint-4.md | `RecomputeMetricsJob` + dirty flag + listener (Sprint 4 close)    |
-| P4-08  | sprint-4.md | Metrics on Customer 360 + RFM page + GATE 2                       |
-| Sprint 5 setup | sprint-5.md | Post-Sprint-4-merge finding: dev `customer_metrics` was empty until `metrics:recompute` was run |
-| P5-01  | sprint-5.md | Field + operator whitelist (Sprint 5 start)                       |
-| P5-02  | sprint-5.md | `RuleValidator` (TEST FIRST)                                      |
-| P5-03  | sprint-5.md | `RuleCompiler` (TEST FIRST) + GATE 3 passed                       |
-| P5-04  | sprint-5.md | `SegmentService`: evaluate / preview / export                     |
-| P5-05 (pre) | sprint-5.md | `PostgresStatementTimeout` revisited — the extra Rule 7 exception was removable (`set_config` takes bound params) |
-| P5-05  | sprint-5.md | RuleBuilder UI + preview flow                                     |
-| P5-06 (pre) | sprint-5.md | Two small fixes before P5-06                                      |
-| P5-06  | sprint-5.md | Segment pages (List / Create / Edit / Detail / Delete)            |
-| P5-07  | sprint-5.md | `DefaultSegmentSeeder` (11 of 12 seed segments)                   |
+| Task           | File        | What / why (1 line)                                                                                                   |
+| -------------- | ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| P0-01          | sprint-0.md | RTL + shadcn/ui scaffold, real installed versions recorded                                                            |
+| P0-02          | sprint-0.md | Horizon wired to Redis, queue verified                                                                                |
+| P0-03          | sprint-0.md | `PhoneNormalizer`, `JalaliDate`, Money helpers (TEST FIRST)                                                           |
+| P0-04          | sprint-0.md | PL/pgSQL Jalali conversion functions                                                                                  |
+| P0-05          | sprint-0.md | Core migrations; found + fixed the UTC connection-timezone bug                                                        |
+| P0-06          | sprint-0.md | Auth + 2FA (starter kit), Persian RTL auth pages                                                                      |
+| P0-07          | sprint-0.md | Permissions (deny>allow>role>default-deny), CRITICAL test                                                             |
+| P0-08          | sprint-0.md | Audit log                                                                                                             |
+| P0-09          | sprint-0.md | Settings + AlertService                                                                                               |
+| P0-10          | sprint-0.md | Architecture arch-tests (module boundaries, layering)                                                                 |
+| GATE 0         | sprint-0.md | Passed — end of Sprint 0                                                                                              |
+| P1-01          | sprint-1.md | Customers + identities + conflicts + addresses + notes                                                                |
+| P1-02          | sprint-1.md | Catalog module (products, categories, variations)                                                                     |
+| P1-03          | sprint-1.md | Orders + items + status history + refunds                                                                             |
+| P1-04          | sprint-1.md | Migrations for Metrics / Segments / Analytics / Sync / AI                                                             |
+| P1-05          | sprint-1.md | Enums pass across all modules                                                                                         |
+| P1-06          | sprint-1.md | `DemoDataSeeder` + `expected_metrics.json` fixture                                                                    |
+| P2-01          | sprint-2.md | `WooClient` / `HttpWooClient` transport layer                                                                         |
+| P2-02          | sprint-2.md | `FakeWooClient` + recorded fixtures for tests                                                                         |
+| P2-03          | sprint-2.md | DTOs + Mappers + `OrderStatusMapper` (TEST FIRST)                                                                     |
+| P2-04          | sprint-2.md | `CustomerIdentityService` + identity conflicts (TEST FIRST)                                                           |
+| P2-05          | sprint-2.md | Category + Product + Variation sync                                                                                   |
+| P2-06          | sprint-2.md | Order + items sync, 4-step product resolution                                                                         |
+| P2-07          | sprint-2.md | Refund sync                                                                                                           |
+| P2-08          | sprint-2.md | `SyncService`, cursor, jobs                                                                                           |
+| P2-09          | sprint-2.md | Webhook: HMAC + IP + dedupe                                                                                           |
+| P2-10          | sprint-2.md | `hm:sync`, resumable full sync in pages                                                                               |
+| P2-11          | sprint-2.md | Reconciliation service, job, monthly report                                                                           |
+| P2-12          | sprint-2.md | System pages: Health, Sync Logs, Identity Conflicts                                                                   |
+| P2-13          | sprint-2.md | Made phone-less orders usable (GATE 1 blocker #1)                                                                     |
+| P2-14          | sprint-2.md | `unit_price` from line sum/qty (GATE 1 blocker #2)                                                                    |
+| GATE 1         | sprint-2.md | Passed — 2026-09-20, Sprint 2 closed                                                                                  |
+| P2-15          | sprint-2.md | Reconcile job timeout 80s -> 300s (mislabeled "P3-01" in the log)                                                     |
+| P3-01          | sprint-3.md | Customer list, search, filters                                                                                        |
+| P3-02          | sprint-3.md | Audited full-phone reveal                                                                                             |
+| P3-03          | sprint-3.md | Customer 360 page                                                                                                     |
+| P3-04          | sprint-3.md | Customer timeline, cursor pagination                                                                                  |
+| P3-05          | sprint-3.md | Orders/products tabs + notes on Customer 360                                                                          |
+| P3-06          | sprint-3.md | Order list + detail page                                                                                              |
+| P3-07          | sprint-3.md | Product list with lifetime sales stats                                                                                |
+| P4-01          | sprint-4.md | Base aggregates + `metric_runs` (Sprint 4 start)                                                                      |
+| P4-02          | sprint-4.md | Purchase cycle + churn thresholds + low-sample guard                                                                  |
+| P4-03          | sprint-4.md | `RfmCalculator` (TEST FIRST — E1/E2/E3)                                                                               |
+| P4-04          | sprint-4.md | `ClvCalculator` + confidence                                                                                          |
+| P4-05          | sprint-4.md | `ChurnCalculator` + level + Persian reason                                                                            |
+| P4-06          | sprint-4.md | `LifecycleStageResolver`                                                                                              |
+| P4-07          | sprint-4.md | `RecomputeMetricsJob` + dirty flag + listener (Sprint 4 close)                                                        |
+| P4-08          | sprint-4.md | Metrics on Customer 360 + RFM page + GATE 2                                                                           |
+| Sprint 5 setup | sprint-5.md | Post-Sprint-4-merge finding: dev `customer_metrics` was empty until `metrics:recompute` was run                       |
+| P5-01          | sprint-5.md | Field + operator whitelist (Sprint 5 start)                                                                           |
+| P5-02          | sprint-5.md | `RuleValidator` (TEST FIRST)                                                                                          |
+| P5-03          | sprint-5.md | `RuleCompiler` (TEST FIRST) + GATE 3 passed                                                                           |
+| P5-04          | sprint-5.md | `SegmentService`: evaluate / preview / export                                                                         |
+| P5-05 (pre)    | sprint-5.md | `PostgresStatementTimeout` revisited — the extra Rule 7 exception was removable (`set_config` takes bound params)     |
+| P5-05          | sprint-5.md | RuleBuilder UI + preview flow                                                                                         |
+| P5-06 (pre)    | sprint-5.md | Two small fixes before P5-06                                                                                          |
+| P5-06          | sprint-5.md | Segment pages (List / Create / Edit / Detail / Delete)                                                                |
+| P5-07          | sprint-5.md | `DefaultSegmentSeeder` (11 of 12 seed segments)                                                                       |
+| P5-07b         | sprint-5.md | `within_days_of_now` relative-date rule, 12th seed segment, churn-risk fix, seeder no longer overwrites user segments |
