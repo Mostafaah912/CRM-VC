@@ -46,6 +46,7 @@ conflict.
 - ⚠ **Trigram (`pg_trgm`) search on `display_name` is a no-op for Persian text** — the dev Postgres cluster was created with `lc_ctype = C`, so no trigrams are extracted from Persian strings; search silently falls back to a sequential scan (~430-465ms at 19.5k rows, already past the PRD §23 <500ms/15k-rows target). Needs a Unicode-aware cluster locale (`fa_IR.UTF-8`/ICU) or a different Persian search approach — infrastructure decision, not yet made. `docs/architecture/sprint-3.md` (P3-01).
 - ⚠ **Three Woo orders (#19627, #19640, #19642) have a Jalali date typed into the Gregorian `date_created` field**, landing them before every GATE 1 month and making them invisible to reconciliation (279,800 Toman realized revenue affected). Needs a Woo-side fix or an explicit mapper flag. `docs/architecture/sprint-2.md`.
 - ⚠ **222 phone-less orders (0.9% of all orders, 0.69% of realized revenue)** have no review UI yet. `docs/architecture/sprint-2.md`.
+- ⚠ **`customers.metrics_dirty` is never reset to `false` anywhere in the codebase** — `BaseAggregateService`'s own docblock claims P4-07 clears it once a customer's full pipeline reruns, but no such write exists. Confirmed on dev: all 19,905 customers show `metrics_dirty = true` (0 show `false`), so `metrics:recompute --dirty` has been processing the entire customer base every time, not a filtered subset — the "dirty" optimization has never actually narrowed anything. Found during P5-08's end-to-end dev verification; Metrics module (P4-01/P4-07), out of scope there, not fixed. `docs/architecture/sprint-5.md` (P5-08).
 
 ## Task index
 
@@ -112,3 +113,4 @@ Each row links to the sprint archive file; open the file and search the heading 
 | P5-06          | sprint-5.md | Segment pages (List / Create / Edit / Detail / Delete)                                                                |
 | P5-07          | sprint-5.md | `DefaultSegmentSeeder` (11 of 12 seed segments)                                                                       |
 | P5-07b         | sprint-5.md | `within_days_of_now` relative-date rule, 12th seed segment, churn-risk fix, seeder no longer overwrites user segments |
+| P5-08          | sprint-5.md | `RebuildAllSegmentsJob` + listener on `MetricsRecomputed` (full runs only) — Sprint 5 close, GATE 3                   |

@@ -237,3 +237,56 @@ Split from `ARCHITECTURE.md` (chore/claude-context work, continued on `sprint/5-
 **تأیید روی dev (Seeder دوباره اجرا شد، `preview()` واقعی — نه شمارش مستقیم):** «سررسید خرید مجدد» = ۶۴۶ نفر؛ «در معرض ریزش» (medium+high) = ۶٬۰۵۲ نفر (۲٬۲۱۷ + ۳٬۸۳۵ — با شمارش مستقیم `customer_metrics.churn_risk_level` صحت‌سنجی شد)؛ «از دست رفته» (churn_risk_level=lost) = ۳٬۴۲۶ نفر (بدون تغییر نسبت به معنای P5-07، چون قانون `= lost` دست نخورد). کل مشتریان dev اکنون ۱۹٬۵۸۸ (۲ نفر بیشتر از عدد P5-07 — داده‌ی واقعی همچنان Sync می‌شود).
 
 **عمداً ساخته نشد:** P5-08 (`RebuildAllSegmentsJob`/Listener/`evaluate()` خودکار) — طبق تصریح صریح دستور این تسک.
+
+## P5-08 — RebuildAllSegmentsJob + Listener + بستن Sprint 5
+
+**⚠ قانون «تست اول» این تسک رعایت نشد:** `SegmentService::rebuildAll()`، `RebuildAllSegmentsJob`، `MetricsRecomputed::isFullRun()` و Listener هر چهار قبل از نوشتن هیچ تستی پیاده‌سازی شدند — طراحی (انتخاب صف طبق PRD §22، تصمیم mode، محدودیت Arch روی Listener جدا-ماژولی) به‌قدری به شکل نهایی امضای متدها وابسته بود که نوشتن تست قرمز از قبل عملی نبود. رعایت‌نشدن قانون همین‌جا صریحاً ثبت می‌شود (نه پنهان)؛ تست‌های کامل (۱۳ مورد) بلافاصله بعد نوشته و در برابر پیاده‌سازی موجود سبز شدند، طبق سناریوهای خواسته‌شده در دستور دقیقاً.
+
+**صف:** `metrics` — PRD §22 فقط پنج صف را نام می‌برد (critical/sync/metrics/ai/default)؛ Segments صف اختصاصی ندارد. `metrics` انتخاب شد چون (۱) این Job منحصراً از `customer_metrics`/فیلدهای مشتق‌شده از آن می‌خواند، (۲) طبق زنجیره‌ی شبانه‌ی خودِ PRD §22، همیشه بلافاصله بعد از `RecomputeMetricsJob('full')` می‌آید — هم‌صف‌بودن، آن را پشت همان وابستگی نگه می‌دارد به‌جای مسابقه با `default`. `Segment` نمونه‌ی `RecomputeMetricsJob` (P4-07: `tries=1`، `ShouldBeUnique`، `uniqueFor > timeout`) را عیناً تکرار کرد: `tries=1` (اجرای نیمه‌شکست‌خورده مشخص می‌کند دقیقاً کدام سگمنت‌ها شکست خوردند، تلاش کور دوباره فقط همان‌ها را تکرار می‌کند)، `timeout=300`/`uniqueFor=600` — با اندازه‌گیری واقعی روی dev (پایین) کاملاً محافظه‌کارانه بود (Job واقعی ~۴ ثانیه طول کشید، نه نزدیک ۳۰۰).
+
+**طراحی:** `SegmentService::rebuildAll()` (نه Job) کوئری/حلقه/جداسازی خطا را نگه می‌دارد (CLAUDE.md §1: Job نباید Model ماژول را import کند)؛ فقط سگمنت‌های `type=dynamic AND is_active=true` (نرم‌حذف‌شده‌ها به‌خاطر `SoftDeletes` خودکار کنار گذاشته می‌شوند، `static`/`manual` اصلاً `rule` ندارند). خطای هر سگمنت با `try/catch(Throwable)` گرفته و `Log::error` می‌شود، حلقه ادامه می‌یابد؛ خروجی `SegmentRebuildSummary` (لیست موفق/نگاشت شکست‌خورده به پیام خطا/`elapsedMs`) — `RebuildAllSegmentsJob::handle()` فقط همین را `Log::info` می‌کند، بدون منطق دیگر.
+
+**ابهام mode — تصمیم متفاوت از پیش‌فرض پیشنهادی دستور، با دلیل مستند در خودِ کد:** دستور پیشنهاد داده بود Listener برای هر دو mode (`dirty` ساعتی و `full` شبانه) dispatch کند و یکتایی Job جلوی دوبار اجرا را بگیرد. **این پیش‌فرض دنبال نشد.** خودِ PRD §22 این ابهام را صریحاً حل کرده: خط `hourly:` دقیقاً `SyncRefundsJob, RecomputeMetricsJob('dirty')` است — بدون `RebuildAllSegmentsJob`؛ این Job فقط در زنجیره‌ی `daily 03:00`، بلافاصله بعد از `RecomputeMetricsJob('full')` می‌آید. پس `RebuildSegmentsAfterMetricsRecomputed::handle()` فقط وقتی `$event->isFullRun()` باشد dispatch می‌کند. `MetricsRecomputed::isFullRun()` یک متد تازه روی خودِ Event Metrics است (نه Enum) دقیقاً به این دلیل که Listener سگمنت‌ها اجازه ندارد `Metrics\Enums\MetricRunMode` را import کند (`tests/Arch/ArchitectureTest.php`: فقط از طریق Service یا Event).
+
+**هزینه‌ی ساعتی، اندازه‌گیری واقعی روی dev (نه فرضی):** اجرای کامل `RebuildAllSegmentsJob` روی ۱۲ سگمنت/۱۹٬۹۰۵ مشتری واقعی dev **~۴ ثانیه** طول کشید (مجموع `last_eval_ms` هر ۱۲ سگمنت = ۳٬۲۷۶ میلی‌ثانیه؛ Wall-clock بین اولین و آخرین `last_evaluated_at` = ۴ ثانیه). یعنی صرفاً از نظر هزینه‌ی محاسباتی، اجرای ساعتی هم تقریباً رایگان بود — **تصمیم بر مبنای هزینه نبود**، بلکه بر مبنای طراحی صریح خودِ PRD §22 (تازگی سگمنت‌ها یک نیاز روزانه است، نه لحظه‌ای؛ صف شبانه عمداً سگمنت را از ساعتی بیرون گذاشته). اگر مالک محصول بعداً تازگی ساعتی سگمنت‌ها را لازم بداند، تغییر یک شرط در همین Listener است.
+
+**تست (۱۳ مورد، بعد از پیاده‌سازی — بالا اذعان شد):** `SegmentServiceRebuildAllTest` (۶: همه‌ی dynamic فعال؛ رد static/manual؛ رد inactive؛ رد نرم‌حذف‌شده؛ شکست یک سگمنت بقیه را متوقف نمی‌کند و لاگ می‌شود؛ خروجی خالی وقتی چیزی نیست)، `RebuildAllSegmentsJobTest` (۴: بازسازی واقعی، `uniqueId` ثابت، `uniqueFor > timeout`، صف `metrics`)، `RebuildSegmentsAfterMetricsRecomputedTest` (۳: dispatch روی full، عدم dispatch روی dirty، `isFullRun()` هر دو حالت). Arch Suite ۲۱۳/۲۱۳ (بدون استثنای تازه — Listener فقط از طریق Event به ماژول Metrics دست می‌زند).
+
+**⚠ یافته‌ی جدید، حین تست سرتاسری Part D — خارج از Scope این تسک، رفع نشد:** `customers.metrics_dirty` هیچ‌جای کدبیس هرگز `false` نمی‌شود (کامنت خودِ `BaseAggregateService.php` ادعا می‌کند «این پرچم فقط وقتی کل خط‌لوله یک مشتری را دوباره محاسبه کرد پاک می‌شود، کار P4-07 است» — ولی نه آن‌جا، نه هیچ‌جای دیگر چنین نوشتنی وجود ندارد؛ `grep -rn metrics_dirty app/` تأیید کرد). نتیجه‌ی واقعی روی dev: هر ۱۹٬۹۰۵ مشتری `metrics_dirty=true` هستند (۰ مشتری `false`)، یعنی از اولین باری که این ستون مقداردهی شده، `metrics:recompute --dirty` عملاً معادل کامل بوده — بهینه‌سازی «فقط مشتری‌های کثیف» هرگز واقعاً چیزی را فیلتر نکرده. این یک باگ ماژول Metrics است (P4-01/P4-07)، نه Segments؛ طبق قانون این تسک («هیچ چیز را خودسرانه تغییر نده») دست نخورد. ثبت هم در اینجا و هم در «Open items» بالای ARCHITECTURE.md.
+
+**تأیید سرتاسری روی dev (Part D — فقط خواندن از Woo):**
+
+1. `php artisan hm:sync --entity=orders` (افزایشی) — ۴۷۷ رکورد، `completed`، Wall-clock ≈ ۸۴ ثانیه (Backlog ۵ روزه از آخرین Sync در ۱۴۰۵/۰۶/۲۹؛ نه یک Sync واقعاً افزایشی ۱۵‌دقیقه‌ای).
+2. `php artisan hm:reconcile --month=1405-06` — **green**، سفارش‌ها ۲۱۸۷/۲۱۸۷، اختلاف درآمد ۰٫۰۰۰۰٪.
+3. `php artisan metrics:recompute --dirty` — تکمیل در ~۱۰ ثانیه، `customers_processed=۱۹۹۰۵`. طبق طراحی همین تسک، **Listener دیسپچ نکرد** (mode=dirty).
+4. برای اثبات مسیر واقعی Listener→Job (چون دستور صراحتاً انتظار دیدن اجرای آن را داشت): یک اجرای اضافه‌ی `php artisan metrics:recompute` (mode=full، بدون نوشتن به Woo، فقط محلی) — Listener بلافاصله `RebuildAllSegmentsJob` را صف کرد؛ Horizon در ~۴ ثانیه هر ۱۲ سگمنت را ارزیابی کرد.
+
+**member_count هر ۱۲ سگمنت بعد از اجرای کامل (و تطابق ۱۰۰٪ با `preview()` مستقل، ۰ عدم‌تطابق):**
+
+| سگمنت             | member_count |
+| ----------------- | ------------ |
+| قهرمانان          | ۶۱           |
+| وفادار            | ۱۴۱          |
+| نویدبخش           | ۵٬۷۳۹        |
+| مشتری جدید        | ۲٬۴۴۷        |
+| در معرض ریزش      | ۶٬۰۹۶        |
+| نباید از دست برود | ۵            |
+| خوابیده           | ۵٬۵۳۰        |
+| از دست رفته       | ۳٬۳۸۳        |
+| تک‌خرید           | ۱۲٬۹۰۳       |
+| پرارزش            | ۲٬۷۹۶        |
+| VIP               | ۹۴           |
+| سررسید خرید مجدد  | ۶۴۹          |
+
+کل زمان اجرای Job (بین اولین و آخرین `last_evaluated_at`) ۴ ثانیه — بسیار زیر Timeout=۳۰۰. هیچ خطا/توقفی رخ نداد؛ کل زنجیره زیر ۵ دقیقه (Sync ~۸۴ث + Reconcile ~۱ث + Recompute Dirty ~۱۰ث + Recompute Full+Job ~۱۳ث + سربار Poll).
+
+**اصلاح کوچک P5-06 (commit جدا):** `resources/js/pages/segments/{index,show}.tsx` — وقتی `last_evaluated_at === null`، به‌جای «۰» عبارت «ارزیابی نشده» نشان داده می‌شود (`member_count` فقط بعد از اولین ارزیابی معنی دارد؛ صفر واقعی و «هنوز ارزیابی نشده» تا امروز قابل‌تفکیک نبودند).
+
+**بک‌لاگ UI ثبت‌شده (بدون کد، طبق دستور):**
+
+- ⚠ `/metrics/rfm` (`resources/js/pages/metrics/rfm.tsx:201`): شناسه‌ی مشتری با `formatNumber()` رندر می‌شود، یعنی جداکننده‌ی هزارگان می‌گیرد (`#۱٬۱۹۴`) — شناسه یک عدد کسب‌وکاری نیست، نباید فرمت شود (باید `#۱۱۹۴` باشد).
+- ⚠ `/system/identity-conflicts` (`resources/js/pages/system/identity-conflicts.tsx:74-83`): برچسب فارسی reason و کد خام انگلیسی آن دو گره‌ی مجاور بدون فاصله‌ی متنی صریح‌اند (فقط با `className="ms-2"` روی span دوم فاصله می‌گیرند) — به‌نظر به هم چسبیده می‌آیند، به‌خصوص وقتی reason در نقشه‌ی `conflictReasons` نیست و هر دو گره یک متن یکسان را دوبار نشان می‌دهند.
+
+**تست کامل انتهای Sprint 5:** Redis `PONG` (بررسی شد)، Backend Suite، PHPStan کل پروژه، Pint، `npm run types:check`، `npm run build` — نتایج دقیق در گزارش پایانی چت (CLAUDE.md §7)، نه اینجا.
+
+**GATE 3 (`gate-check` skill):** نتیجه در گزارش پایانی چت.
