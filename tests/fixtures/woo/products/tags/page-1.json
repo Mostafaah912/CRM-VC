@@ -1,0 +1,16 @@
+{
+  "description": "An empty collection: Woo reports TotalPages 0 / Total 0.",
+  "request": {
+    "endpoint": "products/tags",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "0",
+      "X-WP-Total": "0"
+    },
+    "body": []
+  }
+}

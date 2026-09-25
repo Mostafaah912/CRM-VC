@@ -1,0 +1,54 @@
+{
+  "description": "Orders, page 2 of 2. Order 5003 has a line item whose product no longer exists (product_id 0, no sku).",
+  "request": {
+    "endpoint": "orders",
+    "page": 2,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "X-WP-TotalPages": "2",
+      "X-WP-Total": "3"
+    },
+    "body": [
+      {
+        "id": 5003,
+        "number": "5003",
+        "status": "cancelled",
+        "currency": "IRT",
+        "date_created_gmt": "2026-05-12T11:00:00",
+        "date_modified_gmt": "2026-05-13T12:00:00",
+        "total": "560000",
+        "shipping_total": "0",
+        "customer_id": 13,
+        "billing": {
+          "first_name": "مشتری",
+          "last_name": "آزمایشی سه",
+          "phone": "09000000003",
+          "email": ""
+        },
+        "line_items": [
+          {
+            "id": 9003,
+            "name": "محصول حذف‌شده آزمایشی",
+            "product_id": 0,
+            "variation_id": 0,
+            "quantity": 2,
+            "sku": "",
+            "total": "560000",
+            "subtotal": "560000",
+            "price": 280000
+          }
+        ],
+        "refunds": [],
+        "discount_total": "0",
+        "total_tax": "0",
+        "payment_method": "cod",
+        "date_paid_gmt": null,
+        "date_completed_gmt": null,
+        "coupon_lines": []
+      }
+    ]
+  }
+}

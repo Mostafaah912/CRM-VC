@@ -1,0 +1,18 @@
+{
+  "description": "Malformed: valid list but no X-WP-TotalPages header.",
+  "request": {
+    "endpoint": "products/shipping_classes",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "body": [
+      {
+        "id": 1,
+        "name": "Synthetic"
+      }
+    ]
+  }
+}

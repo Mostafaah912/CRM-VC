@@ -89,6 +89,9 @@ class DemoDataSeeder extends Seeder
 
     private int $refundSeq = 0;
 
+    /** The demo staff user the demo notes are written by: customer_notes.user_id is NOT NULL (P3-05). */
+    private int $notesAuthorId = 0;
+
     public static function asOf(): CarbonImmutable
     {
         return CarbonImmutable::parse(self::AS_OF, 'UTC');
@@ -105,6 +108,7 @@ class DemoDataSeeder extends Seeder
         }
 
         DB::transaction(function (): void {
+            $this->seedNotesAuthor();
             $this->seedCatalog();
 
             for ($c = 1; $c <= 50; $c++) {
@@ -116,6 +120,21 @@ class DemoDataSeeder extends Seeder
     public static function phone(int $c): string
     {
         return PhoneNormalizer::normalize(sprintf('989000%06d', $c));
+    }
+
+    /**
+     * One demo staff account, only so the demo notes have an author. It cannot sign in: '!' is not a valid password hash, so no
+     * password matches it. Not part of the dataset fingerprint (customers, orders, items, refunds), so the GATE 2 fixture is unchanged.
+     */
+    private function seedNotesAuthor(): void
+    {
+        $asOf = $this->ts(self::asOf());
+        $email = 'demo-notes-author@example.test';
+
+        // Reused when it exists: the users table is not part of what a re-seed clears.
+        $this->notesAuthorId = (int) (DB::table('users')->where('email', $email)->value('id') ?? DB::table('users')->insertGetId([
+            'name' => 'کاربر نمونه', 'email' => $email, 'password' => '!', 'created_at' => $asOf, 'updated_at' => $asOf,
+        ]));
     }
 
     private function seedCatalog(): void
@@ -192,7 +211,7 @@ class DemoDataSeeder extends Seeder
         }
 
         if (in_array($c, [5, 15, 36], true)) {
-            DB::table('customer_notes')->insert(['customer_id' => $customerId, 'user_id' => null, 'body' => "یادداشت نمونه برای مشتری {$c}", 'created_at' => $ts, 'updated_at' => $ts]);
+            DB::table('customer_notes')->insert(['customer_id' => $customerId, 'user_id' => $this->notesAuthorId, 'body' => "یادداشت نمونه برای مشتری {$c}", 'created_at' => $ts, 'updated_at' => $ts]);
         }
 
         $firstOrderWooId = null;

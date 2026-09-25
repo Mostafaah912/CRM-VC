@@ -126,6 +126,85 @@ function info(string $s): void
     line('  • '.$s);
 }
 
+/**
+ * P2-07: does each refund line say which ORDER ITEM it refunds (meta `_refunded_item_id`)?
+ * Prints counts and meta key NAMES only — no URL, no credentials, no names, no amounts.
+ *
+ * @param  array<int, mixed>  $refunds  body of GET orders/{id}/refunds
+ */
+function reportRefundLink(array $refunds): void
+{
+    $lines = 0;
+    $withMeta = 0;
+    $withLink = 0;
+    $validLink = 0;
+    $metaKeys = [];
+
+    foreach ($refunds as $refund) {
+        foreach (($refund['line_items'] ?? []) as $lineItem) {
+            $lines++;
+            $meta = $lineItem['meta_data'] ?? null;
+
+            if (! is_array($meta)) {
+                continue;
+            }
+
+            $withMeta++;
+
+            foreach ($meta as $entry) {
+                $metaKey = (string) ($entry['key'] ?? '');
+                $metaKeys[$metaKey] = true;
+
+                if ($metaKey !== '_refunded_item_id') {
+                    continue;
+                }
+
+                $withLink++;
+                $value = $entry['value'] ?? null;
+
+                if ((is_int($value) && $value > 0) || (is_string($value) && ctype_digit($value) && (int) $value > 0)) {
+                    $validLink++;
+                }
+            }
+        }
+    }
+
+    info('تعداد عودت‌ها: '.count($refunds).' | خطوط عودت: '.$lines.' | خطوط دارای meta_data: '.$withMeta);
+    info('کلیدهای meta_data دیده‌شده: '.($metaKeys === [] ? '(هیچ)' : implode(', ', array_keys($metaKeys))));
+
+    if ($lines === 0) {
+        warn('عودت بدون line_items؛ پیوند به قلم اصلی قابل بررسی نیست.');
+    } elseif ($validLink === $lines) {
+        ok("همه‌ی {$lines} خط عودت کلید _refunded_item_id با شناسه‌ی عددی مثبت دارند → پیوند به قلم اصلی موجود است.");
+    } else {
+        warn("فقط {$validLink} از {$lines} خط عودت _refunded_item_id معتبر دارند ({$withLink} خط کلید را دارند).");
+    }
+}
+
+// Single read-only GET: php verify-woo.php --refund-link=<woo order id that has refunds>
+foreach ($argv as $argument) {
+    if (! str_starts_with($argument, '--refund-link')) {
+        continue;
+    }
+
+    $orderId = (int) (str_contains($argument, '=') ? substr($argument, strpos($argument, '=') + 1) : 53960);
+    h("P2-07 — پیوند خط عودت به قلم سفارش (سفارش #{$orderId})");
+    $refunds = wooGet($base, $key, $secret, "orders/{$orderId}/refunds");
+
+    if ($refunds['error'] !== null) {
+        warn('خطای اتصال؛ بررسی انجام نشد.');
+        exit(1);
+    }
+
+    if ($refunds['status'] !== 200 || ! is_array($refunds['body'])) {
+        warn('پاسخ HTTP '.$refunds['status'].' برای اندپوینت عودت؛ بررسی انجام نشد.');
+        exit(1);
+    }
+
+    reportRefundLink($refunds['body']);
+    exit(0);
+}
+
 // ---------------------------------------------------------------------------
 // 3. Connectivity check
 // ---------------------------------------------------------------------------
@@ -369,6 +448,7 @@ if ($orderWithRefund === null) {
         info('مبلغ عودت: '.($first['amount'] ?? 'نامعلوم'));
         if ($hasLineItems) {
             ok('عودت دارای line_items است → عودت در سطح قلم قابل محاسبه است (طبق فرض سند).');
+            reportRefundLink($ref['body']);
         } else {
             warn('عودت فقط مبلغ کل دارد، بدون line_items → عودت سطح قلم محاسبه نمی‌شود؛ ستون‌ها خالی می‌مانند.');
         }

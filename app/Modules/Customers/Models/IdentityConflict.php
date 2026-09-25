@@ -8,16 +8,18 @@ use App\Models\User;
 use App\Modules\Customers\Enums\IdentityConflictStatus;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
- * @property int $customer_id
+ * @property int|null $customer_id null for a `no_phone` conflict: the order has no customer
  * @property string|null $existing_name
  * @property string|null $incoming_name
  * @property int|null $woo_order_id
  * @property string $reason
  * @property IdentityConflictStatus $status
  * @property int|null $resolved_by
+ * @property Carbon $created_at
  */
 class IdentityConflict extends Model
 {

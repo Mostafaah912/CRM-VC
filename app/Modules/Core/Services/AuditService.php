@@ -62,6 +62,24 @@ final class AuditService
         ]);
     }
 
+    /**
+     * record() for work no user did (sync). Other modules reach Core only through its Services, so they cannot
+     * import AuditActorType to call record(); this fixes the actor to System and changes nothing else.
+     *
+     * @param  array<string, mixed>|null  $before
+     * @param  array<string, mixed>|null  $after
+     */
+    public function recordSystem(
+        string $action,
+        string $auditableType,
+        int|string $auditableId,
+        ?array $before = null,
+        ?array $after = null,
+        ?string $source = null,
+    ): AuditLog {
+        return $this->record(AuditActorType::System, $action, $auditableType, $auditableId, $before, $after, null, $source);
+    }
+
     /** @return LengthAwarePaginator<int, AuditLog> */
     public function paginate(int $perPage = 25): LengthAwarePaginator
     {

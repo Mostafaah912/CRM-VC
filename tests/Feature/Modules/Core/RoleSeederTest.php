@@ -69,3 +69,25 @@ it('is idempotent — running the seeders twice does not duplicate roles or perm
     expect(Role::query()->count())->toBe(5)
         ->and(Permission::query()->count())->toBe(count(PermissionSeeder::catalog()));
 });
+
+// P2-12: the system pages sit behind `system.view` (health, sync logs) and the existing `identity.review` (identity conflicts).
+it('adds system.view to the catalog and grants it to Owner, Manager and Analyst only', function () {
+    $granted = fn (string $role): array => Role::query()->where('name', $role)->firstOrFail()->permissions()->get()->map->key()->all();
+
+    expect(collect(PermissionSeeder::catalog())->pluck('module')->all())->toContain('system')
+        ->and($granted('owner'))->toContain('system.view')
+        ->and($granted('manager'))->toContain('system.view')
+        ->and($granted('analyst'))->toContain('system.view')
+        ->and($granted('support'))->not->toContain('system.view')
+        ->and($granted('viewer'))->not->toContain('system.view');
+});
+
+it('grants identity.review to Owner and Manager only', function () {
+    $granted = fn (string $role): array => Role::query()->where('name', $role)->firstOrFail()->permissions()->get()->map->key()->all();
+
+    expect($granted('owner'))->toContain('identity.review')
+        ->and($granted('manager'))->toContain('identity.review')
+        ->and($granted('analyst'))->not->toContain('identity.review')
+        ->and($granted('support'))->not->toContain('identity.review')
+        ->and($granted('viewer'))->not->toContain('identity.review');
+});

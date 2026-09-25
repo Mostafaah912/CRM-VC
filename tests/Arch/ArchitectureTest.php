@@ -124,12 +124,20 @@ it('bans raw SQL in the Segments module outright', function () {
     ]))->toBeEmpty();
 });
 
-/** Rule 7: raw SQL only where the architecture says heavy SQL lives. */
-it('confines raw SQL to migrations and the Metrics/Analytics modules', function () {
+/**
+ * Rule 7: raw SQL only where the architecture says heavy SQL lives.
+ *
+ * P3-07 amendment (ARCHITECTURE.md, "P3-07 — استثنای Rule 7 برای Aggregate فروش Catalog"): ONE extra file,
+ * ProductListService.php, may use it — a store-wide grouped SUM/COUNT/MAX (every realized order line, not one customer's)
+ * has no query-builder form without selectRaw/orderByRaw, and CLAUDE.md §3 bans a PHP loop over that much data. The module
+ * itself stays banned; only this file, and only these raw fragments, are exempt.
+ */
+it('confines raw SQL to migrations, the Metrics/Analytics modules, and Catalog\'s one product-sales aggregate', function () {
     $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/'];
+    $allowedFiles = ['app/Modules/Catalog/Services/ProductListService.php'];
     $files = array_filter(
         Scanner::phpFiles(['app', 'routes', 'config', 'bootstrap/app.php']),
-        function (string $file) use ($allowedPrefixes): bool {
+        function (string $file) use ($allowedPrefixes, $allowedFiles): bool {
             $relative = Scanner::relative($file);
 
             foreach ($allowedPrefixes as $prefix) {
@@ -138,7 +146,7 @@ it('confines raw SQL to migrations and the Metrics/Analytics modules', function 
                 }
             }
 
-            return true;
+            return ! in_array($relative, $allowedFiles, true);
         },
     );
 

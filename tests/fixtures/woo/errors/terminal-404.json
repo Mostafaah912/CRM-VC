@@ -1,0 +1,20 @@
+{
+  "description": "Terminal failure: 404 for an order id that does not exist.",
+  "request": {
+    "endpoint": "orders/999999/refunds",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 404,
+    "headers": {},
+    "body": {
+      "code": "woocommerce_rest_shop_order_invalid_id",
+      "message": "Invalid order ID.",
+      "data": {
+        "status": 404
+      }
+    },
+    "attempts": 1
+  }
+}

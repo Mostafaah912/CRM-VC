@@ -51,21 +51,27 @@ it('has sync_logs exactly as the PRD defines it', function () {
     ]))->toBeEmpty();
 });
 
-it('has reconciliation_reports exactly as the PRD defines it', function () {
+it('has reconciliation_reports exactly as the PRD defines it — plus the P2-11 additions, with the seven measurement columns now nullable so a failed month can be stored', function () {
     expect(SchemaProbe::mismatches('reconciliation_reports', [
         'id' => ['bigint', false, null],
         'period_start' => ['date', false, null],
         'period_end' => ['date', false, null],
-        'woo_orders' => ['int', false, null],
-        'crm_orders' => ['int', false, null],
-        'woo_revenue' => ['bigint', false, null],
-        'crm_revenue' => ['bigint', false, null],
-        'orders_diff' => ['int', false, null],
-        'revenue_diff' => ['bigint', false, null],
-        'diff_percent' => ['numeric(7,4)', false, null],
+        'woo_orders' => ['int', true, null],
+        'crm_orders' => ['int', true, null],
+        'woo_revenue' => ['bigint', true, null],
+        'crm_revenue' => ['bigint', true, null],
+        'orders_diff' => ['int', true, null],
+        'revenue_diff' => ['bigint', true, null],
+        'diff_percent' => ['numeric(7,4)', true, null],
         'is_acceptable' => ['bool', false, null],
         'details' => ['jsonb', true, null],
         'created_at' => ['tstz', false, 'current_timestamp'],
+        // P2-11 (additive migration)
+        'jalali_month' => ['varchar(7)', false, null],
+        'status' => ['varchar(10)', false, null],
+        'error_message' => ['text', true, null],
+        'reconciled_at' => ['tstz', true, null],
+        'updated_at' => ['tstz', false, 'current_timestamp'],
     ]))->toBeEmpty();
 });
 
@@ -169,6 +175,7 @@ it('caps a log message at 500 characters', function () {
 
 it('stores a reconciliation report with bigint revenue and a four-decimal variance', function () {
     DB::table('reconciliation_reports')->insert([
+        'jalali_month' => '1403-07', 'status' => 'green', // P2-11: the two new required columns
         'period_start' => '2024-09-22', 'period_end' => '2024-10-21', 'woo_orders' => 1800, 'crm_orders' => 1800,
         'woo_revenue' => 2_000_000_000, 'crm_revenue' => 1_999_000_000, 'orders_diff' => 0, 'revenue_diff' => 1_000_000,
         'diff_percent' => 0.05, 'is_acceptable' => true, 'details' => json_encode(['month' => '1403-07']),
@@ -185,3 +192,92 @@ it('keeps one integration per key and stores its config as text', function () {
 
     DB::table('integrations')->insert(['key' => 'woocommerce', 'provider' => 'woocommerce', 'config' => 'x', 'is_active' => false]);
 })->throws(QueryException::class);
+
+// ================================================================== P2-11: reconciliation_reports, additive
+
+/** A complete, valid row for the month; overrides win. */
+function reconReportRow(array $overrides = []): array
+{
+    return array_merge([
+        'jalali_month' => '1403-07', 'status' => 'green', 'period_start' => '2024-09-22', 'period_end' => '2024-10-21',
+        'woo_orders' => 10, 'crm_orders' => 10, 'woo_revenue' => 1_000_000, 'crm_revenue' => 1_000_000,
+        'orders_diff' => 0, 'revenue_diff' => 0, 'diff_percent' => '0.0000', 'is_acceptable' => true,
+    ], $overrides);
+}
+
+it('keeps one report per Jalali month', function () {
+    DB::table('reconciliation_reports')->insert(reconReportRow());
+
+    expect(SchemaProbe::hasUniqueOn('reconciliation_reports', 'jalali_month'))->toBeTrue();
+
+    DB::table('reconciliation_reports')->insert(reconReportRow());
+})->throws(QueryException::class);
+
+it('requires a month and a status on every report', function (string $column) {
+    DB::table('reconciliation_reports')->insert(array_diff_key(reconReportRow(), [$column => true]));
+})->with(['jalali_month', 'status'])->throws(QueryException::class);
+
+it('accepts only green, red and failed as a status', function (string $status, bool $accepted) {
+    $row = $status === 'failed'
+        ? reconReportRow(['status' => 'failed', 'is_acceptable' => false, 'woo_orders' => null, 'crm_orders' => null, 'woo_revenue' => null, 'crm_revenue' => null, 'orders_diff' => null, 'revenue_diff' => null, 'diff_percent' => null])
+        : reconReportRow(['status' => $status, 'is_acceptable' => $status === 'green']);
+
+    if ($accepted) {
+        DB::table('reconciliation_reports')->insert($row);
+        expect(DB::table('reconciliation_reports')->count())->toBe(1);
+
+        return;
+    }
+
+    expect(fn () => DB::table('reconciliation_reports')->insert($row))->toThrow(QueryException::class);
+})->with([['green', true], ['red', true], ['failed', true], ['amber', false], ['GREEN', false], ['', false]]);
+
+it('stores a failed month with no measurements, a reason and no reconciliation time', function () {
+    DB::table('reconciliation_reports')->insert(reconReportRow([
+        'status' => 'failed', 'is_acceptable' => false, 'error_message' => 'WooRequestException: HTTP 503',
+        'woo_orders' => null, 'crm_orders' => null, 'woo_revenue' => null, 'crm_revenue' => null,
+        'orders_diff' => null, 'revenue_diff' => null, 'diff_percent' => null, 'reconciled_at' => null,
+    ]));
+
+    expect(DB::table('reconciliation_reports')->first())->toMatchObject(['status' => 'failed', 'woo_orders' => null, 'reconciled_at' => null, 'error_message' => 'WooRequestException: HTTP 503']);
+});
+
+it('will not store a green or red report with a missing measurement — a gap must never look like a result', function (string $column, string $status) {
+    DB::table('reconciliation_reports')->insert(reconReportRow([$column => null, 'status' => $status, 'is_acceptable' => $status === 'green']));
+})->with(function () {
+    foreach (['woo_orders', 'crm_orders', 'woo_revenue', 'crm_revenue', 'orders_diff', 'revenue_diff', 'diff_percent'] as $column) {
+        foreach (['green', 'red'] as $status) {
+            yield "{$column} {$status}" => [$column, $status];
+        }
+    }
+})->throws(QueryException::class);
+
+it('keeps is_acceptable equal to "status is green"', function (string $status, bool $acceptable) {
+    DB::table('reconciliation_reports')->insert(reconReportRow(['status' => $status, 'is_acceptable' => $acceptable]));
+})->with([['green', false], ['red', true], ['failed', true]])->throws(QueryException::class);
+
+it('keeps the period dates and the acceptance flag required, and the variance in numeric(7,4)', function () {
+    DB::table('reconciliation_reports')->insert(reconReportRow(['diff_percent' => '999.9999', 'status' => 'red', 'is_acceptable' => false]));
+
+    expect(DB::table('reconciliation_reports')->first()->diff_percent)->toBe('999.9999');
+
+    DB::table('reconciliation_reports')->insert(reconReportRow(['jalali_month' => '1403-08', 'diff_percent' => '1000.0000', 'status' => 'red', 'is_acceptable' => false]));
+})->throws(QueryException::class);
+
+it('undoes the P2-11 migration cleanly: the PRD columns are required again and the additions are gone', function () {
+    DB::table('reconciliation_reports')->insert(reconReportRow());
+    DB::table('reconciliation_reports')->insert(reconReportRow(['jalali_month' => '1403-08', 'status' => 'failed', 'is_acceptable' => false, 'woo_orders' => null, 'crm_orders' => null, 'woo_revenue' => null, 'crm_revenue' => null, 'orders_diff' => null, 'revenue_diff' => null, 'diff_percent' => null]));
+
+    $file = collect(scandir(database_path('migrations')))->first(fn (string $f) => str_ends_with($f, '_add_reconciliation_month_and_status_to_reconciliation_reports_table.php'));
+    (require database_path('migrations/'.$file))->down();
+
+    $columns = SchemaProbe::columns('reconciliation_reports');
+    expect(array_intersect($columns, ['jalali_month', 'status', 'error_message', 'reconciled_at', 'updated_at']))->toBe([])
+        ->and(SchemaProbe::mismatches('reconciliation_reports', [
+            'id' => ['bigint', false, null], 'period_start' => ['date', false, null], 'period_end' => ['date', false, null],
+            'woo_orders' => ['int', false, null], 'crm_orders' => ['int', false, null], 'woo_revenue' => ['bigint', false, null], 'crm_revenue' => ['bigint', false, null],
+            'orders_diff' => ['int', false, null], 'revenue_diff' => ['bigint', false, null], 'diff_percent' => ['numeric(7,4)', false, null],
+            'is_acceptable' => ['bool', false, null], 'details' => ['jsonb', true, null], 'created_at' => ['tstz', false, 'current_timestamp'],
+        ]))->toBeEmpty()
+        ->and(DB::table('reconciliation_reports')->count())->toBe(1); // the failed row could not survive the PRD's NOT NULL columns
+});

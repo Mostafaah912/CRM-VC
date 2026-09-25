@@ -24,15 +24,19 @@ class PermissionSeeder extends Seeder
             ['module' => 'audit', 'action' => 'view', 'label' => 'مشاهده گزارش رخدادها'],
             ['module' => 'settings', 'action' => 'manage', 'label' => 'مدیریت تنظیمات'],
             ['module' => 'users', 'action' => 'manage', 'label' => 'مدیریت کاربران و نقش‌ها'],
+            ['module' => 'system', 'action' => 'view', 'label' => 'مشاهده سلامت سیستم و گزارش همگام‌سازی'],
 
             ['module' => 'customers', 'action' => 'view', 'label' => 'مشاهده مشتریان'],
             ['module' => 'customers', 'action' => 'view_full_phone', 'label' => 'مشاهده شماره موبایل کامل'],
             ['module' => 'customers', 'action' => 'note', 'label' => 'ثبت یادداشت برای مشتری'],
+            ['module' => 'customers', 'action' => 'manage_notes', 'label' => 'حذف یادداشت‌های دیگران'],
             ['module' => 'customers', 'action' => 'export', 'label' => 'خروجی گرفتن از مشتریان'],
             ['module' => 'customers', 'action' => 'anonymize', 'label' => 'ناشناس‌سازی مشتری'],
             ['module' => 'identity', 'action' => 'review', 'label' => 'بازبینی تعارض هویت'],
 
             ['module' => 'orders', 'action' => 'view', 'label' => 'مشاهده سفارش‌ها'],
+
+            ['module' => 'catalog', 'action' => 'view', 'label' => 'مشاهده محصولات'],
 
             ['module' => 'segments', 'action' => 'view', 'label' => 'مشاهده سگمنت‌ها'],
             ['module' => 'segments', 'action' => 'create', 'label' => 'ساخت سگمنت'],

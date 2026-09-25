@@ -1,0 +1,19 @@
+{
+  "description": "Retryable failure: 429 with Retry-After on every attempt; retries exhausted.",
+  "request": {
+    "endpoint": "products/102/variations",
+    "page": 1,
+    "query": {}
+  },
+  "response": {
+    "status": 429,
+    "headers": {
+      "Retry-After": "1"
+    },
+    "body": {
+      "code": "too_many_requests",
+      "message": "Slow down."
+    },
+    "attempts": 5
+  }
+}

@@ -17,7 +17,8 @@ use Illuminate\Support\Collection;
  *   Manager: everything except audit, settings, users
  *   Analyst: every `view` action, plus segments.create/edit and ai.request;
  *            never view_full_phone, never a `delete` action
- *   Support: customers.view, orders.view, customers.note only
+ *   Support: customers.view, orders.view, customers.note only (customers.manage_notes — deleting other people's notes —
+ *            is Owner and Manager only, as the matrix gives them everything the other roles' lists do not name)
  *   Viewer:  dashboard.view, metrics.view, analytics.view, ai.view only
  */
 class RoleSeeder extends Seeder

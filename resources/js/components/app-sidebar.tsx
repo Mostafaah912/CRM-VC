@@ -1,5 +1,17 @@
 import { Link } from '@inertiajs/react';
-import { BookOpen, FolderGit2, LayoutGrid, ScrollText } from 'lucide-react';
+import {
+    Activity,
+    BookOpen,
+    FolderGit2,
+    GitMerge,
+    History,
+    LayoutGrid,
+    Package,
+    ScrollText,
+    ShoppingCart,
+    Target,
+    Users,
+} from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavFooter } from '@/components/nav-footer';
 import { NavMain } from '@/components/nav-main';
@@ -15,7 +27,12 @@ import {
 } from '@/components/ui/sidebar';
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
+import { index as customersIndex } from '@/routes/customers';
+import { rfm as metricsRfm } from '@/routes/metrics';
+import { index as ordersIndex } from '@/routes/orders';
+import { index as productsIndex } from '@/routes/products';
 import audit from '@/routes/audit';
+import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
 
 const footerNavItems: NavItem[] = [
@@ -40,12 +57,71 @@ export function AppSidebar() {
             href: dashboard(),
             icon: LayoutGrid,
         },
+        ...(can('customers', 'view')
+            ? [
+                  {
+                      title: 'مشتریان',
+                      href: customersIndex(),
+                      icon: Users,
+                  },
+              ]
+            : []),
+        ...(can('orders', 'view')
+            ? [
+                  {
+                      title: 'سفارش‌ها',
+                      href: ordersIndex(),
+                      icon: ShoppingCart,
+                  },
+              ]
+            : []),
+        ...(can('catalog', 'view')
+            ? [
+                  {
+                      title: 'محصولات',
+                      href: productsIndex(),
+                      icon: Package,
+                  },
+              ]
+            : []),
+        ...(can('metrics', 'view')
+            ? [
+                  {
+                      title: 'تحلیل RFM',
+                      href: metricsRfm(),
+                      icon: Target,
+                  },
+              ]
+            : []),
         ...(can('audit', 'view')
             ? [
                   {
                       title: 'گزارش رخدادها',
                       href: audit.index(),
                       icon: ScrollText,
+                  },
+              ]
+            : []),
+        ...(can('system', 'view')
+            ? [
+                  {
+                      title: 'سلامت سیستم',
+                      href: health(),
+                      icon: Activity,
+                  },
+                  {
+                      title: 'گزارش همگام‌سازی',
+                      href: syncLogs(),
+                      icon: History,
+                  },
+              ]
+            : []),
+        ...(can('identity', 'review')
+            ? [
+                  {
+                      title: 'تعارض‌های هویت',
+                      href: identityConflicts(),
+                      icon: GitMerge,
                   },
               ]
             : []),

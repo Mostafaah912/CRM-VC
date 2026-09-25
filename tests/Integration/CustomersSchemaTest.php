@@ -112,17 +112,17 @@ it('requires every child row to reference a real customer', function (string $ta
     ['customer_notes', ['body' => 'x']],
 ]);
 
-it('keeps a note when its author is deleted (notes are not recoverable from Woo)', function () {
+it('refuses to delete a user who wrote a note — the note keeps its author (P3-05: RESTRICT; P1 had SET NULL)', function () {
     $c = insertCustomer();
     $userId = DB::table('users')->insertGetId([
         'name' => 'A', 'email' => 'a@example.test', 'password' => 'x', 'created_at' => now(), 'updated_at' => now(),
     ]);
     DB::table('customer_notes')->insert(['customer_id' => $c, 'user_id' => $userId, 'body' => 'called back']);
 
-    DB::table('users')->where('id', $userId)->delete();
+    $delete = fn () => DB::table('users')->where('id', $userId)->delete();
 
-    $note = DB::table('customer_notes')->first();
-    expect($note->body)->toBe('called back')->and($note->user_id)->toBeNull();
+    // A failed statement aborts the surrounding test transaction in PostgreSQL, so this is the last statement.
+    expect($delete)->toThrow(QueryException::class, 'customer_notes_user_id_foreign');
 });
 
 it('stores every new customer timestamp as timestamptz', function () {
