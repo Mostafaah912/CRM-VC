@@ -65,6 +65,7 @@ final class RuleWhitelistPresenter
         'bought_variation' => 'این گونه را خریده',
         'in_segment' => 'عضو این سگمنت است',
         'not_in_segment' => 'عضو این سگمنت نیست',
+        'within_days_of_now' => 'در بازه‌ی ± روز از امروز',
     ];
 
     /** @return array<string, mixed> */
@@ -79,6 +80,7 @@ final class RuleWhitelistPresenter
                 'minChildren' => RuleValidator::MIN_CHILDREN,
                 'maxChildren' => RuleValidator::MAX_CHILDREN,
                 'maxListValues' => RuleValidator::MAX_LIST_VALUES,
+                'maxRelativeDays' => RuleValidator::RELATIVE_DATE_MAX_DAYS,
             ],
         ];
     }
@@ -112,6 +114,7 @@ final class RuleWhitelistPresenter
                     in_array($operator, RuleValidator::LIST_OPERATORS, true) => 'list',
                     $operator === RuleOperator::Between => 'range',
                     in_array($operator, RuleValidator::NULL_OPERATORS, true) => 'none',
+                    in_array($operator, RuleValidator::RELATIVE_DATE_OPERATORS, true) => 'relative_days',
                     default => 'scalar',
                 },
             ],

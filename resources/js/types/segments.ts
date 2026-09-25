@@ -2,7 +2,12 @@
 
 export type RuleFieldGroup = 'customer' | 'metrics' | 'behavior';
 
-export type RuleValueShape = 'scalar' | 'list' | 'range' | 'none';
+export type RuleValueShape =
+    | 'scalar'
+    | 'list'
+    | 'range'
+    | 'none'
+    | 'relative_days';
 
 export type RuleField = {
     name: string;
@@ -23,6 +28,7 @@ export type RuleLimits = {
     minChildren: number;
     maxChildren: number;
     maxListValues: number;
+    maxRelativeDays: number;
 };
 
 export type RuleWhitelist = {

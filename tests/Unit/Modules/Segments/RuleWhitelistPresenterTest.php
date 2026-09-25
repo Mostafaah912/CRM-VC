@@ -31,11 +31,11 @@ it('lists every whitelisted field with a non-empty Persian label', function () {
 it('lists every whitelisted operator with a non-empty Persian label and a value shape', function () {
     $operators = RuleWhitelistPresenter::toArray()['operators'];
 
-    expect($operators)->toHaveCount(19);
+    expect($operators)->toHaveCount(20);
 
     foreach ($operators as $operator) {
         expect($operator['label'])->not->toBe('')
-            ->and($operator['valueShape'])->toBeIn(['scalar', 'list', 'range', 'none']);
+            ->and($operator['valueShape'])->toBeIn(['scalar', 'list', 'range', 'none', 'relative_days']);
     }
 });
 
@@ -58,7 +58,15 @@ it('mirrors RuleValidator\'s structural limits exactly', function () {
         'minChildren' => 1,
         'maxChildren' => 20,
         'maxListValues' => 200,
+        'maxRelativeDays' => 3650,
     ]);
+});
+
+it('gives within_days_of_now the relative_days value shape, and only that operator', function () {
+    $operators = RuleWhitelistPresenter::toArray()['operators'];
+    $relativeDays = array_column(array_filter($operators, fn (array $o) => $o['valueShape'] === 'relative_days'), 'name');
+
+    expect($relativeDays)->toBe(['within_days_of_now']);
 });
 
 it('never assigns the behavior group to a customer or metrics field', function () {

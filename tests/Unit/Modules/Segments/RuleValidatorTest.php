@@ -200,6 +200,46 @@ it('rejects an empty rule array', function () {
     assertRuleFails([], RuleValidationException::INVALID_STRUCTURE);
 });
 
+// ================================================================== P5-07b: within_days_of_now
+
+it('accepts within_days_of_now on a date field with a small non-negative integer', function (string $field) {
+    assertValidRule(['field' => $field, 'operator' => 'within_days_of_now', 'value' => 7]);
+})->with(['expected_next_order_at', 'first_seen_at'])->throwsNoExceptions();
+
+it('accepts within_days_of_now at exactly 0 and at exactly the 3650-day cap', function (int $value) {
+    assertValidRule(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => $value]);
+})->with([0, 3650])->throwsNoExceptions();
+
+it('rejects within_days_of_now on a non-date field', function (string $field) {
+    assertRuleFails(['field' => $field, 'operator' => 'within_days_of_now', 'value' => 7], RuleValidationException::OPERATOR_NOT_ALLOWED_FOR_FIELD);
+})->with(['total_orders', 'rfm_segment', 'province']);
+
+it('rejects within_days_of_now on a behavior field', function () {
+    assertRuleFails(['field' => 'product', 'operator' => 'within_days_of_now', 'value' => 7], RuleValidationException::OPERATOR_NOT_ALLOWED_FOR_FIELD);
+});
+
+it('rejects a non-integer value for within_days_of_now', function (mixed $value) {
+    assertRuleFails(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => $value], RuleValidationException::INVALID_VALUE_SHAPE);
+})->with([
+    'a string' => ['7'],
+    'a float' => [7.5],
+    'an array' => [[7]],
+    'a bool' => [true],
+    'null-ish (missing handled separately)' => ['7 days'],
+]);
+
+it('rejects within_days_of_now missing its value', function () {
+    assertRuleFails(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now'], RuleValidationException::INVALID_VALUE_SHAPE);
+});
+
+it('rejects a negative offset for within_days_of_now', function () {
+    assertRuleFails(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => -1], RuleValidationException::INVALID_VALUE_SHAPE);
+});
+
+it('rejects an offset beyond the 3650-day cap for within_days_of_now', function () {
+    assertRuleFails(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => 3651], RuleValidationException::RELATIVE_DAYS_OUT_OF_RANGE);
+});
+
 it('carries a Persian message on every exception', function () {
     try {
         RuleValidator::validate(['field' => 'email', 'operator' => '=', 'value' => 'x']);

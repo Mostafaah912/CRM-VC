@@ -228,6 +228,7 @@ export function RuleNodeEditor({
                     <RuleValueInput
                         fieldName={field.name}
                         valueShape={operator.valueShape}
+                        maxRelativeDays={whitelist.limits.maxRelativeDays}
                         value={node.value}
                         aria-invalid={!!error}
                         onChange={(value) =>

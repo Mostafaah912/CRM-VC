@@ -45,6 +45,12 @@ final class RuleValidator
 
     public const VALID_UNITS = ['days', 'toman'];
 
+    /** P5-07b: RuleOperator::WithinDaysOfNow — value is always an integer day count, never a stored absolute date. */
+    public const RELATIVE_DATE_OPERATORS = [RuleOperator::WithinDaysOfNow];
+
+    /** Upper bound on WithinDaysOfNow's day count — a sanity cap (~10 years), not a business number. */
+    public const RELATIVE_DATE_MAX_DAYS = 3650;
+
     /** @param array<mixed> $rule @throws RuleValidationException */
     public static function validate(array $rule): void
     {
@@ -136,6 +142,10 @@ final class RuleValidator
             throw RuleValidationException::operatorNotAllowedForField($operator->value, $field);
         }
 
+        if (in_array($operator, self::RELATIVE_DATE_OPERATORS, true) && ! in_array($field, RuleFieldWhitelist::DATE_FIELDS, true)) {
+            throw RuleValidationException::operatorNotAllowedForField($operator->value, $field);
+        }
+
         self::validateValueShape($condition, $field, $operator);
 
         if (array_key_exists('unit', $condition) && ! in_array($condition['unit'], self::VALID_UNITS, true)) {
@@ -177,6 +187,18 @@ final class RuleValidator
         if ($operator === RuleOperator::Between) {
             if (! is_array($value) || count($value) !== 2) {
                 throw RuleValidationException::invalidValueShape($field, $operator->value);
+            }
+
+            return;
+        }
+
+        if (in_array($operator, self::RELATIVE_DATE_OPERATORS, true)) {
+            if (! is_int($value) || $value < 0) {
+                throw RuleValidationException::invalidValueShape($field, $operator->value);
+            }
+
+            if ($value > self::RELATIVE_DATE_MAX_DAYS) {
+                throw RuleValidationException::relativeDaysOutOfRange(self::RELATIVE_DATE_MAX_DAYS);
             }
 
             return;

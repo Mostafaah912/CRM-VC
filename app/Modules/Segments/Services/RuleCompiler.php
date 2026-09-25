@@ -9,6 +9,7 @@ use App\Modules\Segments\Enums\RuleFieldGroup;
 use App\Modules\Segments\Enums\RuleOperator;
 use App\Modules\Segments\Exceptions\RuleWhitelistException;
 use App\Modules\Segments\Support\RuleFieldWhitelist;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 
@@ -113,6 +114,13 @@ final class RuleCompiler
             return;
         }
 
+        if ($operator === RuleOperator::WithinDaysOfNow && ! in_array($field, RuleFieldWhitelist::DATE_FIELDS, true)) {
+            // Defense in depth (GATE 3): RuleValidator already blocks this combination; re-checked here
+            // so RuleCompiler stays safe even called directly, same promise as every other field/operator
+            // resolution in this class.
+            throw RuleWhitelistException::invalidOperator($operator->value);
+        }
+
         $column = self::COLUMN_MAP[$field] ?? throw RuleWhitelistException::invalidField($field);
 
         match ($operator) {
@@ -128,10 +136,28 @@ final class RuleCompiler
             RuleOperator::Between => $query->whereBetween($column, $value, $boolean),
             RuleOperator::IsNull => $query->whereNull($column, $boolean),
             RuleOperator::IsNotNull => $query->whereNull($column, $boolean, true),
+            RuleOperator::WithinDaysOfNow => self::applyWithinDaysOfNow($query, $column, $value, $boolean),
             RuleOperator::BoughtProduct, RuleOperator::NotBoughtProduct,
             RuleOperator::BoughtCategory, RuleOperator::NotBoughtCategory,
             RuleOperator::BoughtVariation, RuleOperator::InSegment, RuleOperator::NotInSegment => throw RuleWhitelistException::invalidOperator($operator->value),
         };
+    }
+
+    /**
+     * PRD §17 seed segment "سررسید خرید مجدد" (P5-07b): `value` is an integer day count N, recomputed
+     * fresh from the real current instant on every compile — [now - N days, now + N days] is never
+     * stored, so the window always slides with "today" instead of going stale like a stored absolute
+     * date range would. `CarbonImmutable::now()` (not a hardcoded `now()` call) so `Carbon::setTestNow()`
+     * makes this deterministic in tests. Bound as ordinary `whereBetween` parameters — no raw SQL.
+     *
+     * @param  Builder<Customer>  $query
+     */
+    private static function applyWithinDaysOfNow(Builder $query, string $column, mixed $value, string $boolean): void
+    {
+        $days = (int) $value;
+        $now = CarbonImmutable::now();
+
+        $query->whereBetween($column, [$now->subDays($days), $now->addDays($days)], $boolean);
     }
 
     /** @param Builder<Customer> $query */
@@ -148,7 +174,7 @@ final class RuleCompiler
             RuleOperator::Equals, RuleOperator::NotEquals, RuleOperator::GreaterThan, RuleOperator::GreaterThanOrEqual,
             RuleOperator::LessThan, RuleOperator::LessThanOrEqual, RuleOperator::Contains,
             RuleOperator::In, RuleOperator::NotIn, RuleOperator::Between,
-            RuleOperator::IsNull, RuleOperator::IsNotNull => throw RuleWhitelistException::invalidOperator($operator->value),
+            RuleOperator::IsNull, RuleOperator::IsNotNull, RuleOperator::WithinDaysOfNow => throw RuleWhitelistException::invalidOperator($operator->value),
         };
     }
 

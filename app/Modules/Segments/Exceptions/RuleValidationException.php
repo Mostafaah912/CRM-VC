@@ -36,6 +36,8 @@ final class RuleValidationException extends RuntimeException
 
     public const INVALID_UNIT = 'invalid_unit';
 
+    public const RELATIVE_DAYS_OUT_OF_RANGE = 'relative_days_out_of_range';
+
     private function __construct(public readonly string $reason, string $message)
     {
         parent::__construct($message);
@@ -94,5 +96,10 @@ final class RuleValidationException extends RuntimeException
     public static function invalidUnit(string $unit): self
     {
         return new self(self::INVALID_UNIT, "واحد '{$unit}' نامعتبر است؛ فقط days یا toman مجاز است.");
+    }
+
+    public static function relativeDaysOutOfRange(int $max): self
+    {
+        return new self(self::RELATIVE_DAYS_OUT_OF_RANGE, "تعداد روزها نباید از {$max} بیشتر باشد.");
     }
 }

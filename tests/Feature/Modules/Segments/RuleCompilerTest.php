@@ -252,6 +252,70 @@ it('matches "in_segment" and "not_in_segment" via segment_members', function () 
     expect($notInIds)->not->toContain($member->id);
 });
 
+// ================================================================== P5-07b: within_days_of_now
+
+it('matches expected_next_order_at inside a +-7-day window around a fixed "now", excludes outside it', function () {
+    Carbon\Carbon::setTestNow('2026-06-15 12:00:00');
+
+    $inside = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-06-20 00:00:00']); // +5d
+    $onLowerBoundary = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-06-08 12:00:00']); // exactly -7d
+    $onUpperBoundary = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-06-22 12:00:00']); // exactly +7d
+    $tooEarly = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-06-01 00:00:00']); // -14d
+    $tooLate = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-07-01 00:00:00']); // +16d
+
+    $ids = RuleCompiler::compile(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => 7])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($inside->id, $onLowerBoundary->id, $onUpperBoundary->id)
+        ->and($ids)->not->toContain($tooEarly->id, $tooLate->id);
+
+    Carbon\Carbon::setTestNow();
+});
+
+it('applies within_days_of_now to first_seen_at as well', function () {
+    Carbon\Carbon::setTestNow('2026-06-15 12:00:00');
+
+    $inside = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-06-13 00:00:00']);
+    $outside = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-01-01 00:00:00']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'within_days_of_now', 'value' => 3])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($inside->id)->not->toContain($outside->id);
+
+    Carbon\Carbon::setTestNow();
+});
+
+it('recomputes within_days_of_now fresh on every compile — the same rule matches differently as "now" moves', function () {
+    $customer = segmentCustomerWithMetrics(['expected_next_order_at' => '2026-06-20 00:00:00']);
+    $rule = ['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => 7];
+
+    Carbon\Carbon::setTestNow('2026-06-15 00:00:00'); // 5 days before: inside the window
+    $idsNear = RuleCompiler::compile($rule)->pluck('customers.id')->all();
+
+    Carbon\Carbon::setTestNow('2026-08-01 00:00:00'); // over a month later: well outside
+    $idsFar = RuleCompiler::compile($rule)->pluck('customers.id')->all();
+
+    expect($idsNear)->toContain($customer->id)
+        ->and($idsFar)->not->toContain($customer->id);
+
+    Carbon\Carbon::setTestNow();
+});
+
+it('binds within_days_of_now as two date parameters, never concatenating the day count into SQL', function () {
+    Carbon\Carbon::setTestNow('2026-06-15 12:00:00');
+
+    $query = RuleCompiler::compile(['field' => 'expected_next_order_at', 'operator' => 'within_days_of_now', 'value' => 7]);
+
+    expect($query->toSql())->toContain('between ? and ?')
+        ->and($query->toSql())->not->toContain('7');
+
+    $bindings = $query->getBindings();
+    expect($bindings)->not->toContain(7)->not->toContain('7');
+
+    $query->count();
+
+    Carbon\Carbon::setTestNow();
+});
+
 it('propagates a RuleValidationException for a field outside the whitelist without building a query', function () {
     expect(fn () => RuleCompiler::compile(['field' => 'email', 'operator' => '=', 'value' => 'x']))
         ->toThrow(RuleValidationException::class);

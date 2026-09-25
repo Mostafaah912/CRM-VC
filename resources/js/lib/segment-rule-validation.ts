@@ -15,6 +15,9 @@ const MESSAGES = {
     listTooLarge: (max: number) => `حداکثر ${max} مقدار مجاز است`,
     listEmpty: 'حداقل یک مقدار وارد کنید',
     rangeNeedsTwo: 'دقیقاً دو مقدار (از و تا) لازم است',
+    relativeDaysInvalid: 'تعداد روز باید یک عدد صحیح غیرمنفی باشد',
+    relativeDaysOutOfRange: (max: number) =>
+        `تعداد روزها نباید از ${max} بیشتر باشد`,
     tooFewChildren: (min: number) => `حداقل ${min} شرط لازم است`,
     tooManyChildren: (max: number) => `حداکثر ${max} شرط مجاز است`,
     depthExceeded: (max: number) =>
@@ -152,6 +155,28 @@ function validateCondition(
 
         if (range.length !== 2) {
             errors.set(node.id, MESSAGES.rangeNeedsTwo);
+        }
+
+        return;
+    }
+
+    if (operator.valueShape === 'relative_days') {
+        const raw = node.value;
+
+        if (
+            Array.isArray(raw) ||
+            typeof raw !== 'number' ||
+            !Number.isInteger(raw) ||
+            raw < 0
+        ) {
+            errors.set(node.id, MESSAGES.relativeDaysInvalid);
+        } else if (raw > whitelist.limits.maxRelativeDays) {
+            errors.set(
+                node.id,
+                MESSAGES.relativeDaysOutOfRange(
+                    whitelist.limits.maxRelativeDays,
+                ),
+            );
         }
 
         return;

@@ -31,6 +31,11 @@ final class RuleFieldWhitelist
         'product', 'category', 'variation', 'segment',
     ];
 
+    /** @var list<string> timestamp-typed fields — the only ones RuleOperator::WithinDaysOfNow (P5-07b) may target. */
+    public const DATE_FIELDS = [
+        'first_seen_at', 'expected_next_order_at',
+    ];
+
     /** Resolves a field's group, or throws if it is not in the whitelist. Never returns null and never ignores. */
     public static function group(string $field): RuleFieldGroup
     {

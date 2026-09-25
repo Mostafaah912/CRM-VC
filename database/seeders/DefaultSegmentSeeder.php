@@ -11,12 +11,14 @@ use App\Modules\Segments\Enums\SegmentType;
 use App\Modules\Segments\Models\Segment;
 use App\Modules\Segments\Services\RuleValidator;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\Log;
 
 /**
- * PRD §17 "سگمنت‌های Seed" — 11 of the 12 named segments (see the P5-07 note in ARCHITECTURE.md for why
- * the 12th, "سررسید خرید مجدد", is deferred rather than built here). Every `rule` is built from enum
- * values (RfmSegment/ChurnRiskLevel), never a bare string, and validated with RuleValidator before it is
- * ever written — the same rule SegmentService::create() itself enforces.
+ * PRD §17 "سگمنت‌های Seed" — all 12 named segments (P5-07b added the 12th, "سررسید خرید مجدد",
+ * once `RuleOperator::WithinDaysOfNow` existed to express its `expected_next_order_at ±7d` rule).
+ * Every `rule` is built from enum values (RfmSegment/ChurnRiskLevel), never a bare string, and
+ * validated with RuleValidator before it is ever written — the same rule SegmentService::create()
+ * itself enforces.
  *
  * Idempotent by `lower(name)` (matches the `segments_name_unique` index): re-running never creates a
  * duplicate or drifts a segment's definition, and a soft-deleted seed segment is restored rather than
@@ -24,6 +26,11 @@ use Illuminate\Database\Seeder;
  * type, rule, rule_version, is_system) are refreshed on a re-run; `member_count`/`last_evaluated_at`/
  * `last_eval_ms` are left alone so re-seeding never wipes evaluation state a future P5-08
  * RebuildAllSegmentsJob run may have produced.
+ *
+ * P5-07b: if a name collides with a segment that already exists and is NOT `is_system` (a user
+ * happened to name their own segment the same thing), that row is left completely alone — never
+ * overwritten, never flipped to `is_system`. Only rows this seeder itself owns (`is_system = true`,
+ * including soft-deleted ones) are ever updated in place.
  */
 class DefaultSegmentSeeder extends Seeder
 {
@@ -32,16 +39,18 @@ class DefaultSegmentSeeder extends Seeder
     {
         $eq = RuleOperator::Equals->value;
         $gte = RuleOperator::GreaterThanOrEqual->value;
+        $in = RuleOperator::In->value;
+        $withinDays = RuleOperator::WithinDaysOfNow->value;
 
         return [
             ['name' => 'قهرمانان', 'description' => 'PRD §17 Seed — rfm_segment = champion', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::Champion->value]],
             ['name' => 'وفادار', 'description' => 'PRD §17 Seed — rfm_segment = loyal', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::Loyal->value]],
             ['name' => 'نویدبخش', 'description' => 'PRD §17 Seed — rfm_segment = promising', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::Promising->value]],
             ['name' => 'مشتری جدید', 'description' => 'PRD §17 Seed — rfm_segment = new_customer', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::NewCustomer->value]],
-            // PRD §17 names this seed "(churn medium)" — churn_risk_level, NOT rfm_segment=at_risk (the
-            // RFM page's own "در معرض ریزش" label). Followed literally; see the P5-07 note in
-            // ARCHITECTURE.md for the naming clash and the dev-DB comparison against both readings.
-            ['name' => 'در معرض ریزش', 'description' => 'PRD §17 Seed — churn_risk_level = medium', 'rule' => ['field' => 'churn_risk_level', 'operator' => $eq, 'value' => ChurnRiskLevel::Medium->value]],
+            // P5-07b decision: churn_risk_level in [medium, high] — not PRD §17's literal "churn medium"
+            // alone (P5-07's single-value reading undercounted against the RFM page's own "در معرض
+            // ریزش" meaning; see docs/architecture/sprint-5.md, P5-07b, for the dev-DB comparison).
+            ['name' => 'در معرض ریزش', 'description' => 'churn_risk_level in [medium, high]', 'rule' => ['field' => 'churn_risk_level', 'operator' => $in, 'value' => [ChurnRiskLevel::Medium->value, ChurnRiskLevel::High->value]]],
             ['name' => 'نباید از دست برود', 'description' => 'PRD §17 Seed — rfm_segment = cant_lose', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::CantLose->value]],
             ['name' => 'خوابیده', 'description' => 'PRD §17 Seed — rfm_segment = hibernating', 'rule' => ['field' => 'rfm_segment', 'operator' => $eq, 'value' => RfmSegment::Hibernating->value]],
             // PRD §17 names this seed "(churn lost)" — churn_risk_level, NOT rfm_segment=lost (a
@@ -56,6 +65,7 @@ class DefaultSegmentSeeder extends Seeder
                     ['field' => 'f_score', 'operator' => $gte, 'value' => 4],
                 ],
             ]],
+            ['name' => 'سررسید خرید مجدد', 'description' => 'PRD §17 Seed — expected_next_order_at ± 7 days of today', 'rule' => ['field' => 'expected_next_order_at', 'operator' => $withinDays, 'value' => 7]],
         ];
     }
 
@@ -79,6 +89,16 @@ class DefaultSegmentSeeder extends Seeder
                     // any specific user id would break on a fresh install where that user may not exist.
                     'created_by' => null,
                 ]);
+
+                continue;
+            }
+
+            if (! $segment->is_system) {
+                // A user already owns a segment with this exact name — never overwrite it or flip it
+                // to is_system, even though the name collides with a seed definition. Logged, not
+                // $this->command->warn(): the real call site is always app(...)->run() directly
+                // (never `db:seed`), where $command is never set and a console warning would be silent.
+                Log::warning("DefaultSegmentSeeder: skipped \"{$definition['name']}\" — a non-system segment with this name already exists.", ['segment_id' => $segment->id]);
 
                 continue;
             }

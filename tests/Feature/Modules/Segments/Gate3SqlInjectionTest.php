@@ -102,6 +102,31 @@ it('binds a payload buried inside deeply nested AND/OR groups, never concatenati
     expect(Schema::hasTable('customers'))->toBeTrue();
 })->with(classicInjectionPayloads());
 
+it('rejects every classic payload used as the within_days_of_now day count, before any query is built', function (string $payload) {
+    expect(fn () => RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'within_days_of_now', 'value' => $payload]))
+        ->toThrow(RuleValidationException::class);
+
+    expect(Schema::hasTable('customers'))->toBeTrue();
+})->with(classicInjectionPayloads());
+
+it('never concatenates the within_days_of_now day count into SQL, even at the valid boundary', function () {
+    Carbon\Carbon::setTestNow('2026-06-15 12:00:00');
+
+    $query = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'within_days_of_now', 'value' => 3650]);
+
+    expect($query->toSql())->toContain('between ? and ?')
+        ->and($query->toSql())->not->toContain('3650');
+
+    $bindings = $query->getBindings();
+    expect($bindings)->not->toContain(3650)->not->toContain('3650');
+
+    $query->count();
+
+    expect(Schema::hasTable('customers'))->toBeTrue();
+
+    Carbon\Carbon::setTestNow();
+});
+
 it('rejects a raw-SQL injection attempt disguised as a group operator', function () {
     expect(fn () => RuleCompiler::compile([
         'op' => 'AND; DROP TABLE customers;--',

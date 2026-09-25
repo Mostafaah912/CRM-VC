@@ -5,7 +5,8 @@ type Props = {
     fieldName: string;
     value: RuleValue | null;
     onChange: (value: RuleValue | null) => void;
-    valueShape: 'scalar' | 'list' | 'range' | 'none';
+    valueShape: 'scalar' | 'list' | 'range' | 'none' | 'relative_days';
+    maxRelativeDays?: number;
     'aria-invalid'?: boolean;
 };
 
@@ -54,12 +55,39 @@ export function RuleValueInput({
     value,
     onChange,
     valueShape,
+    maxRelativeDays,
     'aria-invalid': ariaInvalid,
 }: Props) {
     const kind = inputKindFor(fieldName);
 
     if (valueShape === 'none') {
         return null;
+    }
+
+    if (valueShape === 'relative_days') {
+        const scalar = Array.isArray(value) ? '' : (value ?? '');
+
+        return (
+            <div className="flex items-center gap-2">
+                <span className="text-muted-foreground text-sm">±</span>
+                <Input
+                    type="number"
+                    min={0}
+                    max={maxRelativeDays}
+                    step={1}
+                    aria-invalid={ariaInvalid}
+                    placeholder="تعداد روز"
+                    value={scalarToString(scalar)}
+                    onChange={(e) => {
+                        const raw = e.target.value;
+                        onChange(raw === '' ? null : Number(raw));
+                    }}
+                />
+                <span className="text-muted-foreground text-sm">
+                    روز از امروز
+                </span>
+            </div>
+        );
     }
 
     if (valueShape === 'list') {

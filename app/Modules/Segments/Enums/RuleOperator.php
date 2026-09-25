@@ -29,6 +29,9 @@ enum RuleOperator: string
     case InSegment = 'in_segment';
     case NotInSegment = 'not_in_segment';
 
+    /** P5-07b: date fields only (RuleFieldWhitelist::DATE_FIELDS) — value is an integer day count, N. Compiled fresh at evaluate-time as [now - N days, now + N days], never a stored absolute date. */
+    case WithinDaysOfNow = 'within_days_of_now';
+
     /** Parses a rule's raw operator string against the whitelist. Never silently falls through — an unknown operator throws. */
     public static function fromWhitelist(string $value): self
     {

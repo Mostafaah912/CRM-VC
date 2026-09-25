@@ -6,9 +6,10 @@ use App\Modules\Segments\Enums\RuleOperator;
 use App\Modules\Segments\Exceptions\RuleWhitelistException;
 
 /*
-| PRD §17 JSON Rule Schema `Operator` union type, verbatim. Every listed operator string must parse to
-| its enum case; anything else must throw, never fall through as a raw string (CLAUDE.md §2: enums for
-| every status/level/stage, never bare strings).
+| PRD §17 JSON Rule Schema `Operator` union type, plus `within_days_of_now` (P5-07b — relative-date
+| support, not in the original PRD list). Every listed operator string must parse to its enum case;
+| anything else must throw, never fall through as a raw string (CLAUDE.md §2: enums for every
+| status/level/stage, never bare strings).
 */
 
 it('parses every whitelisted operator string to its enum case', function (string $value, RuleOperator $expected) {
@@ -33,17 +34,19 @@ it('parses every whitelisted operator string to its enum case', function (string
     ['bought_variation', RuleOperator::BoughtVariation],
     ['in_segment', RuleOperator::InSegment],
     ['not_in_segment', RuleOperator::NotInSegment],
+    ['within_days_of_now', RuleOperator::WithinDaysOfNow],
 ]);
 
-it('covers the whole PRD §17 Operator union with no extra and no missing case', function () {
-    $prdOperators = [
+it('covers the whole PRD §17 Operator union plus the P5-07b relative-date addition, with no extra and no missing case', function () {
+    $operators = [
         '=', '!=', '>', '>=', '<', '<=', 'in', 'not_in', 'between', 'is_null', 'is_not_null',
         'contains', 'bought_product', 'not_bought_product', 'bought_category',
         'not_bought_category', 'bought_variation', 'in_segment', 'not_in_segment',
+        'within_days_of_now',
     ];
 
     expect(array_map(fn (RuleOperator $c) => $c->value, RuleOperator::cases()))
-        ->toEqualCanonicalizing($prdOperators);
+        ->toEqualCanonicalizing($operators);
 });
 
 it('throws RuleWhitelistException for an operator outside the whitelist, never silently ignoring it', function () {
