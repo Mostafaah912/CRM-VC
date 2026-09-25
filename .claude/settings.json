@@ -1,0 +1,18 @@
+{
+    "permissions": {
+        "deny": [
+            "Read(.env)",
+            "Read(.env.backup)",
+            "Read(.env.production)",
+            "Read(.env.testing)",
+            "Read(vendor/**)",
+            "Read(node_modules/**)",
+            "Read(public/build/**)",
+            "Read(public/hot)",
+            "Read(storage/**)",
+            "Read(bootstrap/cache/**)",
+            "Read(composer.lock)",
+            "Read(package-lock.json)"
+        ]
+    }
+}
