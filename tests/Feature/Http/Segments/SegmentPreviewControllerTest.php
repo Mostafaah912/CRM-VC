@@ -8,9 +8,9 @@ use Illuminate\Support\Facades\Schema;
 use Tests\Support\SystemPageFixtures as Fx;
 
 /*
-| P5-05: POST /segments/preview — the Rule Builder's live count for a draft rule that may not be
-| saved yet. Behind auth + segments.create. A refused/failed preview is always a clear Persian
-| message with a 422, never a bare 500 (bootstrap/app.php's exception->render() mapping).
+| P5-05/06: POST /segments/preview — the Rule Builder's live count for a draft rule that may not be
+| saved yet. Behind auth + (segments.create OR segments.edit). A refused/failed preview is always a
+| clear Persian message with a 422, never a bare 500 (bootstrap/app.php's exception->render() mapping).
 */
 
 it('answers a guest with a redirect to login', function () {
@@ -18,12 +18,23 @@ it('answers a guest with a redirect to login', function () {
         ->assertRedirect(route('login'));
 });
 
-it('forbids a user without segments.create', function () {
+it('forbids a user without segments.create or segments.edit', function () {
     $user = Fx::userWith('segments.view');
 
     $this->actingAs($user)
         ->postJson('/segments/preview', ['rule' => ['field' => 'total_orders', 'operator' => '>=', 'value' => 1]])
         ->assertForbidden();
+});
+
+it('allows a user who holds only segments.edit', function () {
+    $customer = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $customer->id, 'total_orders' => 5]);
+    $user = Fx::userWith('segments.edit');
+
+    $this->actingAs($user)
+        ->postJson('/segments/preview', ['rule' => ['field' => 'total_orders', 'operator' => '>=', 'value' => 3]])
+        ->assertOk()
+        ->assertJson(['count' => 1]);
 });
 
 it('returns the matching customer count for a valid rule', function () {

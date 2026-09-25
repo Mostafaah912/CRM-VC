@@ -1002,4 +1002,10 @@ _Label note: the section headed "P3-01" above is commit **P2-15** (renamed, beca
 
 **تست Backend:** `RuleWhitelistPresenterTest.php` (۵، شامل «هیچ فیلد/عملگری بدون برچسب نمی‌ماند»)، `SegmentPreviewControllerTest.php` (۸، شامل ۴۰۳ بدون مجوز، Validation، تزریق SQL در فیلد/عملگر، Timeout واقعی → ۴۲۲ فارسی). کل سوییت Backend **۲۷۷۲ ← ۲۷۸۴ سبز** (۱۳۲۰۴ Assertion، با حذف یک تست Flaky از میانه)، PHPStan ۰ خطا، Pint تمیز، Arch Suite ۲۱۳/۲۱۳ (با ۲ تست مرزبندی به‌روزشده).
 
-**عمداً ساخته نشد (برای P5-06):** صفحات Create/Edit/List سگمنت، `DefaultSegmentSeeder`، Combobox محصول/دسته/سگمنت، Date-Picker شمسی، پشتیبانی مجوز OR (`segments.edit` به‌تنهایی) در مسیر Preview، هر تست خودکار سطح کامپوننت React (چون فریمورکش نیست).
+**عمداً ساخته نشد (برای P5-06):** صفحات Create/Edit/List سگمنت، `DefaultSegmentSeeder`، Combobox محصول/دسته/سگمنت، Date-Picker شمسی، هر تست خودکار سطح کامپوننت React (چون فریمورکش نیست).
+
+## P5-06 پیش‌گام — دو اصلاح کوچک پیش از شروع
+
+**۱) تست Flaky حذف‌شده (Reset بعد از Timeout):** بازبینی مجدد طبق درخواست صریح — تصمیم قبلی (بالا، «یافته‌ی Flaky واقعی») بدون تغییر تأیید می‌شود: `PostgresStatementTimeoutTest.php`، تست سوم («never leaves the cancelled statement_timeout applied to the next query on the connection»)، همین ادعا را با `pg_sleep(1)` واقعی در برابر Timeout=۵۰ میلی‌ثانیه قطعی و بدون وابستگی به بار سیستم اثبات می‌کند — یک اثبات جداگانه و کامل، نه صرفاً یک توجیه. بازنویسی تست حذف‌شده به شکل قطعی (مثلاً با `pg_sleep`) در خودِ `SegmentServicePreviewTest.php` فقط همین اثبات را با یک کوئری واقعی ۲۰٬۰۰۰ ردیفی دوباره تکرار می‌کرد — پوشش تازه‌ای اضافه نمی‌کرد، فقط زمان اجرای سوییت را بالا می‌برد. تصمیم: بدون تغییر کد، این بند صرفاً تأیید مجدد را ثبت می‌کند.
+
+**۲) پشتیبانی OR در `EnsurePermission`:** `permission:module,action1,action2,...` اضافه شد (TEST FIRST — `tests/Feature/Modules/Core/EnsurePermissionMiddlewareTest.php` سه تست تازه: مجاز با فقط action دوم، ممنوع با هیچ‌کدام، ممنوع با Deny روی action اول و بدون Grant روی دوم). امضای `handle()` از `string $action` به `string ...$actions` تغییر کرد؛ هر Action هنوز جداگانه از مسیر deny>allow>role>default-deny رد می‌شود (یک Deny روی یک Action هرگز از Action دیگر تأیید «قرض» نمی‌گیرد). مسیر `POST /segments/preview` اکنون `permission:segments,create,edit` است — ابهام نام‌گذاری‌شده‌ی #۱ در بخش P5-05 بالا برطرف شد.

@@ -60,9 +60,10 @@ Route::middleware(['auth', 'permission:metrics,view'])->group(function () {
     Route::get('metrics/rfm', RfmPageController::class)->name('metrics.rfm');
 });
 
-// P5-05: the Rule Builder's live preview count for a draft rule (not yet a saved Segment). Gated on
-// segments.create — the base permission to build/modify a rule at all; the real create/edit pages
-// (P5-06) may need this to also accept a segments.edit-only holder, a decision deferred to that task.
-Route::middleware(['auth', 'permission:segments,create'])->group(function () {
+// P5-05/P5-06: the Rule Builder's live preview count for a draft rule (not yet a saved Segment).
+// Gated on segments.create OR segments.edit (EnsurePermission's OR form, P5-06) — either the create
+// page or the edit page can use the same preview endpoint; each action is still independently
+// resolved via deny>allow>role>default-deny.
+Route::middleware(['auth', 'permission:segments,create,edit'])->group(function () {
     Route::post('segments/preview', SegmentPreviewController::class)->name('segments.preview');
 });
