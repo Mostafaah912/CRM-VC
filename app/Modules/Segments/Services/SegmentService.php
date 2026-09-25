@@ -18,13 +18,16 @@ use App\Modules\Segments\Support\RuleWhitelistPresenter;
 use App\Modules\Segments\Support\SegmentEvaluationResult;
 use App\Modules\Segments\Support\SegmentListRow;
 use App\Modules\Segments\Support\SegmentMemberRow;
+use App\Modules\Segments\Support\SegmentRebuildSummary;
 use App\Support\PhoneMask;
 use App\Support\PostgresStatementTimeout;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Throwable;
 
 /**
  * PRD §17 "ارزیابی": evaluate() / preview() / export() — the only place a Segment's `rule` is ever
@@ -218,6 +221,45 @@ final class SegmentService
     public function evaluateById(int $segmentId): SegmentEvaluationResult
     {
         return $this->evaluate(Segment::query()->findOrFail($segmentId));
+    }
+
+    /**
+     * P5-08: RebuildAllSegmentsJob's entry point — the query and the loop both live here (a Job may
+     * never import a module Model). Active, dynamic segments only: `Segment`'s default query already
+     * excludes soft-deleted rows (SoftDeletes), `static`/`manual` segments have no `rule` to evaluate,
+     * and an inactive one is deliberately paused. One segment's failure is logged and skipped, never
+     * lets a bad rule (or a Postgres statement timeout) stop the rest of the batch.
+     */
+    public function rebuildAll(): SegmentRebuildSummary
+    {
+        $startedAt = microtime(true);
+        $succeeded = [];
+        $failed = [];
+
+        $ids = Segment::query()
+            ->where('type', SegmentType::Dynamic)
+            ->where('is_active', true)
+            ->pluck('id');
+
+        foreach ($ids as $id) {
+            try {
+                $this->evaluateById((int) $id);
+                $succeeded[] = (int) $id;
+            } catch (Throwable $e) {
+                $failed[(int) $id] = $e->getMessage();
+
+                Log::error('SegmentService::rebuildAll: segment evaluation failed, continuing with the rest', [
+                    'segment_id' => $id,
+                    'exception' => $e::class,
+                ]);
+            }
+        }
+
+        return new SegmentRebuildSummary(
+            succeededSegmentIds: $succeeded,
+            failedSegmentIds: $failed,
+            elapsedMs: (int) round((microtime(true) - $startedAt) * 1000),
+        );
     }
 
     private function translateUniqueViolation(QueryException $e): SegmentException|QueryException

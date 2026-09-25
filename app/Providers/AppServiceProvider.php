@@ -2,8 +2,10 @@
 
 namespace App\Providers;
 
+use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
+use App\Modules\Segments\Listeners\RebuildSegmentsAfterMetricsRecomputed;
 use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
@@ -52,6 +54,9 @@ class AppServiceProvider extends ServiceProvider
         // before this one, and MarkCustomerMetricsDirty lives under app/Modules, outside the default
         // app/Listeners auto-discovery path) — Event::listen() here is the idiomatic Laravel 11+ alternative.
         Event::listen(OrderSynced::class, MarkCustomerMetricsDirty::class);
+
+        // P5-08: Segments reacts to Metrics only through this public Event, never a direct call.
+        Event::listen(MetricsRecomputed::class, RebuildSegmentsAfterMetricsRecomputed::class);
     }
 
     /**
