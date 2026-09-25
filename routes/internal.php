@@ -13,6 +13,7 @@ use App\Http\Controllers\Customers\PhoneRevealController;
 use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
+use App\Http\Controllers\Segments\SegmentPreviewController;
 use Illuminate\Support\Facades\Route;
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
@@ -57,4 +58,11 @@ Route::middleware(['auth', 'permission:catalog,view'])->group(function () {
 // P4-08 part B: the RFM distribution page — read-only, behind metrics.view (existing since P0-05).
 Route::middleware(['auth', 'permission:metrics,view'])->group(function () {
     Route::get('metrics/rfm', RfmPageController::class)->name('metrics.rfm');
+});
+
+// P5-05: the Rule Builder's live preview count for a draft rule (not yet a saved Segment). Gated on
+// segments.create — the base permission to build/modify a rule at all; the real create/edit pages
+// (P5-06) may need this to also accept a segments.edit-only holder, a decision deferred to that task.
+Route::middleware(['auth', 'permission:segments,create'])->group(function () {
+    Route::post('segments/preview', SegmentPreviewController::class)->name('segments.preview');
 });

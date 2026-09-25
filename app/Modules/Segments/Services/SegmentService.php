@@ -119,6 +119,22 @@ final class SegmentService
     }
 
     /**
+     * PRD §17/P5-05: the Rule Builder's live preview of a draft rule that has no Segment row yet
+     * (create flow) or may differ from what is saved (edit flow, before save). Builds the same
+     * never-persisted Segment `preview()` already only reads `->rule` from, so the Controller layer
+     * never has to import `Segments\Models\Segment` itself (CLAUDE.md §1: Controller -> Service ->
+     * Model, never Controller -> Model).
+     *
+     * @param  array<mixed>  $rule
+     *
+     * @throws SegmentException when the query is cancelled by the timeout
+     */
+    public function previewRule(array $rule): int
+    {
+        return $this->preview(new Segment(['rule' => $rule]));
+    }
+
+    /**
      * customers.export (PRD §20/§21 T1: bulk PII release is always audited). Full phone requires
      * customers.view_full_phone on top of that; otherwise every row is masked, same as the customer
      * list (P3-01) — export is a separate, audited permission, not a way around the mask.

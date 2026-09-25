@@ -3,6 +3,8 @@
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Modules\Segments\Exceptions\RuleValidationException;
+use App\Modules\Segments\Exceptions\SegmentException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -37,4 +39,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => $request->is('api/*') || $request->expectsJson(),
         );
+
+        // P5-05: a Rule Builder preview refused for a recoverable reason (rule failed validation, or
+        // Postgres cancelled it on statement_timeout) is always a clear Persian message, never a bare
+        // 500 — kept here, not in the Controller, so SegmentPreviewController stays a plain validate
+        // -> one Service call -> response (CLAUDE.md §1).
+        $exceptions->render(function (SegmentException|RuleValidationException $e, Request $request) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        });
     })->create();

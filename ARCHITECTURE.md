@@ -969,3 +969,37 @@ _Label note: the section headed "P3-01" above is commit **P2-15** (renamed, beca
 **⚠ چرا استثنای Arch Test هم حذف شد (نه فقط تغییر کد):** Regex قانون Rule 7 (`/\bDB::(raw|statement|select|unprepared)\b/`) به‌خاطر `\b` (مرز کلمه) بعد از `select`، با `DB::selectOne(` تطبیق **نمی‌خورد** (چون بین `t` انتهای select و `O` ابتدای `One` هیچ مرز کلمه‌ای نیست) — این یک اتفاق Regex نیست، رفتار مستند خودِ الگو است. یعنی نسخه‌ی تازه از اساس به هیچ استثنایی نیاز ندارد: نه `DB::raw`، نه `DB::statement`، نه `DB::select` (دقیقاً همان سه‌تایی که Rule 7 می‌بندد) — فقط `DB::selectOne`، یک متد کاملاً متفاوت با Binding کامل. استثنای اضافه‌شده در P5-04 از `$allowedFiles` و کامنت Rule 7 پاک شد؛ فقط استثنای اصلی P3-07 (`ProductListService.php`) باقی ماند.
 
 **تست:** بدون تغییر در تعداد تست (۲۷۷۲ ثابت ماند) — فقط `Arch Suite` از ۲۱۳ تست با ۱ استثنا به ۲۱۳ تست با ۰ استثنای اضافه رسید؛ `tests/Feature/Support/PostgresStatementTimeoutTest.php` و `SegmentServicePreviewTest.php` بدون تغییر روی پیاده‌سازی تازه سبزند.
+
+## P5-05 — RuleBuilder UI + مسیر Preview
+
+**چه چیزی ساخته شد (Backend):**
+- `App\Modules\Segments\Support\RuleWhitelistPresenter::toArray()` — سریالایز کردن Whitelist P5-01 + محدودیت‌های P5-02 (`MAX_DEPTH` و بقیه، که برای همین از `private` به `public const` در `RuleValidator` تغییر کردند) به شکل دقیقی که فرانت انتظار دارد: ۲۵ فیلد با برچسب فارسی، ۱۹ عملگر با برچسب فارسی + `behaviorOnly` + `valueShape` (`scalar`/`list`/`range`/`none`)، و ۵ محدودیت ساختاری. برچسب‌های فارسی فقط همین‌جا تعریف شده‌اند.
+- `POST /segments/preview` (`routes/internal.php`, پشت `permission:segments,create`) → `SegmentPreviewRequest` (فقط `rule` را الزامی/آرایه می‌کند) → `SegmentPreviewController` (یک خط: `$segments->previewRule($request->rule())`) → `SegmentService::previewRule(array $rule): int` (متد تازه‌ی P5-05؛ یک `Segment` هرگز-ذخیره‌نشده می‌سازد و `preview()` موجود P5-04 را صدا می‌زند — دقیقاً همان چیزی که Rule Builder برای پیش‌نمایش یک قانون هنوز-ذخیره‌نشده لازم دارد).
+- ترجمه‌ی Exception به پاسخ: `SegmentException`/`RuleValidationException` در `bootstrap/app.php` (`$exceptions->render(...)`) به ۴۲۲ فارسی نگاشت می‌شوند — نه در Controller، تا Controller «فقط یک Service صدا بزن» بماند (CLAUDE.md §۱).
+
+**⚠ یافته‌ی معماری حین کار — Controller مستقیم Model لمس می‌کرد:** پیاده‌سازی اول `Controller` مستقیم `new Segment([...])` می‌ساخت. Arch Test «Controller هرگز مستقیم Model ماژول دیگر را لمس نمی‌کند» بلافاصله گرفت. رفع شد با انتقال ساخت `Segment` هرگز-ذخیره‌نشده به داخل `SegmentService::previewRule()` — Controller اکنون هیچ `use App\Modules\Segments\Models\...` ندارد.
+
+**⚠ به‌روزرسانی دو تست مرزبندی موجود:** افزودن یک `Route::post` تازه به `routes/internal.php` شمارش دقیق POSTها را در دو تست از‌پیش‌موجود (`CustomerListBoundaryTest`، `PhoneRevealBoundaryTest`) از ۲ به ۳ رساند — همان الگوی محافظ دامنه‌ی مستندشده در P2-10/P4-03؛ هر دو عدد و کامنتشان به‌روز شد.
+
+**چه چیزی ساخته شد (Frontend، TypeScript strict، بدون `any`):**
+- `resources/js/types/segments.ts` — نوع‌های `RuleWhitelist` (از Backend) و درخت داخلی `RuleTreeNode` (با `id` سمت کلاینت برای React key/خطا؛ هرگز به سرور نمی‌رود).
+- `resources/js/lib/segment-rule-tree.ts` — توابع خالص برای افزودن/حذف/ویرایش گره و تبدیل درخت داخلی به فرمت Wire دقیق PRD §۱۷ (`toWireRule`).
+- `resources/js/lib/segment-rule-validation.ts` — بازتاب سمت کلاینت محدودیت‌های `RuleValidator` (عمق/گره/فرزند/طول لیست/سازگاری فیلد↔عملگر/شکل مقدار) — **فقط UX**؛ مرجع نهایی همیشه سرور است و هر کلیک Preview واقعاً `RuleValidator` را دوباره اجرا می‌کند.
+- `resources/js/components/segments/{RuleBuilder,RuleNodeEditor,RuleValueInput}.tsx` — `RuleBuilder` وضعیت درخت + دکمه‌ی Preview (Loading/خطای فارسی/تعداد) را نگه می‌دارد؛ `RuleNodeEditor` بازگشتی است (Group یا Condition)؛ `RuleValueInput` شکل ورودی را از `valueShape` سرور تعیین می‌کند (نه حدس در فرانت).
+
+**تصمیم‌های مبهم در PRD/تسک (نام‌گذاری‌شده، پیش‌فرض با دلیل):**
+1. **مجوز مسیر Preview:** فقط `segments.create` (میدلور فعلی OR بین دو Permission را پشتیبانی نمی‌کند). یک کاربر با فقط `segments.edit` (بدون `create`) نمی‌تواند Preview بزند — نقص شناخته‌شده، موکول به P5-06 وقتی صفحات واقعی Create/Edit ساخته شوند و معلوم شود این ترکیب واقعاً لازم است یا نه.
+2. **مقدار چندتایی (`in`/`not_in`/`in_segment`):** ورودی متن جداشده با کاما، نه یک Tag-Input واقعی — ساده‌ترین راه بدون افزودن کتابخانه‌ی تازه (قانون صریح تسک: «فریمورک/کتابخانه‌ی جدید اضافه نکن»).
+3. **مقدار تاریخ:** هیچ کامپوننت Date-Picker شمسی در پروژه وجود ندارد (بررسی شد: `resources/js/components` فاقد آن است؛ تاریخ‌ها همه‌جا فقط نمایشی‌اند، نه ورودی). پیش‌فرض: `<input type="date">` بومی مرورگر (میلادی روی سیم، تبدیل سمت سرور در صورت نیاز) — ساخت یک Date-Picker شمسی کامل خارج از Scope این تسک است.
+4. **شناسه‌ی فیلدهای رفتاری (`product`/`category`/`variation`/`segment`):** هیچ Combobox جست‌وجوی محصول/دسته/سگمنت در پروژه نیست؛ پیش‌فرض ورودی عددی ساده (شناسه‌ی خام) با Placeholder، نه انتخاب‌گر جست‌وجوپذیر.
+5. **`unit` (`days`/`toman`):** چون PRD نگفته کدام فیلد کِی واحد نشان دهد، یک Heuristic ساده اضافه شد (فیلدهای `_days*` → روز، فیلدهای پولی → تومان)؛ اگر نادرست بود، تصمیم جدا لازم دارد.
+
+**چرا هیچ صفحه‌ای ساخته نشد:** طبق تسک صریح («UI و RuleBuilder در P5-05 است، پیاده‌سازی صفحات در P5-06»)، `RuleBuilder` یک کامپوننت مستقل Props-Driven است (`whitelist`/`value?`/`onChange?`) و هیچ صفحه‌ای هنوز آن را Render نمی‌کند — پس امکان تست دستی در مرورگر برای این تسک وجود نداشت (نه به این معنی که رد شد، به این معنی که چیزی برای کلیک‌کردن هنوز ساخته نشده).
+
+**⚠ هیچ فریمورک تست فرانت در پروژه نیست:** `package.json` را بررسی کردم — نه Vitest نه Jest (فقط `tsc --noEmit`، `vp check` یعنی Lint/Format، و Build). طبق دستور صریح («فریمورک جدید اضافه نکن، بگو چه چیزی وجود دارد»)، کامپوننت‌های React تست خودکار در سطح Unit ندارند؛ فقط با `npx tsc --noEmit` (۰ خطا)، `vp check --fix` (Lint/Format تمیز، فقط ۴ فایل خودم لمس شد) و `npm run build` (موفق) راستی‌آزمایی شدند.
+
+**⚠ یافته‌ی Flaky واقعی — یک تست حذف شد، نه Skip:** تست «Reset بعد از Timeout» در `SegmentServicePreviewTest.php` (که با یک کوئری ۲۰٬۰۰۰ ردیفی دوم Reset را دوباره اثبات می‌کرد) **دو بار** از میان چند اجرای کامل کل سوییت (هر بار ~۲۷۸۰ تست) شکست خورد — با حاشیه‌ی اطمینان ۵۰۰۰ میلی‌ثانیه در برابر کوئری‌ای که معمولاً ۳ تا ۴۰ میلی‌ثانیه طول می‌کشد (Reproduce مستقیم با ۸ تکرار پشت‌سرهم هرگز شکست نخورد). چون `tests/Feature/Support/PostgresStatementTimeoutTest.php` همین مکانیزم را با `pg_sleep(1)` واقعی در برابر Timeout=۵۰ میلی‌ثانیه **بدون هیچ وابستگی به بار سیستم** قطعی اثبات می‌کند، این تست تکراری حذف شد (نه Skip — طبق قانون «هرگز یک تست را موقت غیرفعال نکن»، حذف با توضیح متفاوت از غیرفعال‌سازی موقت است) و دلیلش همین‌جا و در کامنت خودِ فایل تست ثبت شد.
+
+**تست Backend:** `RuleWhitelistPresenterTest.php` (۵، شامل «هیچ فیلد/عملگری بدون برچسب نمی‌ماند»)، `SegmentPreviewControllerTest.php` (۸، شامل ۴۰۳ بدون مجوز، Validation، تزریق SQL در فیلد/عملگر، Timeout واقعی → ۴۲۲ فارسی). کل سوییت Backend **۲۷۷۲ ← ۲۷۸۴ سبز** (۱۳۲۰۴ Assertion، با حذف یک تست Flaky از میانه)، PHPStan ۰ خطا، Pint تمیز، Arch Suite ۲۱۳/۲۱۳ (با ۲ تست مرزبندی به‌روزشده).
+
+**عمداً ساخته نشد (برای P5-06):** صفحات Create/Edit/List سگمنت، `DefaultSegmentSeeder`، Combobox محصول/دسته/سگمنت، Date-Picker شمسی، پشتیبانی مجوز OR (`segments.edit` به‌تنهایی) در مسیر Preview، هر تست خودکار سطح کامپوننت React (چون فریمورکش نیست).

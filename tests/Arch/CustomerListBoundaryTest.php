@@ -67,7 +67,7 @@ it('registers the list and the Customer 360 page and its JSON endpoints (timelin
 
     expect(substr_count($routes, 'Route::get('))->toBe(10) // the list; P3-03's page; P3-04's timeline; P3-05's orders/products/notes tabs; P3-06's order list and detail; P3-07's product list; P4-08's RFM page
         ->and($routes)->not->toMatch('/Route::(put|patch|any|match|resource|apiResource)\b/')
-        ->and(substr_count($routes, 'Route::post('))->toBe(2) // P3-02's audited reveal and P3-05's note store — nothing else that writes
+        ->and(substr_count($routes, 'Route::post('))->toBe(3) // P3-02's audited reveal, P3-05's note store, P5-05's segment rule preview — nothing else that writes
         ->and(substr_count($routes, 'Route::delete('))->toBe(1) // P3-05's note delete
         ->and($routes)->toContain("'auth'")
         ->and($routes)->toContain("'permission:customers,view'")

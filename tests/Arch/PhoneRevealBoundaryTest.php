@@ -63,8 +63,8 @@ it('keeps the controller free of queries, models, config and control flow — on
 it('registers the reveal as a POST in routes/internal.php, behind auth, customers.view_full_phone and its own throttle — the only route that reveals', function () {
     $routes = Scanner::phpCode(prFile('routes/internal.php'));
 
-    // Two POSTs in the file now: this reveal and P3-05's notes store (which reveals nothing and has its own boundary test).
-    expect(substr_count($routes, 'Route::post('))->toBe(2)
+    // Three POSTs in the file now: this reveal, P3-05's notes store, and P5-05's segment rule preview (neither reveals a phone).
+    expect(substr_count($routes, 'Route::post('))->toBe(3)
         ->and(substr_count($routes, 'reveal-phone'))->toBe(2) // the URL and the route name, both in the ONE reveal route
         ->and($routes)->toContain("'permission:customers,view_full_phone'")
         ->and($routes)->toContain("'throttle:10,1,phone-reveal'")

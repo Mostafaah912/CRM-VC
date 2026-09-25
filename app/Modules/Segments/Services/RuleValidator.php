@@ -18,31 +18,32 @@ use App\Modules\Segments\Support\RuleFieldWhitelist;
  */
 final class RuleValidator
 {
-    private const MAX_DEPTH = 4;
+    /** Public: RuleWhitelistPresenter (P5-05) mirrors these limits into the Rule Builder's client-side UX validation, never redefining them. */
+    public const MAX_DEPTH = 4;
 
-    private const MAX_NODES = 100;
+    public const MAX_NODES = 100;
 
-    private const MIN_CHILDREN = 1;
+    public const MIN_CHILDREN = 1;
 
-    private const MAX_CHILDREN = 20;
+    public const MAX_CHILDREN = 20;
 
-    private const MAX_LIST_VALUES = 200;
+    public const MAX_LIST_VALUES = 200;
 
     /** Operators only meaningful on a `behavior` field (PRD §17); every other operator is for `customer`/`metrics` fields. */
-    private const BEHAVIOR_OPERATORS = [
+    public const BEHAVIOR_OPERATORS = [
         RuleOperator::BoughtProduct, RuleOperator::NotBoughtProduct,
         RuleOperator::BoughtCategory, RuleOperator::NotBoughtCategory,
         RuleOperator::BoughtVariation, RuleOperator::InSegment, RuleOperator::NotInSegment,
     ];
 
     /** Operators whose value must be an array, capped at MAX_LIST_VALUES (PRD §17: `"in" array <= 200`). */
-    private const LIST_OPERATORS = [
+    public const LIST_OPERATORS = [
         RuleOperator::In, RuleOperator::NotIn, RuleOperator::InSegment, RuleOperator::NotInSegment,
     ];
 
-    private const NULL_OPERATORS = [RuleOperator::IsNull, RuleOperator::IsNotNull];
+    public const NULL_OPERATORS = [RuleOperator::IsNull, RuleOperator::IsNotNull];
 
-    private const VALID_UNITS = ['days', 'toman'];
+    public const VALID_UNITS = ['days', 'toman'];
 
     /** @param array<mixed> $rule @throws RuleValidationException */
     public static function validate(array $rule): void
