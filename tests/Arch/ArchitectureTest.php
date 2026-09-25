@@ -132,15 +132,15 @@ it('bans raw SQL in the Segments module outright', function () {
  * has no query-builder form without selectRaw/orderByRaw, and CLAUDE.md §3 bans a PHP loop over that much data. The module
  * itself stays banned; only this file, and only these raw fragments, are exempt.
  *
- * P5-04 amendment (ARCHITECTURE.md, "P5-04 — استثنای Rule 7 برای PostgresStatementTimeout"): a second file,
- * app/Support/PostgresStatementTimeout.php, may use it — PostgreSQL's `SET LOCAL statement_timeout` (PRD §17's
- * mandatory 5s cap on segment preview) has no bound-parameter/query-builder form at all (`SET x = $1` is a
- * Postgres syntax error, not a Laravel limitation), so a query-builder alternative does not exist to fall back
- * to. `$milliseconds` is always an app-controlled integer, never request input.
+ * P5-04/P5-05 note (ARCHITECTURE.md, "P5-05 — بازنگری PostgresStatementTimeout"): this file once needed a
+ * second exception here for app/Support/PostgresStatementTimeout.php (`SET LOCAL statement_timeout`, which has
+ * no bound-parameter form). That version was replaced with `set_config('statement_timeout', ?, true)` — an
+ * ordinary parameterized function call — which needs no `DB::statement`/`DB::raw`/`DB::select`/`DB::unprepared`
+ * at all, so the exception was removed; only the original P3-07 one remains.
  */
 it('confines raw SQL to migrations, the Metrics/Analytics modules, and Catalog\'s one product-sales aggregate', function () {
     $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/'];
-    $allowedFiles = ['app/Modules/Catalog/Services/ProductListService.php', 'app/Support/PostgresStatementTimeout.php'];
+    $allowedFiles = ['app/Modules/Catalog/Services/ProductListService.php'];
     $files = array_filter(
         Scanner::phpFiles(['app', 'routes', 'config', 'bootstrap/app.php']),
         function (string $file) use ($allowedPrefixes, $allowedFiles): bool {

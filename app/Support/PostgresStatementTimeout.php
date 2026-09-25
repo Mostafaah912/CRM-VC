@@ -8,16 +8,17 @@ use Closure;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Runs `$callback` inside a transaction bounded by a Postgres `statement_timeout`. `SET LOCAL`
- * only applies for the current transaction and is discarded automatically when it ends (commit,
- * rollback, or an exception), so a timeout set here can never leak onto a later, unrelated query
- * on the same pooled connection.
+ * Runs `$callback` inside a transaction bounded by a Postgres `statement_timeout`, set via
+ * `set_config('statement_timeout', ?, true)` — a normal function call, so both arguments are
+ * ordinary bound parameters, never SQL text built from a value. The third argument (`is_local` =
+ * `true`) makes Postgres treat it exactly like `SET LOCAL`: scoped to the current transaction only,
+ * discarded automatically when it ends (commit, rollback, or an exception), so a timeout set here
+ * can never leak onto a later, unrelated query on the same pooled connection.
  *
- * Lives here, not inside `app/Modules/Segments`, because that module bans `DB::statement`/`DB::raw`
- * outright (CLAUDE.md §3, enforced by an arch test) as its SQL-injection defense — this helper is the
- * one place a numeric literal is written into SQL text, and PostgreSQL's `SET` command has no bound-
- * parameter form to avoid that (`SET LOCAL statement_timeout = $1` is a syntax error). `$milliseconds`
- * is always an app-controlled integer (a class constant or a config default), never request input.
+ * `SET LOCAL statement_timeout = ...` (the first version of this file) has no bound-parameter form —
+ * `SET` is not a regular statement in Postgres's protocol, so the value had to be written into the
+ * SQL text after casting to int. `set_config()` is a normal SQL function precisely so this file
+ * never needs to do that; it is fully parameterized like any other query in the app.
  */
 final class PostgresStatementTimeout
 {
@@ -26,7 +27,7 @@ final class PostgresStatementTimeout
         $boundedMs = max(0, $milliseconds);
 
         return DB::transaction(function () use ($boundedMs, $callback): mixed {
-            DB::statement('SET LOCAL statement_timeout = '.$boundedMs);
+            DB::selectOne('select set_config(?, ?, true)', ['statement_timeout', (string) $boundedMs]);
 
             return $callback();
         });
