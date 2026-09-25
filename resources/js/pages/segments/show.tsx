@@ -156,7 +156,15 @@ export default function SegmentShow({ segment, members }: Props) {
                 <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
                     <Stat
                         label="تعداد اعضا"
-                        value={segment.member_count.toLocaleString('fa-IR')}
+                        value={
+                            segment.last_evaluated_at === null ? (
+                                <span className="text-muted-foreground text-sm">
+                                    ارزیابی نشده
+                                </span>
+                            ) : (
+                                segment.member_count.toLocaleString('fa-IR')
+                            )
+                        }
                     />
                     <Stat
                         label="آخرین ارزیابی"

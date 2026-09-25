@@ -102,8 +102,14 @@ export default function SegmentsIndex({ segments }: Props) {
                                             segment.type}
                                     </TableCell>
                                     <TableCell className="text-sm">
-                                        {segment.member_count.toLocaleString(
-                                            'fa-IR',
+                                        {segment.last_evaluated_at === null ? (
+                                            <span className="text-muted-foreground">
+                                                ارزیابی نشده
+                                            </span>
+                                        ) : (
+                                            segment.member_count.toLocaleString(
+                                                'fa-IR',
+                                            )
                                         )}
                                     </TableCell>
                                     <TableCell className="text-sm">
