@@ -6,6 +6,7 @@ import {
     GitMerge,
     History,
     LayoutGrid,
+    ListFilter,
     Package,
     ScrollText,
     ShoppingCart,
@@ -31,6 +32,7 @@ import { index as customersIndex } from '@/routes/customers';
 import { rfm as metricsRfm } from '@/routes/metrics';
 import { index as ordersIndex } from '@/routes/orders';
 import { index as productsIndex } from '@/routes/products';
+import { index as segmentsIndex } from '@/routes/segments';
 import audit from '@/routes/audit';
 import { health, identityConflicts, syncLogs } from '@/routes/system';
 import type { NavItem } from '@/types';
@@ -90,6 +92,15 @@ export function AppSidebar() {
                       title: 'تحلیل RFM',
                       href: metricsRfm(),
                       icon: Target,
+                  },
+              ]
+            : []),
+        ...(can('segments', 'view')
+            ? [
+                  {
+                      title: 'سگمنت‌ها',
+                      href: segmentsIndex(),
+                      icon: ListFilter,
                   },
               ]
             : []),

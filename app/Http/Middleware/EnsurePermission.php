@@ -17,14 +17,20 @@ class EnsurePermission
 {
     public function __construct(private readonly PermissionService $permissions) {}
 
-    public function handle(Request $request, Closure $next, string $module, string $action): Response
+    /**
+     * `permission:segments,create` requires that one action. `permission:segments,create,edit` requires
+     * ANY of them (OR) — each action is still independently resolved via deny>allow>role>default-deny,
+     * so a deny override on one action never leaks approval from another.
+     */
+    public function handle(Request $request, Closure $next, string $module, string ...$actions): Response
     {
         $user = $request->user();
 
-        abort_unless(
-            $user && $this->permissions->allows($user, $module, $action),
-            403,
+        $allowed = $user !== null && collect($actions)->contains(
+            fn (string $action): bool => $this->permissions->allows($user, $module, $action),
         );
+
+        abort_unless($allowed, 403);
 
         return $next($request);
     }

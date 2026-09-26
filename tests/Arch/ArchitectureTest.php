@@ -131,6 +131,12 @@ it('bans raw SQL in the Segments module outright', function () {
  * ProductListService.php, may use it — a store-wide grouped SUM/COUNT/MAX (every realized order line, not one customer's)
  * has no query-builder form without selectRaw/orderByRaw, and CLAUDE.md §3 bans a PHP loop over that much data. The module
  * itself stays banned; only this file, and only these raw fragments, are exempt.
+ *
+ * P5-04/P5-05 note (ARCHITECTURE.md, "P5-05 — بازنگری PostgresStatementTimeout"): this file once needed a
+ * second exception here for app/Support/PostgresStatementTimeout.php (`SET LOCAL statement_timeout`, which has
+ * no bound-parameter form). That version was replaced with `set_config('statement_timeout', ?, true)` — an
+ * ordinary parameterized function call — which needs no `DB::statement`/`DB::raw`/`DB::select`/`DB::unprepared`
+ * at all, so the exception was removed; only the original P3-07 one remains.
  */
 it('confines raw SQL to migrations, the Metrics/Analytics modules, and Catalog\'s one product-sales aggregate', function () {
     $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/'];

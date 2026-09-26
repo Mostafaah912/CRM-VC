@@ -18,6 +18,9 @@ class DatabaseSeeder extends Seeder
         $this->call([
             PermissionSeeder::class,
             RoleSeeder::class,
+            // PRD §17's 12 seed segments (11 built — see ARCHITECTURE.md, P5-07): real product data, not
+            // demo data, so unlike DemoDataSeeder below this runs in every environment, production included.
+            DefaultSegmentSeeder::class,
         ]);
 
         // Fake customers/orders: never in production, where real data comes only from the Woo sync.

@@ -13,6 +13,16 @@ use App\Http\Controllers\Customers\PhoneRevealController;
 use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
+use App\Http\Controllers\Segments\SegmentCreateController;
+use App\Http\Controllers\Segments\SegmentDestroyController;
+use App\Http\Controllers\Segments\SegmentEditController;
+use App\Http\Controllers\Segments\SegmentEvaluateController;
+use App\Http\Controllers\Segments\SegmentExportController;
+use App\Http\Controllers\Segments\SegmentListController;
+use App\Http\Controllers\Segments\SegmentPreviewController;
+use App\Http\Controllers\Segments\SegmentShowController;
+use App\Http\Controllers\Segments\SegmentStoreController;
+use App\Http\Controllers\Segments\SegmentUpdateController;
 use Illuminate\Support\Facades\Route;
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
@@ -57,4 +67,51 @@ Route::middleware(['auth', 'permission:catalog,view'])->group(function () {
 // P4-08 part B: the RFM distribution page — read-only, behind metrics.view (existing since P0-05).
 Route::middleware(['auth', 'permission:metrics,view'])->group(function () {
     Route::get('metrics/rfm', RfmPageController::class)->name('metrics.rfm');
+});
+
+// P5-05/P5-06: the Rule Builder's live preview count for a draft rule (not yet a saved Segment).
+// Gated on segments.create OR segments.edit (EnsurePermission's OR form, P5-06) — either the create
+// page or the edit page can use the same preview endpoint; each action is still independently
+// resolved via deny>allow>role>default-deny.
+Route::middleware(['auth', 'permission:segments,create,edit'])->group(function () {
+    Route::post('segments/preview', SegmentPreviewController::class)->name('segments.preview');
+});
+
+// P5-06: the segment list and one segment's detail page — read-only, behind segments.view (PRD §25's
+// matrix gives this to Owner/Manager/Analyst/Viewer; Support has no Segments access at all).
+// `segments/create` is registered before `segments/{segment}` so "create" is never captured as an id.
+Route::middleware(['auth', 'permission:segments,view'])->group(function () {
+    Route::get('segments', SegmentListController::class)->name('segments.index');
+});
+
+// segments.create: the create form and its submit — Owner/Manager/Analyst per the matrix.
+Route::middleware(['auth', 'permission:segments,create'])->group(function () {
+    Route::get('segments/create', SegmentCreateController::class)->name('segments.create');
+    Route::post('segments', SegmentStoreController::class)->name('segments.store');
+});
+
+Route::middleware(['auth', 'permission:segments,view'])->group(function () {
+    Route::get('segments/{segment}', SegmentShowController::class)->whereNumber('segment')->name('segments.show');
+});
+
+// segments.edit: the edit form, its submit (POST — this codebase's writes are always POST/DELETE, never
+// PUT/PATCH; a named P5-06 default rather than loosening the arch test's `not->toMatch(put|patch|...)`
+// guard for one route), and the manual "evaluate" trigger (queues EvaluateSegmentJob — see its docblock).
+Route::middleware(['auth', 'permission:segments,edit'])->group(function () {
+    Route::get('segments/{segment}/edit', SegmentEditController::class)->whereNumber('segment')->name('segments.edit');
+    Route::post('segments/{segment}', SegmentUpdateController::class)->whereNumber('segment')->name('segments.update');
+    Route::post('segments/{segment}/evaluate', SegmentEvaluateController::class)->whereNumber('segment')->name('segments.evaluate');
+});
+
+// segments.delete: Owner/Manager only (the matrix explicitly withholds delete from Analyst). is_system
+// segments (P5-07's seeds) are still refused by SegmentService::delete() regardless of permission.
+Route::middleware(['auth', 'permission:segments,delete'])->group(function () {
+    Route::delete('segments/{segment}', SegmentDestroyController::class)->whereNumber('segment')->name('segments.destroy');
+});
+
+// customers.export, not a segments.* permission: exporting a segment's members is the same audited PII
+// release as any other customer export (SegmentService::export(), built in P5-04). Gated here too (not
+// just inside the Service) so a plain browser navigation to a forbidden export gets a normal 403 page.
+Route::middleware(['auth', 'permission:customers,export'])->group(function () {
+    Route::get('segments/{segment}/export', SegmentExportController::class)->whereNumber('segment')->name('segments.export');
 });
