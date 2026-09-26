@@ -44,7 +44,8 @@ it('keeps the command free of logic: no database, models, services, config or cu
         '/cursor|sync_cursors|sync_jobs|epoch|window/i',
         '/\bfor(each)?\s*\(|\bwhile\s*\(/',
     ]))->toBe([])
-        ->and(substr_count($code, 'SyncEntityJob::dispatch('))->toBe(1);
+        ->and(substr_count($code, 'SyncEntityJob::dispatch('))->toBe(1)
+        ->and(substr_count($code, 'CatalogSyncJob::dispatch('))->toBe(1);
 });
 
 it('prints only its one line, plus a static error for an unknown entity — never a variable that could be a secret', function () {
@@ -94,12 +95,14 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
         ->and($service)->not->toContain('JalaliDate');
 });
 
-it('registers the hm:sync poll in routes/console.php, with no overlap or server flags (P2-11 adds one more entry beside it)', function () {
+it('registers the hm:sync poll in routes/console.php, with no overlap or server flags (P2-11/P6 add more entries beside it)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
 
-    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
+    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(2)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
+        ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'catalog'])")
+        ->and($console)->toContain('->dailyAt(')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });

@@ -60,9 +60,9 @@ function variation(int $woo, ?string $sku = null, ?int $price = 100000, string $
 }
 
 /** @param list<int> $categories @param list<VariationInput> $variations */
-function product(int $woo = 101, string $name = 'محصول آزمایشی', string $type = 'simple', string $status = 'publish', array $categories = [], array $variations = [], ?CarbonImmutable $createdAtWoo = null, ?string $slug = 'synthetic'): ProductInput
+function product(int $woo = 101, string $name = 'محصول آزمایشی', string $type = 'simple', string $status = 'publish', array $categories = [], array $variations = [], ?CarbonImmutable $createdAtWoo = null, ?string $slug = 'synthetic', ?string $sku = null, ?int $price = null): ProductInput
 {
-    return new ProductInput($woo, $name, $slug, $type, $status, $createdAtWoo, $categories, $variations);
+    return new ProductInput($woo, $name, $slug, $type, $status, $createdAtWoo, $categories, $variations, $sku, $price);
 }
 
 function linkedCategories(Product $product): array
@@ -524,6 +524,93 @@ it('writes a product, its links and its variations as one unit: a failure leaves
         ->and(ProductVariation::count())->toBe($variationsBefore)
         ->and(DB::table('product_category_product')->count())->toBe(0);
     Event::assertDispatchedTimes(ProductSynced::class, 1);
+});
+
+// ================================== simple product sku/price (P6 decision, not PRD §09's literal schema)
+
+it('stores a simple product\'s own sku and price', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-101', price: 250000));
+
+    $row = Product::sole();
+    expect($row->sku)->toBe('HMP-101')->and($row->price)->toBe(250000)->and(is_int($row->price))->toBeTrue();
+});
+
+it('allows many products with no sku/price at all', function () {
+    catalog()->upsertProduct(product(101));
+    catalog()->upsertProduct(product(102));
+
+    expect(Product::whereNull('sku')->count())->toBe(2);
+});
+
+it('updates an existing product\'s sku/price on a later sync', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-OLD', price: 100));
+
+    catalog()->upsertProduct(product(101, sku: 'HMP-NEW', price: 200));
+
+    $row = Product::sole();
+    expect([$row->sku, $row->price])->toBe(['HMP-NEW', 200]);
+});
+
+it('does not mistake a product\'s own sku for a conflict with itself', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-SAME'));
+
+    catalog()->upsertProduct(product(101, sku: 'HMP-SAME', price: 999));
+
+    expect(Product::sole()->price)->toBe(999);
+});
+
+it('refuses a product sku another product already owns, corrupting neither', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-TAKEN'));
+    $before = Product::sole()->only(['id', 'woo_product_id', 'sku']);
+
+    try {
+        catalog()->upsertProduct(product(102, sku: 'HMP-TAKEN'));
+        $this->fail('Expected CatalogIntegrityException');
+    } catch (CatalogIntegrityException $e) {
+        expect($e->reason)->toBe(CatalogIntegrityException::SKU_CONFLICT)
+            ->and($e->getMessage())->toContain('102')->toContain('HMP-TAKEN');
+    }
+
+    expect(Product::count())->toBe(1)->and(Product::sole()->only(['id', 'woo_product_id', 'sku']))->toBe($before);
+});
+
+it('refuses a product sku a variation already owns', function () {
+    catalog()->upsertProduct(product(103, type: 'variable', variations: [variation(1031, 'V-TAKEN')]));
+
+    expect(fn () => catalog()->upsertProduct(product(101, sku: 'V-TAKEN')))
+        ->toThrow(CatalogIntegrityException::class);
+    expect(Product::where('woo_product_id', 101)->exists())->toBeFalse();
+});
+
+it('refuses a variation sku a product already owns', function () {
+    catalog()->upsertProduct(product(101, sku: 'P-TAKEN'));
+
+    expect(fn () => catalog()->upsertProduct(product(103, type: 'variable', variations: [variation(1031, 'P-TAKEN')])))
+        ->toThrow(CatalogIntegrityException::class);
+    expect(ProductVariation::count())->toBe(0);
+});
+
+it('is backed by the database: the partial unique index refuses a duplicate product sku but allows many NULLs', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-DB'));
+    catalog()->upsertProduct(product(102));
+
+    expect(fn () => DB::transaction(fn () => DB::table('products')->insert([
+        'woo_product_id' => 999, 'sku' => 'HMP-DB', 'name' => 'x', 'type' => 'simple', 'status' => 'publish', 'created_at' => now(), 'updated_at' => now(),
+    ])))->toThrow(UniqueConstraintViolationException::class);
+});
+
+// ============================================= resolveProductBySku (P6 decision)
+
+it('resolves a simple product by its own sku, with a null variation id', function () {
+    catalog()->upsertProduct(product(101, sku: 'HMP-RESOLVE'));
+
+    $resolved = catalog()->resolveProductBySku('HMP-RESOLVE');
+
+    expect($resolved->productId)->toBe(Product::sole()->id)->and($resolved->variationId)->toBeNull();
+});
+
+it('returns null from resolveProductBySku for an unknown sku', function () {
+    expect(catalog()->resolveProductBySku('NOPE'))->toBeNull();
 });
 
 it('rolls an existing product back to its previous state when a later step fails', function () {

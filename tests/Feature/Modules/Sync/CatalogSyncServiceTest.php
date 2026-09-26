@@ -133,6 +133,16 @@ it('syncs products with their categories and reads variations only for variable 
     Http::assertNothingSent();
 });
 
+it('persists the recorded product\'s own sku/price (P6 decision: products.sku/price is not PRD §09\'s literal schema)', function () {
+    $fake = catalogFake();
+    catalogSync($fake)->syncCategories();
+
+    catalogSync($fake)->syncProducts();
+
+    $tee = Product::where('woo_product_id', 101)->sole();
+    expect($tee->sku)->toBe('SYN-TEE-001')->and($tee->price)->toBe(403880)->and(is_int($tee->price))->toBeTrue();
+});
+
 it('keeps the product\'s Woo created date and stamps a local synced_at', function () {
     $this->travelTo(CarbonImmutable::parse('2026-06-01 10:00:00', 'UTC'));
     $fake = catalogFake();

@@ -139,7 +139,7 @@ it('schedules the nightly reconciliation in routes/console.php, daily at 02:00 A
         ->and($console)->not->toContain("['--all' => true]")
         ->and($console)->toContain("->dailyAt('02:00')")
         ->and($console)->toContain("->timezone('Asia/Tehran')")
-        ->and(substr_count($console, 'Schedule::'))->toBe(2)
+        ->and(substr_count($console, 'Schedule::'))->toBe(3)
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground/');
 });
 

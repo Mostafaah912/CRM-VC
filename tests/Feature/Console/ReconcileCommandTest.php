@@ -176,11 +176,12 @@ it('schedules a command line the command actually accepts: --all is a flag, and 
     expect($input->getOption('all'))->toBeTrue()->and($input->getOption('month'))->toBeNull();
 });
 
-it('schedules exactly two tasks: the orders poll and the nightly reconciliation', function () {
+it('schedules exactly three tasks: the orders poll, the nightly catalog sync (P6 decision), and the nightly reconciliation', function () {
     Artisan::all();
 
     $commands = array_map(fn ($event) => (string) $event->command, app(Schedule::class)->events());
 
-    expect($commands)->toHaveCount(2)
-        ->and(implode(' ', $commands))->toContain('hm:sync')->toContain('hm:reconcile');
+    expect($commands)->toHaveCount(3)
+        ->and(implode(' ', $commands))->toContain('hm:sync')->toContain('hm:reconcile')
+        ->and(implode(' ', $commands))->toContain('catalog');
 });

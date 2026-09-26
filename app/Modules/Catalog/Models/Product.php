@@ -20,6 +20,8 @@ use Illuminate\Support\Carbon;
  * @property int $woo_product_id
  * @property string $name
  * @property string|null $slug
+ * @property string|null $sku not PRD §09's literal schema — added so a "simple" product can resolve by its own SKU
+ * @property int|null $price
  * @property ProductType $type
  * @property ProductStatus $status
  * @property Carbon|null $created_at_woo
@@ -30,7 +32,7 @@ class Product extends Model
     /** @use HasFactory<ProductFactory> */
     use HasFactory;
 
-    protected $fillable = ['woo_product_id', 'name', 'slug', 'type', 'status', 'created_at_woo', 'synced_at'];
+    protected $fillable = ['woo_product_id', 'name', 'slug', 'sku', 'price', 'type', 'status', 'created_at_woo', 'synced_at'];
 
     protected function casts(): array
     {

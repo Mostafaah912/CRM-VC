@@ -246,3 +246,62 @@ customer_category_purchases rows:                                    0
 عدد صفر همان چیزی است که در P6-01 (`sprint-6.md`, dev verification) قبلاً دیده و ثبت شده بود؛ این تسک فقط **چرایی** آن را با اعداد دقیق روشن کرد، عددی تغییر نکرد چون هیچ کدی اجرا نشد.
 
 **تصمیم لازم از شما:** کدام گزینه‌ی تصمیم ۱ (پیش‌فرض یا ستون‌های `products`)، و آیا اجازه‌ی ساخت Wiring تصمیم ۲ (بدون اجرای زنده) در یک تسک بعدی داده می‌شود؟
+
+---
+
+## رفع — ستون‌های sku/price روی products (تصمیم ۱)، Wiring Sync کاتالوگ (تصمیم ۲)، تلاش اجرای زنده (تصمیم ۳، متوقف‌شده روی یک یافته‌ی تازه)
+
+**تصمیم‌های شما (عیناً اجرا شد):** (۱) ستون‌های Nullable `sku`/`price` به `products` اضافه شود + یک گام Resolve روی `products.sku`. (۲) `SyncEntity` برای Catalog گسترش یابد، با Job/Command idempotent قابل‌اجرای مجدد، هم‌الگوی Orders. (۳) اجرای زنده فقط GET، با Throttle و Page کوچک، بدون نوشتن روی Woo؛ اگر خطا/کندی دیدم متوقف شوم.
+
+### تصمیم ۱ — sku/price روی products (انحراف عمدی از PRD §۹، ثبت‌شده)
+
+PRD §۹ برای `products` ستون `sku`/`price` تعریف نمی‌کند — طبق `sprint-2.md`ی P2-05 (خط ۷۷) عمدی بود. این یک تصمیم صریح کاربر است، نه اختراع من؛ چون PRD §۹ چیز دیگری می‌گوید، طبق دستور در `ARCHITECTURE.md`ی «تصمیم‌های تأییدشده» ثبت شد (پایین‌تر).
+
+**Migration جدید (قابل‌بازگشت):** `2026_09_27_100000_add_sku_price_to_products_table.php` — `sku varchar(80) NULL`، `price bigint NULL`، ایندکس یکتای جزئی `WHERE sku IS NOT NULL` (عیناً همان الگوی `product_variations.sku`).
+
+**یافته‌ی خوش‌شانس:** `ProductDto`/`ProductMapper` (P2-05) از قبل `sku`/`price` را از Payload واقعی Woo می‌خواندند («PRD §۱۰ گام ۳ با sku تنها Resolve می‌کند» — کامنت خودِ `ProductDto`) ولی بین DTO و `ProductInput` (Value Object ماژول Catalog) بی‌صدا دور ریخته می‌شدند چون `products` جایی برای نوشتنشان نداشت. فقط لازم بود این دو فیلد در `ProductInput`، `CatalogSyncService::input()`، و `CatalogService::upsertProduct()` واقعاً جاری شوند — هیچ تغییری در Mapper/DTO لازم نبود.
+
+**گام Resolve تازه (۳.۵، نه بخشی از ۴ گام اصلی PRD §۱۰):** `CatalogService::resolveProductBySku()` بعد از شکست گام ۳ (SKU روی Variation) و پیش از تسلیم امتحان می‌شود. `ResolvedCatalogItem::$variationId` از `int` به `?int` عوض شد (یک محصول Simple هیچ Variation‌ای ندارد). یکتایی SKU حالا **بین دو جدول** چک می‌شود: `assertProductSkuFree()` (تازه) و `assertSkuFree()` (به‌روزشده) هرکدام هم `products` هم `product_variations` را می‌بینند — سه Factory تازه در `CatalogIntegrityException` برای سه جهت تعارض ممکن.
+
+**TEST FIRST:** ۱۹ تست تازه/به‌روزشده — `CatalogServiceTest.php` (۱۱ مورد: ذخیره sku/price، به‌روزرسانی، عدم برخورد با خودش، سه جهت تعارض SKU بین دو جدول، ایندکس دیتابیس، `resolveProductBySku` موفق/ناموفق)، `OrderServiceTest.php` (۳ مورد: STEP 3.5 موفق با variation_id=NULL، اولویت با Variation اگر هر دو موجود باشند، SKU محصول که به هیچ‌جا نمی‌خورد همچنان Unresolved)، `CatalogSyncServiceTest.php` (۱ مورد: Fixture واقعی محصول ۱۰۱ حالا sku='SYN-TEE-001'/price=۴۰۳۸۸۰ را واقعاً ذخیره می‌کند — تأیید سرتاسری، نه فقط واحد). Mutation check دستی (۲ مورد): تغییر SKU در فراخوانی گام ۳.۵ → دقیقاً تست همان گام شکست؛ حذف فراخوانی `assertProductSkuFree` → دقیقاً تست تعارض مربوطه شکست (یکی هم با خطای DB خام به‌جای Exception برنامه، که خودش دلیل وجود Guard است). هر دو بازگردانده شدند.
+
+### تصمیم ۲ — Wiring Sync کاتالوگ
+
+`SyncEntity::Catalog` اضافه شد، ولی **هرگز** به `SyncService::run()` نمی‌رسد (آن سرویس کاملاً برای مکانیزم Cursor/Window سفارش‌ها ساخته شده)؛ یک Guard صریح (`InvalidArgumentException`) اضافه شد تا این دو مسیر هرگز قاطی نشوند. `app/Modules/Sync/Jobs/CatalogSyncJob.php` (تازه) فقط `CatalogSyncService::syncCategories()` سپس `::syncProducts()` را صدا می‌زند — بدون هیچ منطق (Arch Test ماژول Sync هرگونه if/loop را در Jobها ممنوع می‌کند). `hm:sync --entity=catalog` مستقیماً همین Job را صف می‌کند (بدون عبور از `SyncEntityJob`)؛ `--full` برایش بی‌معنی است چون `CatalogSyncService` همیشه یک آینه‌ی کامل است. Scheduler: `Schedule::command('hm:sync', ['--entity' => 'catalog'])->dailyAt('01:30')` — مستقل، چون زنجیره‌ی کامل PRD §۲۲ (P6-09) هنوز ساخته نشده.
+
+**TEST FIRST:** ۱۰ تست تازه (`CatalogSyncJobTest.php` ۵ مورد با Fixtureهای واقعی ضبط‌شده و `SyncServiceTest.php` +۱ مورد برای Guard) + به‌روزرسانی ۹ تست/فایل موجود که فرض «فقط orders» داشتند: `SyncCommandTest.php` (پیام خطا، دو تست جدید برای Dispatch مستقیم، Helper زمان‌بندی جدا برای Orders vs Catalog)، `ReconcileCommandTest.php` («دقیقاً ۲ Task» → ۳)، `SyncLogsControllerTest.php` (فهرست `entities`)، `tests/Arch/SyncCommandBoundaryTest.php` (شمارش `$this->line`/`Schedule::command('hm:sync'`)، `tests/Arch/SyncRunBoundaryTest.php` (فهرست دقیق فایل‌های Job، Regex ارجاع به Service)، `tests/Arch/ReconciliationBoundaryTest.php` (شمارش کل `Schedule::`). همه با دلیل صریح در commit، نه ضعیف‌کردن بی‌توجیه.
+
+### تصمیم ۳ — تلاش اجرای زنده: **متوقف شد روی یک یافته‌ی تازه، نه 429/5xx**
+
+`CatalogSyncJob::dispatchSync()` روی dev واقعاً به WooCommerce زنده وصل شد (GET فقط، `per_page=50`، `rate_limit_per_minute=90`، `max_retries=4` — همان مقادیر از‌قبل‌پیکربندی‌شده، بدون تغییر). بعد از **۱۴ ثانیه**، `syncCategories()` با یک خطای واقعی دیتابیس (نه Woo، نه 429/5xx) شکست خورد:
+
+```
+SQLSTATE[22001]: String data, right truncated: value too long for type character varying(180)
+دسته Woo id=2346، slug واقعی به طول ۱۹۴ نویسه (URL-encoded فارسی)
+```
+
+**بررسی مستقل، فقط‌خواندنی (بدون نوشتن، طبق مجوز GET):** با خواندن مستقیم `products/categories` از Woo (بدون فراخوانی مسیر نوشتن)، از ۱۷۳ دسته‌ی واقعی فروشگاه **دقیقاً ۱ مورد** (id=2346) از سقف ستون `slug varchar(180)` رد می‌شود؛ هیچ `name`ی از سقف `varchar(160)` رد نمی‌شود.
+
+**چرا این «باگ تازه‌ی من» نیست:** خودِ `sprint-2.md`ی P2-05 این را از قبل به‌عنوان یک ریسک شناخته‌شده و **عمداً حل‌نشده** ثبت کرده بود: «نام یا مقدار بیش از عرض ستون خطای DB بلند می‌دهد (عمداً بریده نمی‌شود، برخلاف نام مشتری در P2-04)» — یعنی سازنده‌ی وقت آگاهانه Truncate نکرد و پذیرفت که روی داده‌ی واقعی ممکن است بترکد. تا امروز Sync کاتالوگ هرگز روی داده‌ی زنده اجرا نشده بود (همان تشخیص اصلی این Sprint)، پس این ریسک اولین‌بار همین‌جا واقعاً رخ داد.
+
+**وضعیت دیتابیس بعد از شکست:** بدون تغییر — `products`=۱۲، `product_categories`=۵، `product_variations`=۲۴ (همان داده‌ی Fixture P1-06)، چون کل Batch دسته‌بندی‌ها یک تراکنش است (P2-05) و با شکست کامل Rollback شد. **هیچ نیمه‌نوشته‌ای باقی نماند.**
+
+**چرا اینجا متوقف شدم (طبق روح دستور شما، نه فقط حرفش):** رفع این یک ردیف نیازمند یک تصمیم تازه است (Truncate کردن slug مثل فیلدهای دیگر Sync سفارش‌ها، یا بزرگ‌کردن ستون با Migration جدید، یا رد‌کردن همان یک دسته‌ی خراب و ادامه) — دقیقاً هم‌رده‌ی تصمیم ۱ که قبلاً از شما گرفته شد، نه چیزی که خودم باید حدس بزنم. تا این تصمیم گرفته شود، `syncProducts()` هم هرگز اجرا نشد (چون در `CatalogSyncJob` بعد از `syncCategories()` می‌آید) — یعنی **زیرساخت (تصمیم ۱ و ۲) کامل و سبز است، ولی داده‌ی dev هنوز کاتالوگ واقعی ندارد** و درصد Resolve هنوز همان ۰٪ قبلی است.
+
+**اعداد خواسته‌شده در گزارش (طبق دستور، حتی چون تصمیم ۳ کامل نشد):**
+
+```
+order_items با product_id قابل‌حل — قبل: 0 / 61,358 (0.00%)
+order_items با product_id قابل‌حل — بعد: 0 / 61,358 (0.00%)  (کاتالوگ واقعی هنوز Sync نشده)
+customer_product_purchases:  0 ردیف (بدون تغییر)
+customer_category_purchases: 0 ردیف (بدون تغییر)
+۵٬۷۹۸ ردیف order_items بدون sku: دست‌نخورده، فقط شمارش (طبق دستور صریح شما) — هیچ عملیاتی روی آن‌ها اجرا نشد
+```
+
+هیچ کراس‌چکی روی `customer_product_purchases`/`customer_category_purchases` معنی ندارد چون هر دو هنوز ۰ ردیف‌اند (زیرساخت آماده، دیتای dev بدون تغییر).
+
+**تصمیم لازم از شما (برای بستن نهایی تصمیم ۳):** کدام یک — (الف) Truncate کردن `slug` به ۱۸۰ نویسه در `CategoryMapper`/`CatalogSyncService` (هم‌الگوی Order Sync)، (ب) Migration جدید برای بزرگ‌کردن `product_categories.slug`، یا (ج) رد‌کردن دسته‌ی خراب با Warning و ادامه‌ی بقیه؟ بعد از تصمیم، `CatalogSyncJob::dispatchSync()` دوباره روی dev اجرا و اعداد بالا به‌روزرسانی می‌شوند.
+
+**تست کامل این تسک:** `php artisan test` → ۲۹۷۲/۲۹۷۲ سبز (۱۳٬۷۴۰ Assertion). PHPStan کل پروژه → ۰ خطا. Pint تمیز. هیچ Arch Test ضعیف نشد — هرکدام برای بازتاب یک واقعیت تازه‌ی درست (Job/Schedule/Command تازه) به‌روزرسانی شد، با دلیل صریح.
+
+**فایل‌ها:** Migration تازه (`add_sku_price_to_products_table`)، `app/Modules/Catalog/{Models/Product,Services/{CatalogService,ProductInput,ResolvedCatalogItem},Exceptions/CatalogIntegrityException}.php`، `app/Modules/Sync/{Enums/SyncEntity,Services/{CatalogSyncService,SyncService},Jobs/CatalogSyncJob}.php`، `app/Modules/Orders/Services/OrderService.php`، `app/Console/Commands/SyncCommand.php`، `routes/console.php`، + ۱۰ فایل تست تازه/به‌روزشده.

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Enums\SyncMode;
 use App\Modules\Sync\Enums\SyncStatus;
+use App\Modules\Sync\Jobs\CatalogSyncJob;
 use App\Modules\Sync\Jobs\SyncEntityJob;
 use App\Modules\Sync\Models\SyncCursor;
 use App\Modules\Sync\Models\SyncJob;
@@ -68,6 +69,22 @@ it('refuses an unknown entity with exit code 1, dispatches nothing and does not 
     Queue::assertNothingPushed();
 })->with(['customers', 'products', 'all', 'ORDERS', 'orders,refunds', 'refunds', '']);
 
+// ================================================================== --entity=catalog (P6 decision)
+
+it('dispatches a catalog sync directly, never a SyncEntityJob, and ignores --full', function () {
+    [$code, $output] = syncCommand(['--entity' => 'catalog']);
+
+    expect($code)->toBe(0)->and($output)->toBe("Dispatched sync for catalog\n");
+    Queue::assertPushed(CatalogSyncJob::class, 1);
+    Queue::assertNotPushed(SyncEntityJob::class);
+});
+
+it('dispatches a catalog sync on the sync queue', function () {
+    syncCommand(['--entity' => 'catalog']);
+
+    Queue::assertPushedOn('sync', CatalogSyncJob::class);
+});
+
 it('never queues on the critical queue: that one is for webhooks', function () {
     syncCommand(['--full' => true]);
     syncCommand();
@@ -106,8 +123,14 @@ function scheduledSyncEvents(): array
     return array_values(array_filter(app(Schedule::class)->events(), fn ($event) => str_contains((string) $event->command, 'hm:sync')));
 }
 
+/** @return list<Event> */
+function scheduledOrdersSyncEvents(): array
+{
+    return array_values(array_filter(scheduledSyncEvents(), fn ($event) => preg_match("/--entity='?orders'?(\s|$)/", (string) $event->command) === 1));
+}
+
 it('schedules exactly one hm:sync for orders every 15 minutes in Asia/Tehran', function () {
-    $events = scheduledSyncEvents();
+    $events = scheduledOrdersSyncEvents();
 
     expect($events)->toHaveCount(1)
         ->and($events[0]->expression)->toBe('*/15 * * * *')
@@ -117,7 +140,7 @@ it('schedules exactly one hm:sync for orders every 15 minutes in Asia/Tehran', f
 
 it('schedules a command line the command actually accepts', function () {
     $command = Artisan::all()['hm:sync'];
-    $line = (string) scheduledSyncEvents()[0]->command;
+    $line = (string) scheduledOrdersSyncEvents()[0]->command;
     $arguments = trim(substr($line, strpos($line, 'hm:sync') + strlen('hm:sync')));
 
     $input = new StringInput($arguments);
@@ -127,14 +150,24 @@ it('schedules a command line the command actually accepts', function () {
 });
 
 it('schedules the incremental poll, not a full sync', function () {
-    expect(scheduledSyncEvents()[0]->command)->not->toContain('--full');
+    expect(scheduledOrdersSyncEvents()[0]->command)->not->toContain('--full');
 });
 
 it('leaves overlap protection to the P2-08 run rule and the job\'s uniqueness: the command exits at once', function () {
-    $event = scheduledSyncEvents()[0];
+    $event = scheduledOrdersSyncEvents()[0];
 
     expect($event->withoutOverlapping)->toBeFalse()
         ->and($event->onOneServer)->toBeFalse();
 });
 
-// P2-11 adds the nightly reconciliation; the "exactly two tasks" guard lives in ReconcileCommandTest.
+// ================================================== hm:sync --entity=catalog (P6 decision)
+
+it('schedules exactly one hm:sync for catalog, daily at 01:30 Asia/Tehran', function () {
+    $events = array_values(array_filter(scheduledSyncEvents(), fn ($event) => preg_match("/--entity='?catalog'?(\s|$)/", (string) $event->command) === 1));
+
+    expect($events)->toHaveCount(1)
+        ->and($events[0]->expression)->toBe('30 1 * * *')
+        ->and((string) $events[0]->timezone)->toBe('Asia/Tehran');
+});
+
+// P2-11 adds the nightly reconciliation; the "exactly three tasks" guard lives in ReconcileCommandTest.

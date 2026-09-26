@@ -160,9 +160,14 @@ final class OrderService
     }
 
     /**
-     * PRD §10, in this order and no other: (1) the Woo variation id, when there is one; (2) the Woo product id
-     * together with the SKU; (3) the SKU alone; (4) nothing — the line keeps its SKU and name and is logged.
-     * The database allows one variation per SKU, so no step can match twice and no tie-break exists.
+     * PRD §10's original four steps, in this order and no other: (1) the Woo variation id, when there is
+     * one; (2) the Woo product id together with the SKU; (3) the SKU alone; then, before giving up, one
+     * extra step this project's owner added (P6 decision, ARCHITECTURE.md — NOT part of PRD §10's
+     * original list): (3.5) the SKU alone against a "simple" product's own SKU (`products.sku`), since
+     * PRD never defined how a simple product — which has no variation at all — could ever resolve.
+     * Step (4) nothing — the line keeps its SKU and name and is logged. The database allows one variation
+     * per SKU (and, since the P6 decision, one product per SKU, checked against both tables), so no step
+     * can match twice and no tie-break exists.
      */
     private function resolve(OrderItemInput $item, int $wooOrderId): ?ResolvedCatalogItem
     {
@@ -178,6 +183,10 @@ final class OrderService
 
         if ($resolved === null && $item->sku !== null) {
             $resolved = $this->catalog->resolveVariationBySku($item->sku);
+        }
+
+        if ($resolved === null && $item->sku !== null) {
+            $resolved = $this->catalog->resolveProductBySku($item->sku);
         }
 
         if ($resolved === null) {

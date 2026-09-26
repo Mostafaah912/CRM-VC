@@ -178,6 +178,15 @@ it('still rejects the webhook mode: webhook deliveries start incremental runs (P
     Queue::assertNothingPushed();
 });
 
+it('rejects SyncEntity::Catalog: its window/cursor machinery is Orders-shaped only, catalog runs through CatalogSyncJob', function () {
+    Queue::fake();
+
+    expect(fn () => runService()->run(SyncEntity::Catalog))->toThrow(InvalidArgumentException::class);
+
+    expect(SyncJob::count())->toBe(0);
+    Queue::assertNothingPushed();
+});
+
 // ================================================================== overlapping and stale runs (S-a)
 
 it('refuses to start while a run for the entity is younger than 3600 seconds, changing nothing', function (int $age) {

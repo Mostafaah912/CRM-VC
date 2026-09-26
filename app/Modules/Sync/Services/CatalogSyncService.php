@@ -100,7 +100,7 @@ final class CatalogSyncService
     /** @param  list<VariationInput>  $variations */
     private function input(ProductDto $p, array $variations): ProductInput
     {
-        return new ProductInput($p->wooProductId, $p->name, $p->slug, $p->type, $p->status, $p->createdAtWoo, $p->wooCategoryIds, $variations);
+        return new ProductInput($p->wooProductId, $p->name, $p->slug, $p->type, $p->status, $p->createdAtWoo, $p->wooCategoryIds, $variations, $p->sku, $p->price);
     }
 
     private function variationInput(VariationDto $v): VariationInput

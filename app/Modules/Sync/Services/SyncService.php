@@ -76,6 +76,10 @@ final class SyncService
      */
     public function run(SyncEntity $entity, SyncMode $mode = SyncMode::Incremental): ?SyncJob
     {
+        if ($entity !== SyncEntity::Orders) {
+            throw new InvalidArgumentException('SyncService::run() only supports SyncEntity::Orders; catalog syncs run through CatalogSyncJob, not a cursor/window run.');
+        }
+
         if ($mode === SyncMode::Webhook) {
             throw new InvalidArgumentException('The webhook mode is not run through SyncService: a webhook delivery starts an incremental run.');
         }

@@ -53,7 +53,7 @@ it('renders the sync-logs component with the runs, the current filters and the f
             ->component('system/sync-logs')
             ->has('runs.data')
             ->where('filters', ['status' => null, 'entity' => null])
-            ->where('options', ['statuses' => ['running', 'completed', 'failed', 'partial'], 'entities' => ['orders']]),
+            ->where('options', ['statuses' => ['running', 'completed', 'failed', 'partial'], 'entities' => ['orders', 'catalog']]),
         );
 });
 
