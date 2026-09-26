@@ -119,3 +119,4 @@ Each row links to the sprint archive file; open the file and search the heading 
 | Bugfix         | sprint-6.md | `customers.metrics_dirty` reset (PRD §11 step 11), TEST FIRST — resolves the P5-08 open item                          |
 | P6-01          | sprint-6.md | Customer purchase aggregates (`customer_product_purchases`/`customer_category_purchases`), TEST FIRST                |
 | P6-02          | sprint-6.md | Daily metrics (`daily_metrics`, window UPSERT not TRUNCATE), TEST FIRST — dev cross-check exact match             |
+| P6-03          | sprint-6.md | Cohort snapshots + maturity flag (`cohort_snapshots`, TRUNCATE-rebuild), TEST FIRST — dev cross-check exact match |

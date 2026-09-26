@@ -109,3 +109,43 @@ daily_metrics: SUM(orders_count)=15,716   SUM(revenue)=12,157,406,361   SUM(cust
 **فایل‌ها:** `app/Modules/Analytics/Services/DailyMetricsService.php`، `app/Modules/Analytics/Jobs/BuildDailyMetricsJob.php`، `app/Modules/Analytics/Support/DailyMetricsSummary.php`، `tests/Feature/Modules/Analytics/DailyMetricsServiceTest.php`، `tests/Feature/Modules/Analytics/BuildDailyMetricsJobTest.php`.
 
 **عمداً ساخته نشد:** `analytics:rebuild` کنسول (همان ابهام قبلی)، Cohort (P6-03/۰۴)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-03 — Cohort snapshots + maturity flag
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/CohortSnapshotService.php` (متد `rebuild(?CarbonImmutable $asOf)`) + `app/Modules/Analytics/Jobs/BuildCohortSnapshotsJob.php` (بدون آرگومان، طبق PRD §۲۲) + `app/Modules/Analytics/Support/CohortSnapshotSummary.php`. Migration جدول `cohort_snapshots` از قبل وجود داشت (`2026_09_18_165734_create_cohort_snapshots_table.php`، دقیقاً طبق PRD §۹؛ Docblock خودش هم از قبل «TRUNCATE-and-rebuild table» می‌گفت) — فقط بررسی شد.
+
+**ابهام‌های PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):**
+- **تعداد Period در هر Cohort:** PRD §۱۵ فقط «period 0 = acquisition» می‌گوید، هیچ سقفی مشخص نمی‌کند. ساده‌ترین تفسیر سازگار: از `config('metrics.horizon_years')` (همان افق ۲ساله‌ی CLV، PRD §۱۲/D12) استفاده شد → سقف ۲۴ دوره. دلیل رد گزینه‌ی جایگزین («فقط تا آخرین دوره‌ی واقعاً گذشته‌ی هر Cohort»): این گزینه هر ردیف تولیدشده را همیشه Mature می‌کرد (چون هرگز دوره‌ای فراتر از زمان سپری‌شده تولید نمی‌شد) و ستون `is_mature` را عملاً بلااستفاده می‌گذاشت — دقیقاً برخلاف هشدار «تله Cohort نابالغ» PRD که می‌خواهد سلول نابالغِ ماتریس واقعاً وجود داشته باشد (خاکستری/علامت‌دار، نه غایب و نه صفر). با سقف ثابت، هر Cohort برای هر ۲۵ دوره (۰ تا ۲۴) یک ردیف می‌گیرد؛ Cohortهای جوان برای دوره‌های آینده `is_mature=false` و `active_customers=0` واقعی می‌گیرند.
+- **تناقض فرمول Maturity با توضیح آن:** PRD §۱۵ یک خط بالاتر از فرمول SQL می‌گوید «Cohort واقعاً برای N ماه کامل وجود داشته باشد» (که یعنی عملگر باید `>` باشد، نه `>=`)، ولی خودِ SQL باکس‌شده می‌نویسد `jalali_month_diff(...) >= period_number` (ماه در حال گذر را هم Mature می‌شمارد). فرمول SQL باکس‌شده عیناً پیاده شد (همان اولویتی که در سراسر این کدبیس به SQL باکس‌شده‌ی PRD داده می‌شود، نه توضیح نثری آن — مثلاً `BaseAggregateService` هم SQL §۱۱ را عیناً می‌آورد) — تناقض فقط ثبت شد، حل نشد به‌نفع یکی.
+- **«Revenue» کدام تعریف:** برخلاف `daily_metrics` (P6-02) که سه ستون جدا (`revenue`/`refunds`/`net_revenue`) دارد، اینجا PRD فقط یک ستون `revenue` تعریف کرده. `o.net_revenue` (خالص، بعد از عودت) انتخاب شد — همان مبنایی که `BaseAggregateService`، `DailyMetricsService.net_revenue`، و کل موتور RFM/CLV/Churn روی آن ساخته شده‌اند؛ یک تعریف «واقعی از پول رسیده» در کل Metrics/Analytics.
+- **«سفارش شمرده‌شده»:** عیناً همان تعریف `BaseAggregateService`/P6-02: `is_realized = true AND is_fully_refunded = false AND deleted_at IS NULL` (مشتری نرم‌حذف‌شده هم فیلتر شد) — نه تعریف P6-01 که `is_fully_refunded` را نادیده می‌گیرد.
+
+**وابستگی ترتیب زنجیره (ثبت، نه رفع، همان الگوی مستندسازی P6-02/P5-08):** `cohort_month` مستقیماً از `customer_metrics.cohort_month` خوانده می‌شود، نه دوباره از `orders` محاسبه — یعنی این Job هم به تازه‌بودن خروجی `RecomputeMetricsJob('full')` وابسته است، دقیقاً همان‌طور که PRD §۲۲ ترتیبش داده.
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱۰ تست تازه —
+- `tests/Feature/Modules/Analytics/CohortSnapshotServiceTest.php` (۷ مورد): مقادیر دقیق `cohort_size`/`active_customers`/`retention_rate`/`orders_count`/`revenue`/`cumulative_revenue` روی فیکسچر دو‌مشتری دو‌دوره‌ای؛ سفارش غیر-realized نه مشتری فعال نه Revenue اضافه نمی‌کند؛ سفارش کاملاً‌مرجوعی و نرم‌حذف‌شده حذف می‌شوند؛ مرز ماه شمسی/تهران (سفارش ساعت ۰۰:۱۵ بامداد تهران روز اول ماه بعد، که در UTC خام هنوز روز قبل است، درست به ماه بعد نسبت داده می‌شود)؛ پرچم Maturity (دوره‌ی نرسیده `false`، دوره‌ی مرزی/در-حال-گذر طبق فرمول باکس‌شده `true`)؛ Idempotent؛ بازسازی از صفر (Cohort قدیمیِ دیگر در `customer_metrics` نبود، از جدول حذف می‌شود).
+- `tests/Feature/Modules/Analytics/BuildCohortSnapshotsJobTest.php` (۳ مورد): `ShouldBeUnique`؛ `uniqueFor(600) > timeout(300)`؛ Dispatch واقعی جدول را پر می‌کند.
+
+اجرای اول: هر ۱۰ تست قرمز (`Class ... does not exist`)؛ بعد از پیاده‌سازی، هر ۱۰ سبز — بدون هیچ اصلاح رفتار لازم.
+
+**Mutation check دستی (۲ مورد):** (۱) حذف `AND o.is_fully_refunded = false` → دقیقاً تست «سفارش کاملاً‌مرجوعی» شکست (۶/۷). (۲) تغییر عملگر Maturity از `>=` به `>` → دقیقاً تست Maturity شکست (۶/۷). هر دو بازگردانده شدند، ۱۰/۱۰ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev:**
+
+```
+elapsed_ms = 703
+rows written = 625  (۲۵ Cohort × ۲۵ دوره [۰..۲۴])، min cohort_month=1403-06  max=1405-07
+SUM(cohort_size @ period 0)      = 13,981   مستقیم COUNT(مشتری‌های non-deleted با cohort_month غیرNULL) = 13,981
+SUM(revenue در کل جدول)          = 12,015,968,388   مستقیم SUM(net_revenue) با همان فیلتر = 12,015,968,388
+SUM(orders_count در کل جدول)     = 15,581   مستقیم COUNT(*) با همان فیلتر = 15,581
+```
+
+سه عدد **دقیقاً برابر**. کنترل سلامت اضافه: هیچ ردیفی `cumulative_revenue < revenue` یا `active_customers > cohort_size` نداشت (۰ از ۶۲۵). **یافته‌ی جانبی، بدون نیاز به کاری:** دو سفارش با تاریخ خراب (سال ۱۴۰۴ میلادی، یافته‌ی از‌قبل‌ثبت‌شده در Open Items) هر دو `customer_id = NULL` دارند (سفارش بی‌موبایل)، پس به‌طور طبیعی از این محاسبه بیرون ماندند — بدون نیاز به فیلتر دستی اضافه.
+
+**تست کامل این تسک:** `php artisan test --filter="CohortSnapshotServiceTest|BuildCohortSnapshotsJobTest"` → ۱۰/۱۰ سبز (۳۰ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist. PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/CohortSnapshotService.php`، `app/Modules/Analytics/Jobs/BuildCohortSnapshotsJob.php`، `app/Modules/Analytics/Support/CohortSnapshotSummary.php`، `tests/Feature/Modules/Analytics/CohortSnapshotServiceTest.php`، `tests/Feature/Modules/Analytics/BuildCohortSnapshotsJobTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول، Retention/immature-guard صفحات و Store-level معیارها (Repeat Purchase Rate/N-day retention/Returning revenue share — بخش «معیارهای سطح فروشگاه» PRD §۱۵، مال P6-04)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
