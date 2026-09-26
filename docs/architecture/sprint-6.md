@@ -26,6 +26,8 @@ Split-file convention از Sprint 5 ادامه دارد؛ `ARCHITECTURE.md` فق
 
 **فایل‌ها:** `app/Modules/Metrics/Services/BaseAggregateService.php` (متد تازه + بازنویسی یک پاراگراف Docblock)، `app/Modules/Metrics/Services/MetricsRecomputeService.php` (یک خط فراخوانی + Docblock)، `tests/Feature/Modules/Metrics/BaseAggregateServiceTest.php` (۱ تست تازه)، `tests/Feature/Modules/Metrics/MetricsDirtyResetTest.php` (فایل تازه، ۵ تست).
 
+**⚠ اثر جانبی کشف‌شده هنگام اجرای کامل تست‌ها (بستن Sprint 6، commit جدا):** بعد از این Bugfix، `php artisan test` کامل ۲ تست موجود در `MarkCustomerMetricsDirtyTest.php` را قرمز کرد (`it sets metrics_dirty on the event's customer`، `it never touches another customer's metrics_dirty`) — هر دو حتی تنها هم قرمز بودند، نه فقط در ترکیب با بقیه‌ی Suite. علت: `phpunit.xml` روی محیط تست `QUEUE_CONNECTION=sync` تنظیم کرده؛ این دو تست، برخلاف دو تست خواهر دیگر در همان فایل، `Queue::fake()` نداشتند. بدون آن، `RecomputeMetricsJob::dispatch('dirty')->delay(...)` واقعاً و هم‌زمان (چون Sync، `delay` را نادیده می‌گیرد) همان لحظه اجرا می‌شود — و حالا که Bugfix بالا واقعاً `metrics_dirty` را در پایان Pipeline `false` می‌کند، همان Job هم‌زمان پرچمی را که تست لحظه‌ای پیش `true` کرده بود، دوباره `false` می‌کند، قبل از این‌که Assertion اجرا شود. این یک وابستگی پنهان به همان باگی بود که رفع شد — نه یک رگرسیون در کد Production؛ در Production صف واقعی است، ۵ دقیقه تأخیر دارد، و تا آن زمان Aggregate واقعاً سفارش تازه را دیده، پس ریست‌شدن درست است. رفع: افزودن `Queue::fake()` به همان دو تست (دقیقاً همان الگویی که دو تست خواهرشان از قبل داشتند). `php artisan test` کامل بعد از این رفع: **۲۹۰۹/۲۹۰۹ سبز، ۱۳٬۵۸۱ Assertion**.
+
 ---
 
 ## P6-01 — Customer purchase aggregates
