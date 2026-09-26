@@ -149,3 +149,49 @@ SUM(orders_count در کل جدول)     = 15,581   مستقیم COUNT(*) با �
 **فایل‌ها:** `app/Modules/Analytics/Services/CohortSnapshotService.php`، `app/Modules/Analytics/Jobs/BuildCohortSnapshotsJob.php`، `app/Modules/Analytics/Support/CohortSnapshotSummary.php`، `tests/Feature/Modules/Analytics/CohortSnapshotServiceTest.php`، `tests/Feature/Modules/Analytics/BuildCohortSnapshotsJobTest.php`.
 
 **عمداً ساخته نشد:** `analytics:rebuild` کنسول، Retention/immature-guard صفحات و Store-level معیارها (Repeat Purchase Rate/N-day retention/Returning revenue share — بخش «معیارهای سطح فروشگاه» PRD §۱۵، مال P6-04)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-04 — Retention + immature guard + «داده کافی نیست»
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/RetentionService.php` با سه متد مستقل — `repeatPurchaseRate()`، `returningRevenueShare()`، `nDayRetention(int $days, ?CarbonImmutable $asOf)` — و سه DTO همراه (`RepeatPurchaseRateResult`، `ReturningRevenueShareResult`، `NDayRetentionResult`) در `app/Modules/Analytics/Support/`.
+
+**تصمیم معماری (ابهام حل‌شده، ثبت پیش از کد): بدون Job، بدون Migration، بدون جدول.** برخلاف P6-01/۰۲/۰۳، فهرست Jobهای PRD §۲۲ هیچ Job مشخصی برای این سه معیار ندارد؛ هرکدام یک خواندن ارزان روی جدول‌های از‌قبل‌مادی‌شده (`customer_metrics`/`orders`) است، نه یک Aggregate سنگین سراسری. قانون Dashboard در PRD §۱۸ («هیچ تجمیع سنگینی در لحظه بارگذاری») همان‌طور برآورده می‌شود که صفحات RFM/Churn از قبل برآورده می‌کنند (خواندن مستقیم از `customer_metrics`)، نه با افزودن یک جدول Cache دیگر برای عددهایی به این ارزانی.
+
+**ابهام‌های دیگر PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):**
+- **Maturity اینجا چیست:** فرمول PRD §۱۵ («N-day retention: only over MATURE cohorts (first_order_at <= now() - n days)») یک مفهوم Maturity **روزانه و سطح‌مشتری** است، کاملاً جدا از `cohort_snapshots.is_mature` (P6-03، سطح‌ماه و سطح‌Cohort) — پس این سرویس اصلاً به `cohort_snapshots` سر نمی‌زند؛ Maturity مستقیماً از `customer_metrics.first_order_at` محاسبه می‌شود.
+- **«تله Cohort نابالغ» چطور اعمال شد:** مشتری نابالغ (کمتر از N روز از اولین سفارشش گذشته) کاملاً از محاسبه (هم صورت هم مخرج کسر) حذف می‌شود — حتی اگر از قبل یک سفارش دوم زودهنگام ثبت کرده باشد؛ شامل‌کردنش نرخ را با یک نمونه‌ی ناقص و جهت‌دار متورم می‌کند (تست اختصاصی نوشته شد، پایین).
+- **«داده کافی نیست»:** بدون آستانه‌ی اختراعی (برخلاف Churn که PRD خودش عدد ۲۰۰ می‌دهد) — ساده‌ترین تفسیر: مخرج صفر (هیچ مشتری واجد شرایط/بالغی نیست) یعنی `insufficientData=true` و مقدار نرخ `null`، هرگز یک صفر ساختگی.
+- **Returning Revenue Share در سطح سفارش، نه روز:** برخلاف `DailyMetricsService` (P6-02) که new/repeat را در سطح **روز تقویمی** تفکیک می‌کند، فرمول PRD §۱۵ اینجا دقیقاً لحظه‌ی `first_order_at` را با `ordered_at` مقایسه می‌کند — یعنی سفارش دومِ همان‌روزِ سفارش اول هم «بازگشتی» شمرده می‌شود (برخلاف P6-02). عیناً طبق فرمول پیاده شد؛ تفاوت با P6-02 عمدی و ثبت‌شده است، نه ناهماهنگی.
+- **فیلتر `is_fully_refunded` فقط روی دو متد، نه سه‌تا:** برای `nDayRetention` عیناً همان تعریف `BaseAggregateService` اعمال شد. برای `returningRevenueShare` این فیلتر **عمداً حذف شد** — چون برای سفارش کاملاً‌مرجوعی `net_revenue = total − refunded_total = 0` همیشه برقرار است، پس فیلتر یا نبودنش هیچ تفاوتی در جمع نمی‌گذارد (Mutation Test زیر این را ثابت کرد: حذف فیلتر هیچ تستی را نشکست، چون از اول اثری نداشت — نگه‌داشتنش صرفاً کد بی‌اثر بود).
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱ فایل، ۱۵ تست — `tests/Feature/Modules/Analytics/RetentionServiceTest.php`: مقادیر دقیق هر سه متد روی فیکسچرهای کوچک؛ حذف مشتری نرم‌حذف‌شده و سفارش غیر-realized/کاملاً‌مرجوعی از هر سه؛ مرز Maturity شامل (`first_order_at = asOf − N روز` دقیقاً باید بالغ باشد)؛ حذف کامل مشتری نابالغ حتی با بازگشت زودهنگام (تله Cohort نابالغ)؛ بازگشت بیرون از پنجره‌ی N روزه حذف می‌شود؛ «داده کافی نیست» وقتی مخرج صفر است؛ Idempotent (دو فراخوانی = یک نتیجه، بدون نوشتن چیزی).
+
+**«مرز زمان تهران» در این تسک به چه معناست (توضیح صریح، چون شکل متفاوتی از P6-02/۰۳ دارد):** ریاضی این سرویس روی بازه‌های زمانی مطلق (`INTERVAL 'N day'` روی `timestamptz`) است، نه گروه‌بندی روی روز/ماه تقویمی — پس هیچ مرز تقویمی تهرانی برای شکستن وجود ندارد (۳۰ روز واقعی همیشه ۳۰ روز واقعی است، مستقل از منطقه‌زمانی نمایش). چیزی که واقعاً تست شد: فراخوانی با `$asOf` یک‌بار در Asia/Tehran و یک‌بار در UTC (همان لحظه‌ی مطلق) باید دقیقاً یک نتیجه بدهد — یعنی سرویس منطقه‌زمانیِ نمایشیِ ورودی را نادیده می‌گیرد و فقط لحظه‌ی مطلق مهم است.
+
+**یافته‌ی جانبی حین TEST FIRST (رفع شد، کد Production هرگز اشتباه نبود):** دو Helper تست (`rsSeedMetrics`، `rsOrder`) اول بدون `->utc()` نوشته شدند؛ چون `DB::table()->insert()` هیچ Cast تاریخی مثل مدل Eloquent ندارد و Cast `'datetime'` مدل `Order` هم قبل از فرمت‌کردن منطقه‌زمانی را عوض نمی‌کند، هر دو رقم ساعت محلیِ Asia/Tehran را عیناً به‌عنوان UTC می‌نوشتند (همان تله‌ی مستندشده در ARCHITECTURE.md/P0-05). ۳ تست به‌خاطر همین با اعداد نادرست شکستند؛ رفع با افزودن `->utc()` صریح در هر دو Helper (همان الگویی که `DailyMetricsServiceTest`‌ی P6-02 از قبل داشت). **هیچ خط از `RetentionService.php` نیاز به تغییر نداشت** — باگ فقط در فیکسچر تست بود، نه در منطق سرویس.
+
+**Mutation check دستی (۳ مورد، هرکدام تا رد‌شدن دقیقاً همان تست هدف تکرار شد):** (۱) حذف `AND o.is_fully_refunded = false` از `nDayRetention` → دقیقاً تست «سفارش کاملاً‌مرجوعی» شکست. (۲) عملگر مرز Maturity از `<=` به `<` → دقیقاً تست «مرز شامل» شکست. (۳) سقف پنجره‌ی بازگشت را ۱۰ روز بزرگ‌تر کرد → دقیقاً تست «بیرون از پنجره» شکست. یک مورد چهارم (حذف فیلتر `is_fully_refunded` از `returningRevenueShare`) **هیچ تستی را نشکست** — که خودش تأیید مستقل تصمیم بالا بود (فیلتر همیشه بی‌اثر است)، نه یک شکاف پوشش. همه‌ی موارد بازگردانده شدند، ۱۵/۱۵ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev:**
+
+```
+RepeatPurchaseRate:      eligible=13,981  repeat=1,078   rate=0.0771 (۷٫۷۱٪)
+مستقیم از customer_metrics: eligible=13,981  repeat=1,078   ✓ برابر
+
+ReturningRevenueShare:   total=12,015,968,388  returning=2,013,093,961  share=0.1675 (۱۶٫۷۵٪)
+مستقیم SUM(net_revenue) با همان فیلتر: total=12,015,968,388   ✓ برابر
+
+NDayRetention(30):  mature=13,020  returned=464   rate=0.0356 (۳٫۵۶٪)
+مستقیم: mature=13,020  returned=464   ✓ برابر
+
+NDayRetention(90):  mature=9,956   returned=547   rate=0.0549 (۵٫۴۹٪)  (فقط برای مقایسه آورده شد، Cross-check جدا نگرفت)
+```
+
+سه عدد اصلی **دقیقاً برابر** کوئری مستقل. **سیگنال کسب‌وکاری (نه باگ، طبق یادآوری خودِ اسکیل `gate-check` درباره‌ی نرخ خرید مجدد زیر ۱۰٪):** Repeat Purchase Rate واقعی روی dev ۷٫۷۱٪ است — زیر آستانه‌ی ۱۰٪ — باید به کاربر گزارش شود به‌عنوان یک واقعیت کسب‌وکار، نه یک نشانه‌ی باگ محاسباتی (خود اعداد با کوئری مستقل تأیید شدند).
+
+**تست کامل این تسک:** `php artisan test --filter=RetentionServiceTest` → ۱۵/۱۵ سبز (۳۷ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist. PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/RetentionService.php`، `app/Modules/Analytics/Support/RepeatPurchaseRateResult.php`، `app/Modules/Analytics/Support/ReturningRevenueShareResult.php`، `app/Modules/Analytics/Support/NDayRetentionResult.php`، `tests/Feature/Modules/Analytics/RetentionServiceTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول، صفحات Cohort/Retention UI («سلول نابالغ خاکستری» ماتریس، مال P6-08)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
