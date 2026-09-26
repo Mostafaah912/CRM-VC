@@ -69,3 +69,43 @@ table_sum (SUM(revenue) در customer_product_purchases) = 0
 **فایل‌ها:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php`، `app/Modules/Analytics/Jobs/BuildCustomerPurchaseAggregatesJob.php`، `app/Modules/Analytics/Support/CustomerPurchaseAggregateSummary.php`، `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php`، `tests/Feature/Modules/Analytics/BuildCustomerPurchaseAggregatesJobTest.php`.
 
 **عمداً ساخته نشد (طبق دستور، برای تسک‌های بعدی Sprint 6):** `analytics:rebuild` کنسول، Daily metrics (P6-02)، Cohort (P6-03/۰۴)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-02 — Daily metrics
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/DailyMetricsService.php` (متد `rebuild(int $days, ?CarbonImmutable $asOf)`) + `app/Modules/Analytics/Jobs/BuildDailyMetricsJob.php` (`$days = 3` پیش‌فرض) + `app/Modules/Analytics/Support/DailyMetricsSummary.php`. Migration جدول `daily_metrics` از قبل وجود داشت (`2026_09_18_165733_create_daily_metrics_table.php`، دقیقاً طبق PRD §۹) — فقط بررسی شد، چیزی ساخته نشد.
+
+**ابهام PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):** PRD §۲۲ زنجیره‌ی شبانه را `BuildDailyMetricsJob(3)` می‌نویسد ولی معنای عدد ۳ را جایی توضیح نمی‌دهد. ساده‌ترین تفسیر سازگار با بقیه‌ی PRD انتخاب شد: یک «پنجره‌ی اصلاح» ۳روزه (امروز + دو روز قبل)، هم‌خانواده با الگوی `metrics:recompute --dirty` (PRD §۱۱) — روزهای اخیر ممکن است بعداً عوض شوند (عودت دیرهنگام، Sync دیرهنگام)، روزهای قدیمی‌تر پایدارند. برخلاف P6-01 (TRUNCATE کامل)، این‌جا فقط پنجره‌ی درخواستی UPSERT می‌شود (`ON CONFLICT (date) DO UPDATE`) و هر روز قدیمی‌تر دست‌نخورده می‌ماند — چون رفتار `BuildDailyMetricsJob(3)` بازسازی کل تاریخچه نیست.
+
+**تصمیم‌های دیگر (طبق دستور، هرکدام با دلیل):**
+- «سفارش شمرده‌شده» عیناً همان تعریف `BaseAggregateService` (PRD §۱۱): `is_realized = true AND is_fully_refunded = false AND deleted_at IS NULL` — نه تعریف P6-01 (که `is_fully_refunded` را فیلتر نمی‌کند)، چون `daily_metrics` همان اعداد Trend داشبورد را تغذیه می‌کند که باید با بقیه‌ی Metrics یکی باشند.
+- روز تقویمی = روز شمسی/میلادی **محلی تهران** (`ordered_at AT TIME ZONE 'Asia/Tehran'`), نه UTC — طبق CLAUDE.md §۲. `jalali_date` با همان تابع PL/pgSQL `to_jalali()` نوشته می‌شود که `BaseAggregateService` برای `cohort_month` استفاده می‌کند.
+- `customers_new`/`customers_repeat`/`revenue_new`/`revenue_repeat` از روی `customer_metrics.first_order_at` تشخیص داده می‌شوند (نه محاسبه‌ی دوباره از `orders`) — یعنی این Job به‌صراحت به تازه‌بودن `customer_metrics` وابسته است؛ همان دلیلی که PRD §۲۲ ترتیب زنجیره را `RecomputeMetricsJob('full') → BuildCustomerPurchaseAggregatesJob → BuildDailyMetricsJob(3)` گذاشته. اگر این Job جدا از زنجیره و روی `customer_metrics` بیات اجرا شود، مشتری واقعاً-تازه ممکن است تا بازمحاسبه‌ی بعدی «بازگشتی» شمرده شود — ثبت شد، رفع نشد (همان الگوی مستندسازی `RebuildAllSegmentsJob`).
+- Queue = `metrics` (همان انتخاب P5-08/P6-01، چون Horizon فقط `critical/sync/metrics/ai/default` را Supervise می‌کند).
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱۵ تست تازه —
+- `tests/Feature/Modules/Analytics/DailyMetricsServiceTest.php` (۱۱ مورد): سفارش غیر-realized حساب نمی‌شود؛ روز بدون سفارش هم یک ردیف صفر می‌گیرد (نه غایب)؛ مرز روز تهران (سفارش ساعت ۰۱:۰۰ بامداد ۱۶ام به‌وقت تهران درست زیر ۱۶ام می‌رود، نه ۱۵ام UTC)؛ مقادیر دقیق revenue/refunds/net_revenue/aov روی یک روز دو-سفارشی؛ سفارش کاملاً‌مرجوعی مثل Base Aggregates حذف می‌شود؛ سفارش نرم‌حذف‌شده حذف می‌شود؛ تفکیک new/repeat از روی `first_order_at`؛ یک مشتری با دو سفارش هم‌روز یک‌بار شمرده می‌شود و new درست تشخیص داده می‌شود؛ Idempotent (دو اجرا = یک نتیجه)؛ روز خارج از پنجره دست‌نخورده می‌ماند؛ پنجره‌ی چندروزه شامل روز میانیِ بدون سفارش هم می‌شود.
+- `tests/Feature/Modules/Analytics/BuildDailyMetricsJobTest.php` (۴ مورد): `ShouldBeUnique`؛ `uniqueFor(600) > timeout(300)`؛ پیش‌فرض `$days=3`؛ Dispatch واقعی جدول را پر می‌کند.
+
+اجرای اول: هر ۱۵ تست قرمز (`Class ... does not exist`)؛ بعد از پیاده‌سازی، هر ۱۵ سبز — بدون هیچ اصلاح رفتار لازم (طراحی اول درست بود).
+
+**Mutation check دستی (۲ مورد):** (۱) حذف `AND o.is_fully_refunded = false` → دقیقاً همان تستِ «سفارش کاملاً‌مرجوعی» شکست (۱۰/۱۱). (۲) گروه‌بندی روز را از `(ordered_at AT TIME ZONE 'Asia/Tehran')::date` به `(ordered_at)::date` (UTC خام) تغییر داد → دقیقاً تست مرز روز تهران شکست (۱۰/۱۱). هر دو بازگردانده شدند، ۱۵/۱۵ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev (پنجره‌ی ۷۳۵ روزه، از ۱۴۰۳/۰۷/۰۱ یعنی همان مبدأ GATE 1 تا امروز — عمداً همان ۱۱ سفارش خیلی‌قدیمیِ تاریخ‌غلط، یافته‌ی از‌قبل‌ثبت‌شده‌ی P2 با تاریخ سال ۱۴۰۴ در ستون میلادی، بیرون از این پنجره ماندند):**
+
+```
+elapsed_ms = 572
+daily_metrics rows written = 735 (کل پنجره، شامل روزهای بدون سفارش)
+daily_metrics: SUM(orders_count)=15,716   SUM(revenue)=12,157,406,361   SUM(customers_new)=13,973
+مستقیم از orders (همان فیلتر): COUNT(*)=15,716   SUM(total)=12,157,406,361
+مستقیم از customer_metrics.first_order_at در همین پنجره: 13,973
+```
+
+سه عدد **دقیقاً برابر** بودند، بدون هیچ اختلاف. کنترل داخلیِ اضافه: هیچ ردیفی در `daily_metrics` نقض `revenue_new + revenue_repeat = revenue` یا `customers_new + customers_repeat = customers_total` یا `revenue_repeat < 0` نداشت (۰ از ۷۳۵).
+
+**تست کامل این تسک:** `php artisan test --filter="DailyMetricsServiceTest|BuildDailyMetricsJobTest"` → ۱۵/۱۵ سبز (۳۷ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist (همان معافیت گسترده‌ی P6-01). PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/DailyMetricsService.php`، `app/Modules/Analytics/Jobs/BuildDailyMetricsJob.php`، `app/Modules/Analytics/Support/DailyMetricsSummary.php`، `tests/Feature/Modules/Analytics/DailyMetricsServiceTest.php`، `tests/Feature/Modules/Analytics/BuildDailyMetricsJobTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول (همان ابهام قبلی)، Cohort (P6-03/۰۴)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
