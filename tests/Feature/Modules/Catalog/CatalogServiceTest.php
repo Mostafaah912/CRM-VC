@@ -175,6 +175,26 @@ it('writes a category batch atomically: one bad row rolls the whole batch back',
     expect(ProductCategory::count())->toBe(0);
 });
 
+// ============================================ column widths vs real Woo/WordPress limits (bugfix)
+
+it('stores a 194-character slug — the exact real Woo category (id 2346) that broke live sync', function () {
+    $slug = str_repeat('a', 194);
+
+    catalog()->upsertCategories([category(2346, 'دسته واقعی', $slug)]);
+
+    expect(ProductCategory::sole()->slug)->toBe($slug);
+});
+
+it('stores a name and slug at the 200-character boundary, WordPress\'s own wp_terms column width', function () {
+    $name = str_repeat('ب', 200);
+    $slug = str_repeat('a', 200);
+
+    catalog()->upsertCategories([category(31, $name, $slug)]);
+
+    $row = ProductCategory::sole();
+    expect($row->name)->toBe($name)->and($row->slug)->toBe($slug);
+});
+
 it('is backed by the database: a second row for a woo_category_id is refused', function () {
     catalog()->upsertCategories([category(31)]);
 
