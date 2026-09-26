@@ -177,6 +177,30 @@ it('returns the number of customers processed', function () {
     expect(app(BaseAggregateService::class)->computeAll(metricRunId()))->toBe(3);
 });
 
+it('resetDirtyFlag clears metrics_dirty only for customers touched by the given metric run', function () {
+    $processed = Customer::factory()->create(['metrics_dirty' => true]);
+    $runId = metricRunId();
+    DB::table('customer_metrics')->insert([
+        'customer_id' => $processed->id,
+        'total_orders' => 0,
+        'metric_run_id' => $runId,
+    ]);
+
+    $otherRunId = metricRunId();
+    $untouched = Customer::factory()->create(['metrics_dirty' => true]);
+    DB::table('customer_metrics')->insert([
+        'customer_id' => $untouched->id,
+        'total_orders' => 0,
+        'metric_run_id' => $otherRunId,
+    ]);
+
+    $affected = app(BaseAggregateService::class)->resetDirtyFlag($runId);
+
+    expect($affected)->toBe(1)
+        ->and($processed->refresh()->metrics_dirty)->toBeFalse()
+        ->and($untouched->refresh()->metrics_dirty)->toBeTrue();
+});
+
 it('runs a metric_runs row through its full lifecycle: start, finish and fail', function () {
     $service = app(MetricRunService::class);
 

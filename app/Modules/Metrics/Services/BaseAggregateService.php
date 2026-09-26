@@ -18,9 +18,10 @@ use Illuminate\Support\Facades\DB;
  * says otherwise (PRD D2); the choice is a fixed, config-selected SQL literal, never request input.
  *
  * This step only ever writes the columns it owns (identity + raw aggregates). RFM/CLV/churn/lifecycle
- * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. It also never
- * touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not just
- * this step) has recomputed a customer, which is P4-07's job.
+ * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. `upsert()` itself
+ * never touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not
+ * just this step) has recomputed a customer, via {@see resetDirtyFlag()} (PRD §11 step 11), called by
+ * `MetricsRecomputeService::run()` after every later step.
  *
  * `$asOf` (P4-08, Gate 2): `recency_days` is bound to this instant, never Postgres's own `NOW()` —
  * a literal NOW() can never be reproduced by a test asserting against a fixture frozen at a fixed
@@ -40,6 +41,28 @@ final class BaseAggregateService
     public function computeDirty(int $metricRunId, ?CarbonImmutable $asOf = null): int
     {
         return $this->upsert($metricRunId, dirtyOnly: true, asOf: $asOf ?? CarbonImmutable::now());
+    }
+
+    /**
+     * PRD §11 step 11. Clears `metrics_dirty` for exactly the customers this run actually wrote a
+     * `customer_metrics` row for (identified by `metric_run_id`, set by {@see upsert()} above) —
+     * never "every dirty customer", because a dirty run only upserted the ones that were dirty, and a
+     * full run upserted everyone, so `metric_run_id = $metricRunId` already means "processed by this
+     * run" for both modes without tracking anything new. A customer excluded from the upsert entirely
+     * (soft-deleted) keeps whatever `metrics_dirty` value it already had.
+     */
+    public function resetDirtyFlag(int $metricRunId): int
+    {
+        return DB::affectingStatement(
+            <<<'SQL'
+                UPDATE customers c SET metrics_dirty = false
+                FROM customer_metrics cm
+                WHERE cm.customer_id = c.id
+                  AND cm.metric_run_id = ?
+                  AND c.metrics_dirty = true
+                SQL,
+            [$metricRunId],
+        );
     }
 
     private function upsert(int $metricRunId, bool $dirtyOnly, CarbonImmutable $asOf): int
