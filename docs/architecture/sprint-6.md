@@ -195,3 +195,54 @@ NDayRetention(90):  mature=9,956   returned=547   rate=0.0549 (۵٫۴۹٪)  (ف�
 **فایل‌ها:** `app/Modules/Analytics/Services/RetentionService.php`، `app/Modules/Analytics/Support/RepeatPurchaseRateResult.php`، `app/Modules/Analytics/Support/ReturningRevenueShareResult.php`، `app/Modules/Analytics/Support/NDayRetentionResult.php`، `tests/Feature/Modules/Analytics/RetentionServiceTest.php`.
 
 **عمداً ساخته نشد:** `analytics:rebuild` کنسول، صفحات Cohort/Retention UI («سلول نابالغ خاکستری» ماتریس، مال P6-08)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## تشخیص — چرا هیچ‌کدام از ۶۱٬۳۵۸ ردیف order_items روی dev، product_id قابل‌حل ندارد (بدون کد، طبق دستور صریح توقف)
+
+**درخواست:** رفع باگی که P6-01 (aggregates خالی)، P6-05 (Affinity) و سگمنت‌های محصول‌محور را می‌شکند. مرحله‌ی ۱ (تشخیص، فقط خواندن) کامل شد؛ مرحله‌ی ۲ (رفع) طبق دستور صریح متوقف شد چون رفع واقعی نیازمند اجرای زنده روی WooCommerce است — این بخش فقط تشخیص + برنامه‌ی رفع را ثبت می‌کند، **هیچ کد/Migration/Jobی نوشته نشد**.
+
+### علت اصلی (۱۰۰٪ از ۶۱٬۳۵۸ ردیف): کاتالوگ واقعی Woo هرگز روی dev Sync نشده
+
+با کوئری مستقیم و خواندن کد تأیید شد:
+
+- `products` روی dev **۱۲ ردیف** دارد، همه با `woo_product_id` بین ۳۰۰۰ تا ۳۰۱۱ و `synced_at` ثابت `2026-06-30 08:30:00`؛ `product_variations` **۲۴ ردیف** با `woo_variation_id` ۴۰۰۰۰-۴۰۰۲۳ و SKUهایی مثل `HM-00-S`. این‌ها عیناً `database/seeders/DemoDataSeeder.php:154` (`'woo_product_id' => 3000 + $p`) هستند — یعنی داده‌ی Fixture تست Gate 2، نه کاتالوگ واقعی فروشگاه.
+- `order_items` واقعی (۶۱٬۳۵۸ ردیف) SKUهای واقعی مثل `hmp-7614`/`hmp-6072` دارند (۱٬۹۱۱ SKU یکتا) — **صفر** تطابق با ۲۴ SKU فیکسچر بالا (`JOIN order_items ON sku = product_variations.sku` → ۰ ردیف).
+- `sync_cursors` روی dev **فقط یک ردیف دارد: `orders`**. هیچ Cursor/Sync-jobی برای `products`/`variations`/`categories` هرگز اجرا نشده.
+- `app/Modules/Sync/Enums/SyncEntity.php` امروز **فقط `Orders`** دارد؛ کامنت خودِ فایل صریح است: «catalog and customers are not run through here yet». `php artisan hm:sync --entity=products` هم امروز اجرا نمی‌شود: `SyncCommand.php` پیام ثابت `Unknown entity. Supported: orders.` می‌دهد.
+- **`CatalogSyncService` (ساخته‌شده در P2-05، طبق `sprint-2.md` با ۱۰۳۶ تست سبز و Mutation check کامل) هرگز از هیچ‌جای اپلیکیشن صدا زده نمی‌شود** — `grep -rln CatalogSyncService app/ routes/` فقط خودِ فایل را برمی‌گرداند. این عمدی و مستند بود: خودِ P2-05 زیر «آنچه ساخته نشد» می‌گوید «SyncService/Job/Cursor/Window» برای کاتالوگ ساخته نشد؛ P2-08 صریح می‌گوید «Sync دسته‌بندی/محصول/مشتری در این Run» عمداً نیست؛ P2-10 هم فقط `orders` را Schedule کرده. **این یک باگ نیست — یک تسک Backlog است که هرگز به Job/Command سطح Sprint 2 نرسید**، نه خطای پیاده‌سازی.
+
+### علت دوم، ساختاری (بخشی از ردیف‌ها را حتی بعد از Sync واقعی هم می‌بندد)
+
+- `products` ستون `sku`/`price` ندارد؛ فقط `product_variations` دارد. الگوریتم ۴مرحله‌ای Resolve (`OrderService::resolve()`, PRD §۱۰) فقط با `product_variations` کار می‌کند (`resolveVariationByWooId`/`ByProductAndSku`/`BySku`) — هرگز مستقیم با `products`.
+- طبق `sprint-2.md`‌ی P2-05 (خط ۷۷) محصول Woo از نوع `simple` هیچ ردیف `product_variations`ی نمی‌گیرد؛ P2-06 (خط ۹۳) همین را «محدودیت شناخته‌شده» می‌نامد و صراحتاً می‌گوید «⚠ باید قبل از P2-06 تصمیم‌گیری شود» — این تصمیم هرگز گرفته نشد (همان Open Item موجود در ARCHITECTURE.md، P2-05/P2-06). یعنی حتی بعد از یک Sync واقعیِ کامل، **خط سفارش هر محصول Simple همچنان NULL می‌ماند**، مگر این تصمیم گرفته شود.
+
+### محدودیت سوم: داده‌ی خام Woo برای Backfill محلی نصفه‌کاره باقی مانده
+
+`order_items` هرگز شناسه‌ی خام Woo (`woo_product_id`/`woo_variation_id` که Woo در Payload می‌فرستد) را ذخیره نمی‌کند — فقط ستون‌های FK حل‌شده (که امروز همه NULL‌اند). چیزی که واقعاً باقی مانده:
+
+```
+کل order_items:            61,358
+با sku غیر NULL:            55,560  (۹۰٫۵۵٪) — بعد از Sync واقعی، از مرحله‌ی ۲/۳ Resolve قابل بازیابی
+با sku NULL:                 5,798  (۹٫۴۵٪)  — هیچ داده‌ای برای Resolve محلی باقی نمانده؛ فقط با Re-sync از Woo (و Migration جدید برای نگه‌داشتن id خام) قابل حل است
+```
+
+پس یک Backfill محلی صرف (بدون Re-sync سفارش‌ها) حداکثر تا ۹۰٫۵۵٪ می‌تواند برود، هرگز ۱۰۰٪.
+
+### برنامه‌ی رفع (سه تصمیم، به ترتیب وابستگی — هیچ‌کدام امروز اجرا نشد)
+
+1. **تصمیم معماری (نیاز به تأیید شما، نه من): محصول Simple چطور Resolve شود؟** یا (الف) یک Variation پیش‌فرض مصنوعی (`woo_variation_id = NULL`) با SKU/قیمت خودِ محصول در زمان Sync ساخته شود، یا (ب) ستون‌های `sku`/`price` مستقیم به `products` اضافه شود و الگوریتم ۴مرحله‌ای یک مرحله‌ی جدید (`resolveProductBySku`) بگیرد. هر دو Migration جدید لازم دارند؛ PRD ساکت است و پروژه دوبار (P2-05 و P2-06) همین تصمیم را عمداً به انسان واگذار کرده — من هم اختراع نکردم.
+2. **Wiring Sync کاتالوگ (بی‌خطر، بدون تماس زنده — می‌توانم بسازم):** افزودن `SyncEntity::Categories/Products/Variations` (یا یک Case ترکیبی `Catalog`، چون `CatalogSyncService` همین سه را با هم انجام می‌دهد)، یک Job نازک هم‌الگوی `SyncEntityJob`/P2-08، و ثبت در `hm:sync`/Scheduler — دقیقاً همان الگوی Orders. TEST FIRST با `FakeWooClient`، بدون هیچ تماس زنده. این بخش مستقل از تصمیم ۱ است و امن است.
+3. **اجرای واقعی روی فروشگاه زنده Woo:** بعد از (۱) و (۲)، Sync واقعی باید یک‌بار روی دیتابیس dev اجرا شود تا کاتالوگ واقعی جایگزین Fixture شود. این اجرای زنده (تماس API واقعی، حجم/زمان نامعلوم روی کاتالوگ واقعی فروشگاه) دقیقاً همان نوع اقدامی است که طبق دستور شما نباید بدون تأیید صریح انجام شود — **متوقف شدم اینجا**. بعد از تأیید و اجرا، هیچ Backfill جداگانه‌ای لازم نیست: `BuildCustomerPurchaseAggregatesJob` (P6-01) از قبل idempotent است و از صفر از روی `order_items.product_id` تازه بازسازی می‌شود.
+
+### کراس‌چک این تشخیص (بدون هیچ Sync/Backfill، فقط برای اثبات صفر بودن Baseline)
+
+```
+customer_product_purchases rows (بعد از rerun P6-01 روی همین داده): 0
+customer_category_purchases rows:                                    0
+درصد order_items با product_id قابل‌حل:                              0.00% (0 / 61,358)
+```
+
+عدد صفر همان چیزی است که در P6-01 (`sprint-6.md`, dev verification) قبلاً دیده و ثبت شده بود؛ این تسک فقط **چرایی** آن را با اعداد دقیق روشن کرد، عددی تغییر نکرد چون هیچ کدی اجرا نشد.
+
+**تصمیم لازم از شما:** کدام گزینه‌ی تصمیم ۱ (پیش‌فرض یا ستون‌های `products`)، و آیا اجازه‌ی ساخت Wiring تصمیم ۲ (بدون اجرای زنده) در یک تسک بعدی داده می‌شود؟
