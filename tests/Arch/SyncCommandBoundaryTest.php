@@ -18,14 +18,16 @@ function syncCommandFile(): string
 /*
 | The list below grows one file per sprint that adds its own top-level command (same pattern as
 | CustomerListBoundaryTest's route count): P4-07 added MetricsRecompute (`metrics:recompute`, PRD
-| §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile.
+| §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile. P6-09 added
+| NightlyChainCommand (`hm:nightly-chain`, PRD §22's actual full chain).
 */
-it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and P4-07\'s metrics:recompute, nothing else under app/Console', function () {
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute and P6-09\'s hm:nightly-chain, nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
         'app/Console/Commands/CatalogDryRunCommand.php',
         'app/Console/Commands/MetricsRecompute.php',
+        'app/Console/Commands/NightlyChainCommand.php',
         'app/Console/Commands/ReconcileCommand.php',
         'app/Console/Commands/ResolveOrderItemsCommand.php',
         'app/Console/Commands/SyncCommand.php',
@@ -97,15 +99,14 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
         ->and($service)->not->toContain('JalaliDate');
 });
 
-it('registers the hm:sync poll in routes/console.php, with no overlap or server flags (P2-11/P6 add more entries beside it)', function () {
+it('registers only the hm:sync orders poll in routes/console.php, with no overlap or server flags (P6-09: catalog moved inside hm:nightly-chain)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
 
-    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(2)
+    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
-        ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'catalog'])")
-        ->and($console)->toContain('->dailyAt(')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
+        ->and($console)->not->toContain("'--entity' => 'catalog'")
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 

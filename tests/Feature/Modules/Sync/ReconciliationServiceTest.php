@@ -449,6 +449,26 @@ it('dispatches nothing while no month is complete', function () {
     Queue::assertNothingPushed();
 });
 
+it('dispatches only the last N complete months (P6-09\'s nightly chain step), on the sync queue', function () {
+    Queue::fake();
+
+    $months = reconService(new WooOrderTotalsSimulator([]))->dispatchRecentMonths(2);
+
+    expect($months)->toBe(['1403-08', '1403-09']);
+    Queue::assertPushed(ReconcileMonthJob::class, 2);
+    Queue::assertNotPushed(ReconcileMonthJob::class, fn (ReconcileMonthJob $job) => $job->jalaliMonth === '1403-07');
+});
+
+it('caps dispatchRecentMonths at however many complete months actually exist', function () {
+    Queue::fake();
+    $this->travelTo(CarbonImmutable::parse('2024-10-25 12:00:00', 'UTC')); // only 1403-07 is complete
+
+    $months = reconService(new WooOrderTotalsSimulator([]))->dispatchRecentMonths(2);
+
+    expect($months)->toBe(['1403-07']);
+    Queue::assertPushed(ReconcileMonthJob::class, 1);
+});
+
 // ================================================================== GATE 1 is checkable — and never passes by default
 
 function reconRow(string $month, ?ReconciliationStatus $status, array $overrides = []): ReconciliationReportModel

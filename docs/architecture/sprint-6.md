@@ -687,3 +687,72 @@ Affinity: category=۱۰ جفت، product=۱۰ جفت، basket=۱۰ جفت (هر�
 تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرهای Analytics، `DrillRequest`) → ۰ خطا. Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق (شامل تولید خودکار helperهای Wayfinder برای مسیرهای تازه: `resources/js/routes/analytics/index.ts`).
 
 **فایل‌ها:** `app/Http/Controllers/Analytics/{CohortPageController,RetentionPageController,AffinityPageController}.php` (تازه)، `app/Modules/Analytics/Services/RetentionService.php` (+`summary()`)، `app/Modules/Analytics/Services/AffinityService.php` (+`topAll()`)، `app/Modules/Analytics/Services/DrillService.php` (+`cohort_period`, `affinity_pair`)، `app/Http/Requests/DrillRequest.php` (+پارامترهای تازه)، `routes/internal.php` (+۳ مسیر)، `resources/js/pages/analytics/{cohort,retention,affinity}.tsx` (تازه)، `resources/js/types/analytics.ts` (تازه)، تست‌ها: `tests/Feature/Http/Analytics/*ControllerTest.php` (تازه) + افزوده به `RetentionServiceTest.php`, `AffinityServiceTest.php`, `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۸ به ۲۱).
+
+## P6-09 — Full scheduler chain
+
+خواندن: ARCHITECTURE.md (ایندکس)، sprint-6.md (P6-01..08 — فهرست کامل جاب‌های موجود و ریسک‌های ثبت‌شدهٔ وابستگی)، PRD §۲۲ کامل (صف‌ها، لیست Jobها، Scheduler دقیق، دلیل صریح استفاده از `Bus::chain`).
+
+### ابهام‌ها و تناقض‌ها — همه صریحاً اینجا، نه حدس
+
+۱. **PRD دربارهٔ رفتار شکست ساکت نیست — دستور «اگر PRD ساکت است، log کن و ادامه بده» اینجا اعمال نشد.** متن خود PRD §۲۲: «ترتیب حیاتی است. `Bus::chain` در اولین شکست متوقف می‌شود — بهتر است چیزی اجرا نشود تا با داده ناقص اجرا شود.» این یک تصمیم صریح PRD است، نه سکوت؛ پس رفتار پیش‌فرض خود `Bus::chain` (توقف در اولین شکست، رد شدن از بقیه) عیناً استفاده شد — فقط یک `->catch()` برای لاگ‌کردن خطا اضافه شد (برای مشاهده‌پذیری، نه برای تغییر رفتار توقف).
+۲. **«Customers» به‌عنوان یک مرحلهٔ جدا در زنجیرهٔ PRD آمده، ولی هیچ Job/Entity جداگانه‌ای برایش وجود ندارد.** `SyncEntity` فقط دو مقدار دارد: `Orders`, `Catalog` — با یک کامنت صریح در کد خودش: «customers are not run through here yet». بررسی شد: هویت مشتری (`CustomerIdentityService`) به‌عنوان اثر جانبی همان Sync سفارش‌ها (`OrderSyncService`) ساخته/به‌روز می‌شود، نه از یک endpoint جدای Woo. تصمیم: مرحلهٔ «Customers» زنجیره با مرحلهٔ Orders sync موجود پوشش داده می‌شود؛ یک `SyncEntity::Customers` جعلی ساخته نشد (خارج از Scope این تسک — تغییر ماژول Sync).
+۳. **«ReconcileJob(2)» — کدام Job، و «۲» یعنی چه؟** لیست کلی Jobهای PRD §۲۲ نامی به‌اسم «ReconcileJob» می‌آورد؛ کلاس واقعی از P2-11 `ReconcileMonthJob` است (یک ماه در هر Job). با قیاس با `BuildDailyMetricsJob(3)` (که PRD همان‌جا آرگومانش را می‌نویسد)، «۲» به «۲ ماه شمسی کامل اخیر» تفسیر شد — یک بازبینی شبانهٔ ارزان، نه کل تاریخچه (`hm:reconcile --all` که هر شب همهٔ ماه‌ها را دوباره می‌خواند، از سال ۱۴۰۳). متد/Job تازه ساخته شد: `ReconciliationMonths::lastN()`, `ReconciliationService::dispatchRecentMonths()`, `ReconcileRecentMonthsJob` — همان الگوی دقیق `dispatchAllMonths()`/`ReconcileMonthJob` موجود، فقط محدود به N ماه آخر.
+۴. **PRD §۲۲ شش Job نام می‌برد که هنوز ساخته نشده‌اند:** `GenerateDailyBriefJob`, `GenerateWeeklyReviewJob` (هر دو AI Analyst، Sprint 7، شروع نشده)، `PruneLogsJob`, `HealthCheckJob`, `backup:run`, `horizon:snapshot` (هیچ‌کدام در PRD §۲۵ به یک تسک بک‌لاگ نگاشت نشده‌اند). زمان‌بندی نشدند — چیزی برای زمان‌بندی وجود ندارد؛ به‌عنوان Open Item ثبت شد (ARCHITECTURE.md)، نه نادیده گرفته شد.
+۵. **یافتهٔ جانبی واقعی، نه فرضی — پیکربندی Horizon/Queue قدیمی و اشتباه بود.** `config/horizon.php`'s تنها supervisor مشترک (پوشش‌دهندهٔ هر ۵ صف) هنوز `timeout => 60` از Sprint 0 بود؛ `config/queue.php`'s `retry_after` هم `330` بود (مقدار P2-11، فقط برای تایم‌اوت ۳۰۰ ثانیه‌ای `ReconcileMonthJob` تنظیم‌شده). هیچ‌کدام وقتی `RecomputeMetricsJob`/`BuildAffinityJob` با تایم‌اوت ۹۰۰ ثانیه اضافه شدند (P4-07/P6-05) به‌روز نشدند. این یک Open Item از‌پیش‌ثبت‌شده در ARCHITECTURE.md بود («باید قبل از فعال‌سازی scheduler تولید حل شود») — دقیقاً همین تسک است. `retry_after` زیر تایم‌اوت یک Job یعنی Redis یک Job هنوز-در-حال‌اجرا را دوباره در دسترس می‌گذارد؛ برخلاف قفل `ShouldBeUnique` (که فقط جلوی dispatch دوباره را می‌گیرد، نه popکردن دوباره از صف)، این واقعاً منجر به اجرای دوبارهٔ همان Job می‌شود. رفع: `timeout` 60→900 (برابر بلندترین Job)، `retry_after` 330→930 (۳۰ ثانیه بیشتر — همان قاعدهٔ قبلی). تست رگرسیون: `ReconcileMonthJobTest` حالا `retry_after` را در برابر تایم‌اوت هر Job سنگین در کل پروژه چک می‌کند، نه فقط ماژول Sync.
+
+### پیاده‌سازی
+
+`hm:nightly-chain` (`app/Console/Commands/NightlyChainCommand.php`) — یک `Bus::chain` واحد، بدون هیچ منطقی جز چینش (CLAUDE.md §۱/§۵)، دقیقاً به ترتیب PRD §۲۲:
+
+```
+CatalogSyncJob
+SyncEntityJob(Orders, Incremental)
+RecomputeMetricsJob('full')
+BuildCustomerPurchaseAggregatesJob
+BuildDailyMetricsJob(3)
+BuildCohortSnapshotsJob
+RebuildAllSegmentsJob
+ReconcileRecentMonthsJob(2)
+```
+
+Orders sync در زنجیره «Incremental» است، نه «Full»: Poll هر ۱۵ دقیقهٔ موجود (بدون تغییر) از قبل سفارش‌ها را تازه نگه می‌دارد؛ این مرحله فقط چند دقیقهٔ آخر قبل از محاسبهٔ متریک را جبران می‌کند — یک Full هر شب («بازخوانی کامل تاریخچه») نه در PRD §۲۳ («Incremental Sync <۶۰s»، نه Full) هدف‌گذاری شده و نه لازم.
+
+Scheduler (`routes/console.php`): `Schedule::command('hm:nightly-chain')->dailyAt('03:00')` جایگزین دو ورودی مستقل قبلی شد (`hm:sync --entity=catalog` در ۰۱:۳۰ و `hm:reconcile --all` در ۰۲:۰۰ — هر دو از ابتدا به‌عنوان جایگزین موقت تا ساخت P6-09 مستند بودند). `BuildAffinityJob` مستقل ماند: `Schedule::job(new BuildAffinityJob)->weeklyOn(6, '04:00')` — به هیچ‌چیز در زنجیرهٔ شبانه وابسته نیست و چیزی در زنجیره به آن وابسته نیست. Poll ۱۵‌دقیقه‌ای سفارش‌ها بدون تغییر ماند.
+
+### TEST FIRST
+
+- `ReconciliationMonthsTest.php` (+۳ تست): `lastN()` — لیست N ماه آخر، سقف‌خوردن وقتی تعداد ماه کامل کمتر است، خالی وقتی هیچ ماهی کامل نیست.
+- `ReconciliationServiceTest.php` (+۲ تست): `dispatchRecentMonths()` — فقط N ماه آخر روی صف `sync`.
+- `ReconcileRecentMonthsJobTest.php` (تازه، ۲ تست): شکل Job (`ShouldBeUnique`، صف، tries)، dispatch واقعی ماه‌ها هنگام `handle()`.
+- `ReconcileMonthJobTest.php` (+۱ تست): `retry_after` در برابر تایم‌اوت هر Job سنگین پروژه (نه فقط Sync).
+- `NightlyChainCommandTest.php` (تازه، ۳ تست):
+  - ترتیب دقیق زنجیره (`Bus::fake()` + `Bus::assertChained()`), شامل بررسی `RecomputeMetricsJob->runType === 'full'` (نه `'dirty'`).
+  - **تست دوم شما، به‌جای mock:** یک اجرای واقعی (نه fake) از زیرزنجیرهٔ حساس به ترتیب (`RecomputeMetricsJob→BuildCustomerPurchaseAggregatesJob→BuildDailyMetricsJob→BuildCohortSnapshotsJob`) روی یک مشتری تازه که هنوز هیچ ردیف `customer_metrics` ندارد؛ تأیید می‌کند `cohort_month` واقعاً تازه به `BuildCohortSnapshotsJob` می‌رسد. مراحل Sync/Reconcile در این تست نیستند (نیاز به Woo دارند؛ `.claude/rules/tests.md`: «Tests never hit the network»)؛ `QUEUE_CONNECTION=sync` در `phpunit.xml` یعنی `Bus::chain()->dispatch()` واقعی و در همان پردازش اجرا می‌شود.
+
+Mutation check ۱ (ترتیب کلی): `RecomputeMetricsJob` و `BuildCustomerPurchaseAggregatesJob` در کد جابه‌جا شدند → هر دو تست ترتیب با شکست واقعی (نوع Job اشتباه در زنجیره) قرمز شدند؛ بازگردانده شد.
+Mutation check ۲ (وابستگی واقعی): در تست دوم، `BuildCohortSnapshotsJob` به ابتدای لیست منتقل شد → `cohort_month` هنوز `NULL` بود، assertion با `null is not 1` شکست خورد؛ بازگردانده شد.
+Mutation check ۳ (پیکربندی): `retry_after` موقتاً به ۳۳۰ برگردانده شد → تست تازهٔ `ReconcileMonthJobTest` با `330 is not greater than 900` شکست خورد؛ بازگردانده شد.
+
+نکتهٔ فنی کشف‌شده حین TEST FIRST: `Dispatcher::dispatchSync()` یک Job که `ShouldQueue` است را از طریق `dispatchToQueue()->onConnection('sync')` می‌فرستد — که وقتی `Queue::fake()` فعال است، فقط به‌عنوان یک push ثبت می‌شود، اجرا نمی‌شود (همان دلیلی که تست موجود `dispatchAllMonths()` هم مستقیماً متد سرویس را صدا می‌زند، نه از طریق Bus). `ReconcileRecentMonthsJobTest` هم به همین دلیل مستقیماً `->handle()` را صدا می‌زند.
+
+### اجرای واقعی روی dev
+
+طبق دستور شما (بدون شبکهٔ زنده به Woo، همان‌طور که در کل این Sprint هیچ GET زنده‌ای به Woo انجام نشد): مراحل ۱، ۲ و ۸ زنجیره (Catalog sync، Orders sync، Reconcile) نیاز به Woo دارند و روی dev شبیه‌سازی شدند — با داده‌ی موجود dev (از Syncهای واقعی همین Sprint) به‌جای فراخوانی Woo. زیرزنجیرهٔ ۳ تا ۷ (متریک تا سگمنت‌ها) واقعاً و کامل روی dev اجرا شد:
+
+```
+قبل  → customer_metrics: 19,905 | customer_product_purchases: 26,664 | daily_metrics: 735 | cohort_snapshots: 625 | segment_members: 39,844
+RecomputeMetricsJob(full):            11,870ms
+BuildCustomerPurchaseAggregatesJob:    4,436ms
+BuildDailyMetricsJob(3):                  80ms
+BuildCohortSnapshotsJob:                 458ms
+RebuildAllSegmentsJob:                 4,279ms  (۱۲ سگمنت موفق، ۰ شکست)
+بعد   → customer_metrics: 19,905 | customer_product_purchases: 26,664 | daily_metrics: 737 | cohort_snapshots: 625 | segment_members: 39,921
+جمع (فقط زیرزنجیرهٔ ۳-۷): 21,464ms
+```
+شمارها همان‌طور که انتظار می‌رفت: rebuild-از-منبع یعنی جدول‌های TRUNCATE-شونده (customer_product_purchases، cohort_snapshots) ثابت می‌مانند وقتی داده‌ی منبع تغییر نکرده؛ `daily_metrics`/`segment_members` رشد کردند چون به تاریخ/عضویت پویا وابسته‌اند (۲ روز جدید، ۷۷ عضو تازه). `ReconcileRecentMonthsJob(2)` روی dev شبیه‌سازی شد: `ReconciliationMonths::lastN(2)` مستقیماً صدا زده شد (بدون dispatch واقعی که Woo لازم دارد) → `['1405-05', '1405-06']`، همان دو ماه اخیری که واقعاً انتظار می‌رفت.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Console/Commands/NightlyChainCommand.php` (تازه)، `app/Modules/Sync/Jobs/ReconcileRecentMonthsJob.php` (تازه)، `app/Modules/Sync/Support/ReconciliationMonths.php` (+`lastN()`)، `app/Modules/Sync/Services/ReconciliationService.php` (+`dispatchRecentMonths()`)، `routes/console.php` (بازنویسی زمان‌بندی شبانه/هفتگی)، `config/queue.php` (+`retry_after` 330→930)، `config/horizon.php` (+`timeout` 60→900)، `app/Modules/Sync/Jobs/ReconcileMonthJob.php` (کامنت به‌روزشده)، تست‌ها: `tests/Feature/Console/NightlyChainCommandTest.php` (تازه)، `tests/Feature/Modules/Sync/ReconcileRecentMonthsJobTest.php` (تازه) + افزوده به `ReconciliationMonthsTest.php`, `ReconciliationServiceTest.php`, `ReconcileMonthJobTest.php`.

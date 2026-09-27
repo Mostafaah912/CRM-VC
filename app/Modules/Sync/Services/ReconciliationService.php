@@ -172,6 +172,24 @@ final class ReconciliationService
     }
 
     /**
+     * Queue one ReconcileMonthJob per each of the last $count complete months (PRD §22's nightly chain
+     * step "ReconcileJob(2)"): a cheap nightly re-check of only the most recent months, not the whole
+     * history every night — dispatchAllMonths() stays for the standalone `hm:reconcile --all` command.
+     *
+     * @return list<string> the months queued, oldest first
+     */
+    public function dispatchRecentMonths(int $count): array
+    {
+        $months = $this->months->lastN($count);
+
+        foreach ($months as $month) {
+            ReconcileMonthJob::dispatch($month);
+        }
+
+        return $months;
+    }
+
+    /**
      * GATE 1, from the stored reports: passes only when every month from the first to the last complete one is green.
      * A month never reconciled is not green, and neither is having no complete month yet.
      */

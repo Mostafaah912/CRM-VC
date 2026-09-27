@@ -160,14 +160,13 @@ it('leaves overlap protection to the P2-08 run rule and the job\'s uniqueness: t
         ->and($event->onOneServer)->toBeFalse();
 });
 
-// ================================================== hm:sync --entity=catalog (P6 decision)
+// ================================================== hm:sync --entity=catalog (P6-09: no longer scheduled standalone)
 
-it('schedules exactly one hm:sync for catalog, daily at 01:30 Asia/Tehran', function () {
+it('no longer schedules hm:sync --entity=catalog standalone (P6-09): CatalogSyncJob is now the first step of hm:nightly-chain', function () {
     $events = array_values(array_filter(scheduledSyncEvents(), fn ($event) => preg_match("/--entity='?catalog'?(\s|$)/", (string) $event->command) === 1));
 
-    expect($events)->toHaveCount(1)
-        ->and($events[0]->expression)->toBe('30 1 * * *')
-        ->and((string) $events[0]->timezone)->toBe('Asia/Tehran');
+    expect($events)->toHaveCount(0);
 });
 
-// P2-11 adds the nightly reconciliation; the "exactly three tasks" guard lives in ReconcileCommandTest.
+// P2-11 used to add the nightly reconciliation here; P6-09 replaced it with hm:nightly-chain. The
+// "exactly three tasks" guard lives in ReconcileCommandTest.

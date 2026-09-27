@@ -72,6 +72,22 @@ final class ReconciliationMonths
         return $months;
     }
 
+    /**
+     * The last $count complete months, oldest first; capped at however many actually exist (P6-09's
+     * nightly chain step "ReconcileJob(2)" — a nightly re-check of only the most recent months, not
+     * the whole history every night).
+     *
+     * @return list<string>
+     */
+    public function lastN(int $count): array
+    {
+        if ($count <= 0) {
+            return [];
+        }
+
+        return array_slice($this->all(), -$count);
+    }
+
     /** @throws ReconciliationMonthException */
     public function assertReconcilable(string $month): void
     {

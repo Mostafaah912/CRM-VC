@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Analytics\Jobs\BuildAffinityJob;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
@@ -12,12 +13,13 @@ Artisan::command('inspire', function () {
 // overlap protection here: SyncService refuses a start while a run is under an hour old, and the job is unique per entity.
 Schedule::command('hm:sync', ['--entity' => 'orders'])->everyFifteenMinutes()->timezone('Asia/Tehran');
 
-// P6 decision (ARCHITECTURE.md): a nightly catalog mirror, standalone for now — the full ordered chain
-// PRD §22 describes (catalog before orders before RecomputeMetricsJob...) is P6-09's job, not yet built.
-// CatalogSyncJob is unique per run, so no overlap protection is needed here either.
-Schedule::command('hm:sync', ['--entity' => 'catalog'])->dailyAt('01:30')->timezone('Asia/Tehran');
+// P6-09: the full ordered nightly chain PRD §22 describes — catalog+orders sync, RecomputeMetricsJob('full'),
+// every P6 Analytics rebuild, segments, then a recent-months reconciliation — replaces the standalone catalog
+// (01:30) and `hm:reconcile --all` (02:00) entries this schedule used to carry as stand-ins (ARCHITECTURE.md).
+// No overlap protection needed here: the command only queues a Bus::chain, and every step inside it is already
+// ShouldBeUnique on its own. `hm:reconcile --all` still exists, unscheduled, for a manual full-history re-check.
+Schedule::command('hm:nightly-chain')->dailyAt('03:00')->timezone('Asia/Tehran');
 
-// P2-11: GATE 1 evidence, refreshed every night: one ReconcileMonthJob per complete Jalali month. The command only queues.
-// The flag is written in the command string: the array form ['--all' => true] compiles to `--all='1'`, which a flag that takes
-// no value rejects — the nightly run would fail every night.
-Schedule::command('hm:reconcile --all')->dailyAt('02:00')->timezone('Asia/Tehran');
+// PRD §22: "weekly Sat 04:00 BuildAffinityJob" — a full 4-level rebuild, standalone (not part of the nightly
+// chain: it does not depend on, and nothing nightly depends on, product_affinities).
+Schedule::job(new BuildAffinityJob)->weeklyOn(6, '04:00')->timezone('Asia/Tehran');

@@ -121,6 +121,25 @@ it('accepts only months from the first one up to the last complete one', functio
     'a month before the epoch month' => ['2025-01-10 12:00:00', '1403-06', false],
 ]);
 
+it('lists the last N complete months, oldest first (P6-09\'s nightly "ReconcileJob(2)" step)', function () {
+    at('2025-05-01 12:00:00'); // Tehran 1404-02-12 -> last complete 1404-01, all() has 7 months
+
+    expect(months()->lastN(2))->toBe(['1403-12', '1404-01'])
+        ->and(months()->lastN(1))->toBe(['1404-01']);
+});
+
+it('caps lastN at however many complete months actually exist, without erroring', function () {
+    at('2024-10-25 12:00:00'); // Tehran 1403-08-04; only 1403-07 is complete
+
+    expect(months()->lastN(2))->toBe(['1403-07']);
+});
+
+it('returns nothing from lastN while no month is complete yet', function () {
+    at('2024-10-01 12:00:00'); // Tehran 1403-07-10, still running
+
+    expect(months()->lastN(2))->toBe([]);
+});
+
 it('has static messages: nothing typed by the user is echoed back', function () {
     at('2025-01-10 12:00:00');
 

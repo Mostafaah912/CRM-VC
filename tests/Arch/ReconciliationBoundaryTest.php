@@ -31,6 +31,7 @@ it('has the reconciliation files', function () {
     $files = [
         ...reconMathFiles(),
         'app/Modules/Sync/Jobs/ReconcileMonthJob.php',
+        'app/Modules/Sync/Jobs/ReconcileRecentMonthsJob.php',
         'app/Modules/Sync/Models/ReconciliationReportModel.php',
         'app/Modules/Sync/Enums/ReconciliationStatus.php',
         'app/Modules/Sync/Exceptions/ReconciliationException.php',
@@ -132,12 +133,12 @@ it('keeps the command to the reconciliation service: no database, models, config
         ->and(Scanner::phpCode($command))->toContain('{--all');
 });
 
-it('schedules the nightly reconciliation in routes/console.php, daily at 02:00 Asia/Tehran, with no overlap flags', function () {
+it('no longer schedules hm:reconcile directly in routes/console.php (P6-09): ReconcileRecentMonthsJob(2) is a step of hm:nightly-chain instead', function () {
     $console = Scanner::phpCode(reconFile('routes/console.php'));
 
-    expect($console)->toContain("Schedule::command('hm:reconcile --all')")
-        ->and($console)->not->toContain("['--all' => true]")
-        ->and($console)->toContain("->dailyAt('02:00')")
+    expect($console)->not->toContain('hm:reconcile')
+        ->and($console)->toContain("Schedule::command('hm:nightly-chain')")
+        ->and($console)->toContain("->dailyAt('03:00')")
         ->and($console)->toContain("->timezone('Asia/Tehran')")
         ->and(substr_count($console, 'Schedule::'))->toBe(3)
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground/');
