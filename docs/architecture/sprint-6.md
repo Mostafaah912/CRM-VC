@@ -479,3 +479,53 @@ category_purchases: 64505
 تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش نهایی چت آمده. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
 
 **فایل‌ها:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php` (+فیلتر در هر دو کوئری)، `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php` (+۱ تست).
+
+## P6-05 — Product Affinity (4 levels)
+
+خواندن: PRD §16 (SQL جعبه‌ای affinity + جدول سطوح/حداقل هم‌خرید)، §09 (اسکیمای `product_affinities`، از پیش با migration ساخته شده در P1-04)، §01 ردیف C5 (تناقض‌حل: «سطح مشتری اصلی؛ سطح سبد یک `level` اضافی در همان جدول [نه مکانیزم جدا]»)، §22 (`BuildAffinityJob`، صف `metrics`، زمان‌بندی هفتگی شنبه ۰۴:۰۰)، §18 (Dashboard از `product_affinities` می‌خواند — خارج از این تسک، P6-06+). هیچ تناقضی بین منابع پیدا نشد که نیاز به ثبت جدید داشته باشد؛ C5 از قبل در خود PRD حل شده بود.
+
+### طراحی — «یک الگو برای همه سطوح»
+
+فرمول یکسان برای هر ۴ سطح: `support = co/total`، `confidence(A→B) = co/a`، `lift = confidence / (b/total)`؛ فقط جفت‌های نامرتب (`entity_a_id < entity_b_id`، یک ردیف به‌جای دو جهت) با `co_customers >= حداقل سطح` و `lift > 1.0` (نه `>=`) ذخیره می‌شوند. سطح category/product مستقیماً از جدول‌های تجمیعی موجود P6-01 (`customer_category_purchases`/`customer_product_purchases`) می‌خوانند — که خودشان از قبل به سفارش‌های واقعی/غیرحذف‌شده/مشتری‌دار محدود شده‌اند (رفع قبلی همین اسپرینت). سطح variation/basket چون جدول تجمیعی مخصوص ندارند، مستقیم از `order_items`/`orders` می‌خوانند. سطح basket طبق تصمیم C5، **بر اساس order_id گروه‌بندی می‌شود نه customer_id** — همان ستون‌های `co_customers`/`a_customers`/`b_customers` برای این سطح، شمار «سبد» (سفارش) نگه می‌دارند، نه مشتری (بازتفسیر معنایی همان ستون‌ها، دقیقاً طبق تصمیم C5).
+
+حداقل هم‌خرید هر سطح (PRD §16، هاردکد در سرویس — عدد ثابت طرح، نه تنظیمات محیطی): category=20، product=10، variation=5، basket=10.
+
+Migration و Enum از پیش موجود بودند (`product_affinities` در P1-04، `AffinityLevel` Enum در P1-05) — چیزی اضافه نشد.
+
+### TEST FIRST
+
+فیکسچر کوچک با اعداد دقیق قابل‌محاسبه: N مشتری هر دو محصول A و B را می‌خرند، N مشتری دیگر فقط محصول نویز C را می‌خرند (برای بزرگ‌کردن جمعیت کل بدون اثر روی a/b/co). با N=۱۰ (سطح product): `co=10, a=10, b=10, support=0.5, confidence=1.0, lift=2.0` — مقادیر دقیق assert شدند. تست‌های اضافی: زیر آستانه (۹ مشتری) → ذخیره نمی‌شود؛ `lift` دقیقاً ۱.۰ (بدون جمعیت نویز، یعنی B همه‌جا خریده شده) → ذخیره نمی‌شود؛ محصول بدون هیچ هم‌خریدی → نتیجه خالی، بدون خطا؛ idempotent (دو بار rebuild، یک ردیف با مقادیر یکسان)؛ جفت به‌صورت نامرتب و فقط یک جهت ذخیره می‌شود. همین الگو برای category (آستانه ۲۰)، variation (آستانه ۵، مستقیم از order_items)، و basket (آستانه ۱۰، گروه‌بندی با order_id) با یک تست صحت + یک تست آستانه هرکدام تکرار شد. جمع: ۱۴ تست در `AffinityServiceTest.php` + ۴ تست در `BuildAffinityJobTest.php`.
+
+نکته‌ی مهم پیاده‌سازی: تست‌های اولیه هم‌خرید را با درج مستقیم در `order_items` می‌ساختند، اما سرویس سطح category/product از جدول‌های تجمیعی P6-01 می‌خواند نه از order_items مستقیم — یعنی آن فیکسچرها هرگز واقعاً داده‌ای در `customer_product_purchases`/`customer_category_purchases` نمی‌گذاشتند (قرمزی درست، اما بعضی تست‌های "زیر آستانه" به‌صورت کاذب سبز می‌ماندند چون اصلاً هیچ داده‌ای وجود نداشت). اصلاح شد: فیکسچرهای این دو سطح مستقیماً در جدول تجمیعی درج می‌کنند (دقیقاً هم‌الگو با نحوه‌ی تست‌نویسی `CustomerPurchaseAggregateServiceTest` برای منبع خودش).
+
+Mutation check: کاهش موقت آستانه سطح product از ۱۰ به ۱ → تست «زیر آستانه» با شکست واقعی (ردیف موجود بود، باید null باشد) قرمز شد. شل‌کردن موقت فیلتر `lift > 1.0` به `>= 0` → تست «lift دقیقاً ۱» قرمز شد. هر دو بازگردانده شدند.
+
+### تعارض نام‌گذاری تست
+
+فایل `tests/Integration/AnalyticsSchemaTest.php` از قبل تابع کمکی `affinityRow()` دارد؛ نام تابع کمکی من به `affinityPairRow()` تغییر کرد تا تداخل نداشته باشد.
+
+### `BuildAffinityJob`
+
+صف `metrics` (هم‌الگو با `BuildCustomerPurchaseAggregatesJob`)، `ShouldBeUnique`، `tries=1`. `timeout=900`/`uniqueFor=1200` (بزرگ‌تر از جفت ۳۰۰/۶۰۰ آن Job) — چون هدف کارایی PRD §23 برای Affinity صریحاً «< ۱۵ دقیقه» است، برخلاف Purchase Aggregates که چنین هدفی ندارد. زمان‌بندی هفتگی شنبه ۰۴:۰۰ (PRD §22) **سیم‌کشی نشد** — دقیقاً هم‌الگو با P6-01 تا P6-04 که هیچ‌کدام وارد `routes/console.php` نشدند؛ آن کار متعلق به P6-09 («زنجیره کامل scheduler») است.
+
+### اجرای زنده روی dev + کراس‌چک مستقل
+
+```
+{"category":2167,"product":302,"variation":0,"basket":223,"elapsed_ms":1427}
+```
+(کمتر از ۱.۵ ثانیه — بسیار زیر هدف ۱۵ دقیقه PRD §23.)
+
+**variation=0، به‌عمد نه باگ:** طبق محدودیت شناخته‌شده‌ای که در ابتدای این تسک گفته شد، فقط ۸۱ ردیف `order_items` (از ۴۱٬۹۰۷ resolve‌شده) `variation_id` دارند (بقیه به‌عنوان محصول ساده resolve شدند) — کراس‌چک مستقیم این عدد (۸۱) را تأیید کرد. با آستانه حداقل ۵ هم‌خرید در سطح variation، پخش‌شدن این ۸۱ ردیف بین variationهای مختلف کافی برای عبور از آستانه نبود؛ نتیجه‌ی صفر، رفتار درست است.
+
+**کراس‌چک مستقل (کوئری مستقیم، جدا از سرویس):** برای پرلیفت‌ترین جفت واقعی ذخیره‌شده در سطح product (محصول ۵۶۴/۵۶۵)، شمارش مستقل `co_customers`/`a_customers`/`b_customers` روی `customer_product_purchases` و محاسبه‌ی مستقل support/confidence/lift:
+```
+stored:       co=13 a_cust=47 b_cust=24 support=0.001208 confidence=0.276596 lift=123.9956
+independent:  co=13 a_cust=47 b_cust=24 support=0.001208 confidence=0.276596 lift=123.9956
+```
+برابر دقیق.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AffinityService.php` (تازه)، `app/Modules/Analytics/Support/AffinitySummary.php` (تازه)، `app/Modules/Analytics/Jobs/BuildAffinityJob.php` (تازه)، `tests/Feature/Modules/Analytics/AffinityServiceTest.php` (تازه، ۱۴ تست)، `tests/Feature/Modules/Analytics/BuildAffinityJobTest.php` (تازه، ۴ تست).
