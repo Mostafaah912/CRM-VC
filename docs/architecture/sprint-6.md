@@ -452,3 +452,30 @@ SQLSTATE[23502]: Not null violation: 7 ERROR: null value in column "customer_id"
 - `app/Modules/Orders/Services/OrderItemBackfillService.php` + `app/Modules/Orders/Support/OrderItemBackfillResult.php` (تازه)
 - `app/Console/Commands/ResolveOrderItemsCommand.php` (تازه، `hm:resolve-order-items`)
 - تست‌ها: `PayloadReaderTest.php`, `CatalogMappersTest.php`, `CatalogSyncServiceTest.php`, `CatalogServiceTest.php`, `CatalogDryRunServiceTest.php` (تازه), `OrderItemBackfillServiceTest.php` (تازه), `CatalogDryRunCommandTest.php` (تازه), `ResolveOrderItemsCommandTest.php` (تازه), `tests/Arch/CatalogSyncBoundaryTest.php`, `tests/Arch/SyncCommandBoundaryTest.php` (لیست کامندها).
+
+## رفع باگ `BuildCustomerPurchaseAggregatesJob` (customer_id NULL) — بستن نهایی Open Item مربوط به product_id
+
+تصمیم شما: کوئری با `AND o.customer_id IS NOT NULL` اصلاح شود، دقیقاً هم‌الگو با کوئری خواهرش در همان سرویس.
+
+### TEST FIRST
+
+تست تازه در `CustomerPurchaseAggregateServiceTest.php`: یک سفارش `Order::factory()->phoneless()` (شکست نرمال‌سازی تلفن، `customer_id = null`) با یک آیتم واقعی می‌سازد و انتظار دارد هر دو جدول خالی بمانند. قبل از رفع: قرمز با همان خطای واقعی (`SQLSTATE[23502]`) که در تسک قبلی روی dev دیده شد. رفع: افزودن `AND o.customer_id IS NOT NULL` به هر دو کوئری `rebuildProductPurchases()` و `rebuildCategoryPurchases()` (متقارن، دقیقاً هم‌الگو). Mutation check دوگانه: حذف موقت فیلتر فقط از کوئری محصول → تست با خطای واقعی روی `customer_product_purchases` قرمز شد (چون تراکنش با شکست اولین INSERT کلاً برمی‌گردد و کوئری دسته اجرا نمی‌شود)؛ بازگردانده شد، سپس حذف فیلتر فقط از کوئری دسته (با فیلتر محصول سالم) → تست این‌بار با خطای `customer_category_purchases` قرمز شد — یعنی همان یک تست هر دو کوئری را واقعاً می‌پوشاند. هر دو بازگردانده شدند.
+
+### اجرای زنده روی dev
+
+```
+product_purchases: 26664
+category_purchases: 64505
+```
+
+**کراس‌چک مستقل (کوئری مستقیم، جدا از سرویس):** شمار جفت‌های متمایز `(customer_id, product_id)` روی `orders JOIN order_items` با همان فیلترها (`is_realized=true`, `deleted_at IS NULL`, `customer_id IS NOT NULL`, `product_id IS NOT NULL`) = **۲۶٬۶۶۴** — برابر دقیق. شمار جفت‌های متمایز `(customer_id, category_id)` روی همان + `JOIN product_category_product` = **۶۴٬۵۰۵** — برابر دقیق.
+
+### بستن Open Item «۰٪ order_items→product resolution»
+
+این Open Item (که از تشخیص اولیهٔ این اسپرینت شروع شد) اکنون به‌طور کامل بسته می‌شود: **۶۸.۲۹٪ resolved (۴۱٬۹۰۷/۶۱٬۳۵۸)**، **۵٬۷۹۸ ردیف بدون SKU** دست‌نخورده باقی مانده (به‌عمد — چیزی برای تحلیل ندارند)، **۱۳٬۶۵۳ ردیف** SKU دارند اما به کاتالوگ نمی‌خورند (احتمالاً یکی از ۲۲۲ محصول رد‌شده، یا SKU واقعاً منسوخ)، و **۲۲۲ محصول** به‌خاطر فرمت قیمت اعشاری نامعتبر Woo رد شدند (۵ تا از قیمت خودشان، بقیه از یک variation بد که کل محصول والد را رد کرده — چون محصول و variationهایش یک واحد نوشتاری‌اند). جزئیات کامل هر رقم در بخش‌های قبلی همین فایل.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش نهایی چت آمده. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php` (+فیلتر در هر دو کوئری)، `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php` (+۱ تست).

@@ -73,6 +73,19 @@ it('excludes an order item whose product could not be resolved', function () {
         ->and(DB::table('customer_category_purchases')->where('customer_id', $customer->id)->exists())->toBeFalse();
 });
 
+it('excludes an order with no customer (a phone-normalization failure) from both tables', function () {
+    $product = Product::factory()->create();
+    $product->categories()->attach(ProductCategory::factory()->create());
+    $orphan = Order::factory()->phoneless()->create(['is_realized' => true]);
+    opItem($orphan, $product);
+
+    $summary = app(CustomerPurchaseAggregateService::class)->rebuild();
+
+    expect(DB::table('customer_product_purchases')->where('product_id', $product->id)->exists())->toBeFalse()
+        ->and(DB::table('customer_category_purchases')->exists())->toBeFalse()
+        ->and($summary->productRows)->toBe(0)->and($summary->categoryRows)->toBe(0);
+});
+
 it('nets a partial refund out of revenue, unlike Base Aggregates it does not exclude the order', function () {
     $customer = Customer::factory()->create();
     $product = Product::factory()->create();

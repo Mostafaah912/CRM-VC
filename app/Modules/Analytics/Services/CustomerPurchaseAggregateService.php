@@ -33,6 +33,12 @@ use Illuminate\Support\Facades\DB;
  * a partially (or fully) refunded order's surviving items still count here, since `line_total -
  * refunded_amount` already nets the refunded portion out of `revenue`. Implemented exactly as PRD §16
  * specifies; the difference from Base Aggregates is intentional, not reconciled.
+ *
+ * Both queries filter `o.customer_id IS NOT NULL` (P6 bugfix, ARCHITECTURE.md): an order whose phone
+ * could not be normalized is stored with `customer_id` NULL (PRD §08 step 1) and belongs to no
+ * customer's purchase history, so it must never reach either table's NOT NULL `customer_id` column.
+ * `BaseAggregateService` never needed this filter because it queries `FROM customers c LEFT JOIN
+ * orders o` — the opposite direction, which structurally cannot produce a NULL customer row.
  */
 final class CustomerPurchaseAggregateService
 {
@@ -71,6 +77,7 @@ final class CustomerPurchaseAggregateService
             JOIN order_items oi ON oi.order_id = o.id
             WHERE o.is_realized = true
               AND o.deleted_at IS NULL
+              AND o.customer_id IS NOT NULL
               AND oi.product_id IS NOT NULL
             GROUP BY o.customer_id, oi.product_id
             SQL);
@@ -96,6 +103,7 @@ final class CustomerPurchaseAggregateService
             JOIN product_category_product pcp ON pcp.product_id = oi.product_id
             WHERE o.is_realized = true
               AND o.deleted_at IS NULL
+              AND o.customer_id IS NOT NULL
               AND oi.product_id IS NOT NULL
             GROUP BY o.customer_id, pcp.category_id
             SQL);
