@@ -65,7 +65,7 @@ it('registers the list and the Customer 360 page and its JSON endpoints (timelin
     $routes = Scanner::phpCode(clFile('routes/internal.php'));
     $web = (string) file_get_contents(clFile('routes/web.php'));
 
-    expect(substr_count($routes, 'Route::get('))->toBe(18) // the list; P3-03's page; P3-04's timeline; P3-05's orders/products/notes tabs; P3-06's order list and detail; P3-07's product list; P4-08's RFM page; P5-06's segment index/create/show/edit/export; P6-06's dashboard; P6-07's drill show/export
+    expect(substr_count($routes, 'Route::get('))->toBe(21) // the list; P3-03's page; P3-04's timeline; P3-05's orders/products/notes tabs; P3-06's order list and detail; P3-07's product list; P4-08's RFM page; P5-06's segment index/create/show/edit/export; P6-06's dashboard; P6-07's drill show/export; P6-08's cohort/retention/affinity pages
         ->and($routes)->not->toMatch('/Route::(put|patch|any|match|resource|apiResource)\b/')
         ->and(substr_count($routes, 'Route::post('))->toBe(6) // P3-02's audited reveal, P3-05's note store, P5-05's segment rule preview, P5-06's segment store/update/evaluate
         ->and(substr_count($routes, 'Route::delete('))->toBe(2) // P3-05's note delete, P5-06's segment delete

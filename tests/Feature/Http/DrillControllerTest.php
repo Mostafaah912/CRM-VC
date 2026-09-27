@@ -55,3 +55,17 @@ it('filters an rfm_segment drill by the requested segment', function () {
 it('rejects an unknown segment value rather than silently returning nothing', function () {
     $this->actingAs(Fx::userWith('dashboard.view'))->get('/internal/drill/rfm_segment?segment=not-a-segment')->assertInvalid('segment');
 });
+
+it('requires cohort_month and period_number for a cohort_period drill', function () {
+    $this->actingAs(Fx::userWith('dashboard.view'))->get('/internal/drill/cohort_period')->assertInvalid(['cohort_month', 'period_number']);
+});
+
+it('requires affinity_level, entity_a_id and entity_b_id for an affinity_pair drill', function () {
+    $this->actingAs(Fx::userWith('dashboard.view'))->get('/internal/drill/affinity_pair')->assertInvalid(['affinity_level', 'entity_a_id', 'entity_b_id']);
+});
+
+it('rejects the basket level for affinity_pair, since it is not implemented', function () {
+    $this->actingAs(Fx::userWith('dashboard.view'))
+        ->get('/internal/drill/affinity_pair?affinity_level=basket&entity_a_id=1&entity_b_id=2')
+        ->assertInvalid('affinity_level');
+});

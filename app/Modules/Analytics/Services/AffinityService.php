@@ -86,6 +86,24 @@ final class AffinityService
         return array_values($rows);
     }
 
+    /**
+     * `top()` for every level at once, keyed by level's own string value (P6-08's Affinity page — the
+     * PRD's own backlog title is "Affinity (4 levels)", so the page shows all four, not just one). Pure
+     * composition of the four already-tested `top()` calls; no new query happens here.
+     *
+     * @return array<string, list<array{entity_a_id: int, entity_b_id: int, co_customers: int, support: float, confidence: float, lift: float, level: string}>>
+     */
+    public function topAll(int $limitPerLevel = 10): array
+    {
+        $levels = [];
+
+        foreach (AffinityLevel::cases() as $level) {
+            $levels[$level->value] = $this->top($level, $limitPerLevel);
+        }
+
+        return $levels;
+    }
+
     /** PRD §16: category level, source customer_category_purchases, min co-purchase 20. */
     private function rebuildCategoryLevel(): int
     {

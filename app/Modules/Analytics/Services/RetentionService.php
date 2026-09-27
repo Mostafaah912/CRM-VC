@@ -130,4 +130,50 @@ final class RetentionService
             insufficientData: $insufficientData,
         );
     }
+
+    /**
+     * A plain, Inertia-ready array (same convention as `RfmPageService::getData()`) for P6-08's
+     * Retention page: the two lifetime metrics plus `nDayRetention()` for each requested window. PRD §15
+     * names no fixed set of windows (only the affinity table has explicit numbers) — 7/30/90 days is a
+     * reasoned default (common e-commerce retention windows), not a PRD-specified list. Pure composition
+     * of the three already-tested methods above; no new calculation happens here.
+     *
+     * @param  list<int>  $days
+     * @return array{
+     *     repeat_purchase_rate: array{eligible_customers: int, repeat_customers: int, rate: float|null, insufficient_data: bool},
+     *     returning_revenue_share: array{total_revenue: int, returning_revenue: int, share: float|null, insufficient_data: bool},
+     *     retention: list<array{days: int, mature_customers: int, returned_customers: int, retention_rate: float|null, insufficient_data: bool}>,
+     * }
+     */
+    public function summary(array $days = [7, 30, 90], ?CarbonImmutable $asOf = null): array
+    {
+        $repeat = $this->repeatPurchaseRate();
+        $share = $this->returningRevenueShare();
+
+        return [
+            'repeat_purchase_rate' => [
+                'eligible_customers' => $repeat->eligibleCustomers,
+                'repeat_customers' => $repeat->repeatCustomers,
+                'rate' => $repeat->rate,
+                'insufficient_data' => $repeat->insufficientData,
+            ],
+            'returning_revenue_share' => [
+                'total_revenue' => $share->totalRevenue,
+                'returning_revenue' => $share->returningRevenue,
+                'share' => $share->share,
+                'insufficient_data' => $share->insufficientData,
+            ],
+            'retention' => array_map(function (int $window) use ($asOf): array {
+                $result = $this->nDayRetention($window, $asOf);
+
+                return [
+                    'days' => $result->days,
+                    'mature_customers' => $result->matureCustomers,
+                    'returned_customers' => $result->returnedCustomers,
+                    'retention_rate' => $result->retentionRate,
+                    'insufficient_data' => $result->insufficientData,
+                ];
+            }, $days),
+        ];
+    }
 }

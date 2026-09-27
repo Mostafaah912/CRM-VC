@@ -341,3 +341,33 @@ it('reports how many rows it wrote per level', function () {
         ->and($summary->variationRows)->toBe(0)
         ->and($summary->basketRows)->toBe(0);
 });
+
+// ================================================================= topAll() (P6-08 Affinity page)
+
+it('returns the top pairs for every level in one call, keyed by level', function () {
+    $a = Product::factory()->create();
+    $b = Product::factory()->create();
+    seedProductCoPurchase($a, $b, coBuyers: 10, noiseBuyers: 10);
+    app(AffinityService::class)->rebuild();
+
+    $all = app(AffinityService::class)->topAll();
+
+    expect($all)->toHaveKeys(['category', 'product', 'variation', 'basket'])
+        ->and($all['product'])->toHaveCount(1)
+        ->and($all['category'])->toBe([])
+        ->and($all['variation'])->toBe([])
+        ->and($all['basket'])->toBe([]);
+});
+
+it('limits each level independently in topAll()', function () {
+    $a = Product::factory()->create();
+    $b = Product::factory()->create();
+    $c = Product::factory()->create();
+    seedProductCoPurchase($a, $b, coBuyers: 10, noiseBuyers: 10);
+    seedProductCoPurchase($a, $c, coBuyers: 10, noiseBuyers: 100);
+    app(AffinityService::class)->rebuild();
+
+    $all = app(AffinityService::class)->topAll(limitPerLevel: 1);
+
+    expect($all['product'])->toHaveCount(1);
+});

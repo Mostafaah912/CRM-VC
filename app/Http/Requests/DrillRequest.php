@@ -17,12 +17,15 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 /**
- * `GET /internal/drill/{widget}` (P6-07): the same optional Jalali `from`/`to` period as
+ * `GET /internal/drill/{widget}` (P6-07/P6-08): the same optional Jalali `from`/`to` period as
  * `DashboardRequest` (duplicated, not shared — CLAUDE.md §5: "three similar lines is better than a
- * premature abstraction" for ~15 lines), plus `segment`/`level`, required only for the two widgets that
- * need them. Validating the enum here (Http layer) rather than inside `DrillService` (Analytics module)
- * is deliberate: importing `RfmSegment`/`ChurnRiskLevel` cross-module from Analytics is exactly the
- * boundary violation P6-06 already hit — a FormRequest is not a module, so it may import either freely.
+ * premature abstraction" for ~15 lines), plus a small set of widget-specific params, each required only
+ * for the widget that needs it. Validating an Enum-backed value here (Http layer) rather than inside
+ * `DrillService` (Analytics module) is deliberate: importing `RfmSegment`/`ChurnRiskLevel` cross-module
+ * from Analytics is exactly the boundary violation P6-06 already hit — a FormRequest is not a module, so
+ * it may import either freely. `affinity_level` is named differently from `level` (churn_level's own
+ * param) on purpose: the two widgets need different valid value sets (ChurnRiskLevel vs the three
+ * customer-shaped AffinityLevel values), so one shared `level` name would collide.
  */
 final class DrillRequest extends FormRequest
 {
@@ -50,6 +53,26 @@ final class DrillRequest extends FormRequest
             'level' => [
                 Rule::requiredIf($widget === 'churn_level'),
                 Rule::in([...array_map(fn (ChurnRiskLevel $l) => $l->value, ChurnRiskLevel::cases()), 'none']),
+            ],
+            'cohort_month' => [
+                Rule::requiredIf($widget === 'cohort_period'),
+                'string', 'regex:/^\d{4}-\d{2}$/',
+            ],
+            'period_number' => [
+                Rule::requiredIf($widget === 'cohort_period'),
+                'integer', 'min:0',
+            ],
+            'affinity_level' => [
+                Rule::requiredIf($widget === 'affinity_pair'),
+                Rule::in(['product', 'category', 'variation']),
+            ],
+            'entity_a_id' => [
+                Rule::requiredIf($widget === 'affinity_pair'),
+                'integer', 'min:1',
+            ],
+            'entity_b_id' => [
+                Rule::requiredIf($widget === 'affinity_pair'),
+                'integer', 'min:1',
             ],
         ];
     }
@@ -98,6 +121,11 @@ final class DrillRequest extends FormRequest
         return array_filter([
             'segment' => $this->filled('segment') ? (string) $this->input('segment') : null,
             'level' => $this->filled('level') ? (string) $this->input('level') : null,
+            'cohort_month' => $this->filled('cohort_month') ? (string) $this->input('cohort_month') : null,
+            'period_number' => $this->filled('period_number') ? (string) $this->input('period_number') : null,
+            'affinity_level' => $this->filled('affinity_level') ? (string) $this->input('affinity_level') : null,
+            'entity_a_id' => $this->filled('entity_a_id') ? (string) $this->input('entity_a_id') : null,
+            'entity_b_id' => $this->filled('entity_b_id') ? (string) $this->input('entity_b_id') : null,
         ], fn (?string $value) => $value !== null);
     }
 

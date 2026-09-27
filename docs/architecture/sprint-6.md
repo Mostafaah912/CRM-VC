@@ -630,3 +630,60 @@ churn_level=high: drill=200 (truncated) | مستقل COUNT=3,841
 تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرها/ریکوئست‌ها، `bootstrap/app.php`) → ۰ خطا (چند ایراد نوع پیدا و رفع شد: `array_values()` روی خروجی‌های `map()->all()`، `whereColumn()` با `Expression` نپذیرفته‌شده → `whereRaw()` ایستا، و typing بستارهای export از `object` به `\stdClass` برای دسترسی امن به خواص). Pint → تمیز. `npm run types:check`/`npm run build` → تمیز.
 
 **فایل‌ها:** `app/Modules/Analytics/Services/DrillService.php` (تازه)، `app/Modules/Analytics/Support/DrillResult.php` (تازه)، `app/Modules/Analytics/Exceptions/{DrillExportForbiddenException,UnknownDrillWidgetException}.php` (تازه)، `app/Http/Requests/DrillRequest.php` (تازه)، `app/Http/Controllers/{DrillController,DrillExportController}.php` (تازه)، `bootstrap/app.php` (+mapping استثنا)، `routes/internal.php` (+۲ مسیر)، `app/Modules/Analytics/Services/AnalyticsService.php` (+`period.from_jalali`/`to_jalali`)، `resources/js/components/dashboard/drill-dialog.tsx` (تازه)، `resources/js/pages/dashboard.tsx` (سیم‌کشی drill)، `resources/js/types/dashboard.ts` (+فیلدهای جدید)، تست‌ها: `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`, `DrillExportControllerTest.php` (همه تازه) + یک تست به `AnalyticsServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۶ به ۱۸).
+
+## P6-08 — Cohort / Retention / Affinity pages
+
+خواندن: ARCHITECTURE.md، sprint-6.md (بخش‌های P6-03/۰۴/۰۵/۰۶/۰۷ — الگوی سرویس‌های موجود)، PRD §۱۸ (که فقط داشبورد/Customer 360 را توصیف می‌کند، هیچ اشاره‌ای به سه صفحهٔ مستقل ندارد)، PRD §۰۷ (نام‌گذاری ماژول Analytics + متدهایش)، PRD §۱۵/۱۶ (فرمول‌های خود Cohort/Retention/Affinity، از قبل در P6-03/04/05 پیاده شده). PRD برای «صفحه» چیزی نمی‌گوید — نه مسیر، نه لایوت، نه مجوز مشخص؛ تصمیم‌ها زیر آمده.
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام مجوز؟** هیچ‌کدام از سه صفحه در PRD به یک permission نگاشت نشده. `analytics.view` از ابتدای Sprint 6 seed شده و به نقش Viewer داده شده بود، اما تا این تسک هیچ مسیری از آن استفاده نمی‌کرد (بررسی شد: `grep` در `routes/` چیزی نداد). چون PRD §۰۷ دقیقاً `AnalyticsService`/`CohortService`/`AffinityService` را زیر عنوان «Analytics» می‌آورد (نه Metrics، نه Dashboard)، این سه صفحه پشت `analytics,view` قرار گرفتند — نه `metrics,view` (ماژول دیگر) و نه `dashboard,view` (صفحهٔ دیگر).
+۲. **صفحهٔ Retention به چند بازهٔ N-day نیاز دارد؟** PRD §۱۵ هیچ لیست ثابتی نمی‌دهد (فقط جدول Affinity حداقل‌های صریح دارد). تصمیم: ۷/۳۰/۹۰ روز — بازه‌های رایج تجارت الکترونیک، یک پیش‌فرض مستدل نه عدد PRD.
+۳. **صفحهٔ Affinity چند سطح نشان دهد؟** عنوان خود آیتم بک‌لاگ PRD «Affinity (4 levels)» است — پس هر ۴ سطح (نه فقط یکی) نمایش داده می‌شود.
+۴. **«هیچ منطق/کوئری جدید مگر لازم باشد»:** هیچ کوئری تازه‌ای نوشته نشد؛ فقط دو متد ترکیبی نازک اضافه شد چون کنترلر فقط می‌تواند یک سرویس صدا بزند (قاعدهٔ ثابت پروژه) اما این دو داده به بیش از یک متد از‌پیش‌تست‌شده نیاز داشتند:
+   - `RetentionService::summary(array $days=[7,30,90])` — فقط سه متد از‌پیش‌تست‌شدهٔ P6-04 (`repeatPurchaseRate`, `returningRevenueShare`, `nDayRetention`) را ترکیب می‌کند، هیچ محاسبهٔ تازه.
+   - `AffinityService::topAll(int $limitPerLevel=10)` — فقط `top()` از‌پیش‌تست‌شدهٔ P6-05/06 را برای هر ۴ سطح صدا می‌زند.
+   - `CohortSnapshotService::matrix()` نیازی به تغییر نداشت؛ کنترلر مستقیماً همان را با آرگومان بزرگ‌تر (۱۲ به‌جای ۶ پیش‌فرض داشبورد) صدا می‌زند — همان متد، فقط آرگومان دیگر.
+
+### وصل‌کردن drill-down (طبق دستور صریح شما — Open Item باز‌مانده از P6-07)
+
+بررسی شد: هر دو (سلول کوهورت، جفت Affinity) واقعاً قابل‌اتصال بودند، چون منطق دقیق هر دو از قبل در `CohortSnapshotService::rebuild()` و `AffinityService::rebuild*Level()` نوشته شده بود (فقط نیاز به بازتولید همان شرط‌ها به‌عنوان یک کوئری drill، نه اختراع تعریف تازه):
+
+- **`cohort_period`** (پارامتر `cohort_month`, `period_number`) — دقیقاً همان تعریف «فعال» از activity CTE در `rebuild()`: `jalali_month_diff(cohort_month, to_jalali_month(ordered_at)) = period_number`.
+- **`affinity_pair`** (پارامتر `affinity_level` ∈ {product, category, variation} — **نه basket**، `entity_a_id`, `entity_b_id`) — همان «pairs» که هر سطح خودش در rebuild می‌خواند: product/category از جدول‌های تجمیعی P6-01، variation مستقیم از order_items.
+- **چرا `basket` وصل نشد:** جفت سطح basket یعنی «سفارش‌ها»، نه «مشتریان» — شکل ردیف کاملاً متفاوت از بقیهٔ ۶ ویجت drill موجود (که همه مشتری‌محورند). این یک محدودیت واقعی جدید کشف‌شده است، نه تنبلی: اجبار آن به شکل «مشتری» یا داده را دروغ نشان می‌دهد یا نیاز به یک هفتمین شکل ردیف کاملاً جدا دارد — به‌عنوان یک محدودیت مستند باقی ماند (ARCHITECTURE.md)، حدس زده نشد.
+- Export برای `cohort_period` و `affinity_pair` (فقط product/category — **نه variation**) هم ساخته شد؛ export سطح variation به‌خاطر پیچیدگی نوشتن یک derived-table join در Query Builder سیال (که در rows() با یک CTE خام حل شده بود) پیاده نشد — محدودیت باریک‌تر و مستند دیگری، نه سکوت. مسیر JSON برای variation کامل است.
+
+### پیاده‌سازی
+
+- `CohortPageController`, `RetentionPageController`, `AffinityPageController` (زیر `app/Http/Controllers/Analytics/`) — هرکدام نازک، دقیقاً یک Service call، هم‌الگوی `RfmPageController`.
+- مسیرها: `analytics/cohort`, `analytics/retention`, `analytics/affinity`، همگی پشت `permission:analytics,view`.
+- سه صفحهٔ React (`resources/js/pages/analytics/{cohort,retention,affinity}.tsx`) — هم‌سبک صفحهٔ RFM موجود (Card/Table، بدون کتابخانه نمودار، لایوت با breadcrumb). سلول‌های ماتریس کوهورت (فقط سلول بالغ با مشتری فعال) و ردیف‌های جدول Affinity (فقط سطح product/category/variation) با `DrillDialog` موجود (از P6-07) قابل‌کلیک شدند؛ ردیف‌های سطح basket بدون تعامل، فقط نمایشی.
+- `RetentionService::summary()`, `AffinityService::topAll()` (متد تازه در سرویس‌های موجود)، `DrillService` گسترش‌یافته با دو ویجت تازه (`cohort_period`, `affinity_pair`)، `DrillRequest` با پارامترهای تازه.
+
+### TEST FIRST
+
+طبق دستور شما: تست روی کنترلرها/props، نه منطق محاسباتی که قبلاً در P6-03/04/05 تست شده است.
+- `RetentionServiceTest.php` (+۲ تست): شکل ترکیب `summary()` (۳ بازه، فیلدهای صحیح)، «داده کافی نیست» برای بازهٔ نابالغ (نه صفر جعلی).
+- `AffinityServiceTest.php` (+۲ تست): شکل `topAll()` (هر ۴ کلید، سطح بدون داده = `[]`)، محدودیت مستقل هر سطح.
+- `DrillServiceTest.php` (+۴ تست), `DrillExportTest.php` (+۲ تست): دو ویجت تازه، شامل تست «basket پیاده نشده».
+- `CohortPageControllerTest.php`, `RetentionPageControllerTest.php`, `AffinityPageControllerTest.php` (تازه، ۱۱ تست): مهمان، بدون `analytics.view`، رندر با داده واقعی، حالت خالی بدون خطا.
+- `DrillControllerTest.php` (+۳ تست): اعتبارسنجی پارامترهای تازه، رد سطح basket.
+
+Mutation check: مقایسهٔ `jalali_month_diff(...) = period_number` در cohort_period به `>=` شل شد → تست (بعد از تقویت با یک مشتری در دورهٔ بعدی) با شکست واقعی قرمز شد؛ بازگردانده شد.
+
+### بررسی دستی روی dev با داده واقعی (طبق دستور شما — بدون کراس‌چک، چون داده از سرویس‌های تست‌شده می‌آید)
+
+با صدا زدن مستقیم همان سه سرویسی که کنترلرها صدا می‌زنند:
+```
+ماتریس کوهورت: ۱۲ کوهورت × ۲۵ دوره (هر کوهورت)
+نگهداشت: ۳ بازه (۷/۳۰/۹۰ روز)، نرخ خرید مجدد = ۷.۷۱٪ (۱٬۰۷۸ از ۱۳٬۹۸۱ — هم‌ارز عدد قبلاً گزارش‌شدهٔ داشبورد P6-06)
+Affinity: category=۱۰ جفت، product=۱۰ جفت، basket=۱۰ جفت (هرکدام سقف‌خورده به ۱۰ پیش‌فرض)، variation=۰ جفت (طبیعی — همان محدودیت شناخته‌شدهٔ P6-05: فقط ۸۱ order_item به یک variation حل شده‌اند)
+```
+هر سه صفحه با کامپایل واقعی (`npm run build`) و درخواست HTTP واقعی (تست‌های Pest، نه mock) با همین داده تأیید شدند.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرهای Analytics، `DrillRequest`) → ۰ خطا. Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق (شامل تولید خودکار helperهای Wayfinder برای مسیرهای تازه: `resources/js/routes/analytics/index.ts`).
+
+**فایل‌ها:** `app/Http/Controllers/Analytics/{CohortPageController,RetentionPageController,AffinityPageController}.php` (تازه)، `app/Modules/Analytics/Services/RetentionService.php` (+`summary()`)، `app/Modules/Analytics/Services/AffinityService.php` (+`topAll()`)، `app/Modules/Analytics/Services/DrillService.php` (+`cohort_period`, `affinity_pair`)، `app/Http/Requests/DrillRequest.php` (+پارامترهای تازه)، `routes/internal.php` (+۳ مسیر)، `resources/js/pages/analytics/{cohort,retention,affinity}.tsx` (تازه)، `resources/js/types/analytics.ts` (تازه)، تست‌ها: `tests/Feature/Http/Analytics/*ControllerTest.php` (تازه) + افزوده به `RetentionServiceTest.php`, `AffinityServiceTest.php`, `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۸ به ۲۱).

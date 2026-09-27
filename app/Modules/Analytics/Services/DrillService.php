@@ -62,6 +62,8 @@ final class DrillService
             'customers_repeat' => $this->customersRepeat($period),
             'rfm_segment' => $this->rfmSegment($params['segment'] ?? ''),
             'churn_level' => $this->churnLevel($params['level'] ?? ''),
+            'cohort_period' => $this->cohortPeriod($params['cohort_month'] ?? '', (int) ($params['period_number'] ?? -1)),
+            'affinity_pair' => $this->affinityPair($params['affinity_level'] ?? '', (int) ($params['entity_a_id'] ?? 0), (int) ($params['entity_b_id'] ?? 0)),
             default => null,
         };
     }
@@ -168,6 +170,75 @@ final class DrillService
             ->all();
 
         return $this->result(['customer_id', 'churn_risk_score', 'clv_estimated', 'clv_historical'], array_values($rows));
+    }
+
+    /**
+     * The customers behind one cohort-matrix cell (P6-08) — exactly `CohortSnapshotService::rebuild()`'s
+     * own "activity" CTE (`jalali_month_diff(cohort_month, to_jalali_month(ordered_at)) = period_number`),
+     * not a second definition of "active in a period" invented here.
+     */
+    private function cohortPeriod(string $cohortMonth, int $periodNumber): DrillResult
+    {
+        $rows = DB::table('orders as o')
+            ->join('customer_metrics as cm', 'cm.customer_id', '=', 'o.customer_id')
+            ->join('customers as c', 'c.id', '=', 'o.customer_id')
+            ->where('o.is_realized', true)
+            ->where('o.is_fully_refunded', false)
+            ->whereNull('o.deleted_at')
+            ->whereNull('c.deleted_at')
+            ->where('cm.cohort_month', $cohortMonth)
+            ->whereRaw('jalali_month_diff(cm.cohort_month, to_jalali_month(o.ordered_at)) = ?', [$periodNumber])
+            ->groupBy('o.customer_id')
+            ->orderByDesc('o.customer_id')
+            ->limit(self::JSON_LIMIT + 1)
+            ->get(['o.customer_id', DB::raw('COUNT(*)::integer AS orders_in_period'), DB::raw('SUM(o.net_revenue)::bigint AS revenue_in_period')])
+            ->map(fn (object $row): array => [
+                'customer_id' => (int) $row->customer_id,
+                'orders_in_period' => (int) $row->orders_in_period,
+                'revenue_in_period' => (int) $row->revenue_in_period,
+            ])
+            ->all();
+
+        return $this->result(['customer_id', 'orders_in_period', 'revenue_in_period'], array_values($rows));
+    }
+
+    /**
+     * The customers behind one stored affinity pair (P6-08) — exactly the "pairs" each level's own
+     * `AffinityService::rebuild*Level()` method already reads (product/category via the P6-01 aggregate
+     * tables, variation via `order_items` directly). `basket` is NOT implemented: its pair is orders, not
+     * customers — a different row shape, not a filter over these same rows — deferred, not guessed at.
+     */
+    private function affinityPair(string $level, int $entityA, int $entityB): ?DrillResult
+    {
+        $sql = match ($level) {
+            'product' => 'SELECT p1.customer_id FROM customer_product_purchases p1 JOIN customer_product_purchases p2 ON p2.customer_id = p1.customer_id AND p2.product_id = ? WHERE p1.product_id = ? ORDER BY p1.customer_id DESC LIMIT ?',
+            'category' => 'SELECT p1.customer_id FROM customer_category_purchases p1 JOIN customer_category_purchases p2 ON p2.customer_id = p1.customer_id AND p2.category_id = ? WHERE p1.category_id = ? ORDER BY p1.customer_id DESC LIMIT ?',
+            'variation' => <<<'SQL'
+                WITH pairs AS (
+                    SELECT DISTINCT o.customer_id, oi.variation_id
+                    FROM orders o
+                    JOIN order_items oi ON oi.order_id = o.id
+                    WHERE o.is_realized = true AND o.is_fully_refunded = false AND o.deleted_at IS NULL
+                      AND o.customer_id IS NOT NULL AND oi.variation_id IS NOT NULL
+                )
+                SELECT p1.customer_id FROM pairs p1
+                JOIN pairs p2 ON p2.customer_id = p1.customer_id AND p2.variation_id = ?
+                WHERE p1.variation_id = ?
+                ORDER BY p1.customer_id DESC LIMIT ?
+                SQL,
+            default => null,
+        };
+
+        if ($sql === null) {
+            return null;
+        }
+
+        $rows = array_values(array_map(
+            fn (\stdClass $row): array => ['customer_id' => (int) $row->customer_id],
+            DB::select($sql, [$entityB, $entityA, self::JSON_LIMIT + 1]),
+        ));
+
+        return $this->result(['customer_id'], $rows);
     }
 
     /**
@@ -305,8 +376,59 @@ final class DrillService
                     $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name, $r->churn_risk_score, $r->clv_estimated, $r->clv_historical,
                 ],
             ],
+            'cohort_period' => [
+                'headers' => ['customer_id', 'phone', 'display_name', 'orders_in_period', 'revenue_in_period'],
+                'query' => DB::table('orders as o')
+                    ->join('customer_metrics as cm', 'cm.customer_id', '=', 'o.customer_id')
+                    ->join('customers as c', 'c.id', '=', 'o.customer_id')
+                    ->where('o.is_realized', true)
+                    ->where('o.is_fully_refunded', false)
+                    ->whereNull('o.deleted_at')
+                    ->whereNull('c.deleted_at')
+                    ->where('cm.cohort_month', $params['cohort_month'] ?? '')
+                    ->whereRaw('jalali_month_diff(cm.cohort_month, to_jalali_month(o.ordered_at)) = ?', [(int) ($params['period_number'] ?? -1)])
+                    ->groupBy('o.customer_id', 'c.phone_normalized', 'c.display_name')
+                    ->select(['o.customer_id', 'c.phone_normalized', 'c.display_name', DB::raw('COUNT(*)::integer AS orders_in_period'), DB::raw('SUM(o.net_revenue)::bigint AS revenue_in_period')]),
+                'row' => fn (\stdClass $r, bool $full): array => [
+                    $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name, $r->orders_in_period, $r->revenue_in_period,
+                ],
+            ],
+            'affinity_pair' => $this->affinityPairExportSpec((string) ($params['affinity_level'] ?? ''), (int) ($params['entity_a_id'] ?? 0), (int) ($params['entity_b_id'] ?? 0)),
             default => null,
         };
+    }
+
+    /**
+     * @return array{headers: list<string>, query: Builder, row: callable(\stdClass, bool): list<mixed>}|null
+     */
+    private function affinityPairExportSpec(string $level, int $entityA, int $entityB): ?array
+    {
+        $headers = ['customer_id', 'phone', 'display_name'];
+        $row = fn (\stdClass $r, bool $full): array => [$r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name];
+
+        $query = match ($level) {
+            'product' => DB::table('customer_product_purchases as p1')
+                ->join('customer_product_purchases as p2', function ($join) use ($entityB): void {
+                    $join->on('p2.customer_id', '=', 'p1.customer_id')->where('p2.product_id', '=', $entityB);
+                })
+                ->join('customers as c', 'c.id', '=', 'p1.customer_id')
+                ->where('p1.product_id', $entityA)
+                ->select(['p1.customer_id', 'c.phone_normalized', 'c.display_name']),
+            'category' => DB::table('customer_category_purchases as p1')
+                ->join('customer_category_purchases as p2', function ($join) use ($entityB): void {
+                    $join->on('p2.customer_id', '=', 'p1.customer_id')->where('p2.category_id', '=', $entityB);
+                })
+                ->join('customers as c', 'c.id', '=', 'p1.customer_id')
+                ->where('p1.category_id', $entityA)
+                ->select(['p1.customer_id', 'c.phone_normalized', 'c.display_name']),
+            // 'variation' export is not implemented: no aggregate table exists to join, and the
+            // derived-table pattern rows() uses (a raw CTE) has no clean fluent-builder ->cursor() form.
+            // The JSON drill (rows()) still covers variation-level affinity; only its CSV export is
+            // deferred — a narrower, documented gap, not a silent one.
+            default => null,
+        };
+
+        return $query === null ? null : ['headers' => $headers, 'query' => $query, 'row' => $row];
     }
 
     private function phone(?string $phoneNormalized, bool $canViewFullPhone): ?string

@@ -259,3 +259,37 @@ it('is idempotent: calling twice returns identical results and writes nothing', 
         ->and($second->returnedCustomers)->toBe($first->returnedCustomers)
         ->and($second->retentionRate)->toBe($first->retentionRate);
 });
+
+// ================================================================= summary() (P6-08 Retention page)
+
+it('composes repeat purchase rate, returning revenue share and N-day retention for each requested window', function () {
+    $asOf = CarbonImmutable::parse('2026-06-01 12:00:00', 'Asia/Tehran');
+    $customer = Customer::factory()->create();
+    $firstOrderAt = $asOf->subDays(40);
+    rsSeedMetrics($customer, $firstOrderAt, 2);
+    rsOrder($customer, $firstOrderAt, ['total' => 100_000]);
+    rsOrder($customer, $firstOrderAt->addDays(10), ['total' => 100_000]);
+
+    $summary = app(RetentionService::class)->summary([7, 30, 90], $asOf);
+
+    expect($summary['repeat_purchase_rate']['eligible_customers'])->toBe(1)
+        ->and($summary['returning_revenue_share']['insufficient_data'])->toBeFalse()
+        ->and($summary['retention'])->toHaveCount(3)
+        ->and(array_column($summary['retention'], 'days'))->toBe([7, 30, 90]);
+
+    $window30 = collect($summary['retention'])->firstWhere('days', 30);
+    expect($window30['mature_customers'])->toBe(1)->and($window30['returned_customers'])->toBe(1);
+});
+
+it('marks an immature window as insufficient_data, never a fabricated zero', function () {
+    $asOf = CarbonImmutable::parse('2026-06-01 12:00:00', 'Asia/Tehran');
+    $customer = Customer::factory()->create();
+    $firstOrderAt = $asOf->subDays(5); // not yet mature for a 30-day window
+    rsSeedMetrics($customer, $firstOrderAt, 1);
+    rsOrder($customer, $firstOrderAt);
+
+    $summary = app(RetentionService::class)->summary([30], $asOf);
+
+    expect($summary['retention'][0]['insufficient_data'])->toBeTrue()
+        ->and($summary['retention'][0]['retention_rate'])->toBeNull();
+});

@@ -7,12 +7,14 @@ use App\Modules\Analytics\Exceptions\DrillExportForbiddenException;
 use App\Modules\Analytics\Exceptions\UnknownDrillWidgetException;
 use App\Modules\Analytics\Services\DrillService;
 use App\Modules\Analytics\Support\DashboardPeriod;
+use App\Modules\Catalog\Models\Product;
 use App\Modules\Core\Models\AuditLog;
 use App\Modules\Core\Models\Permission;
 use App\Modules\Core\Models\Role;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Orders\Models\Order;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 /*
@@ -105,4 +107,38 @@ it('throws for an unknown widget rather than exporting nothing silently', functi
 
     expect(fn () => app(DrillService::class)->export('not-a-widget', $period, [], $user))
         ->toThrow(UnknownDrillWidgetException::class);
+});
+
+// ================================================================= cohort_period / affinity_pair export (P6-08)
+
+it('streams a CSV of the customers behind a cohort/period cell', function () {
+    $user = User::factory()->create();
+    grantDrillExportPermission($user, 'export');
+    $orderedAt = '2026-06-01 10:00:00';
+    $cohortMonth = DB::selectOne('SELECT to_jalali_month(?::timestamptz) AS m', [$orderedAt])->m;
+    $customer = Customer::factory()->create(['display_name' => 'Cohort Member']);
+    DB::table('customer_metrics')->insert(['customer_id' => $customer->id, 'cohort_month' => $cohortMonth]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => $orderedAt, 'total' => 100_000]);
+    $period = DashboardPeriod::lastDays(30, CarbonImmutable::now());
+
+    $csv = drillStreamedCsv(app(DrillService::class)->export('cohort_period', $period, ['cohort_month' => $cohortMonth, 'period_number' => '0'], $user));
+
+    expect($csv)->toContain('Cohort Member');
+});
+
+it('streams a CSV of the customers behind a product-level affinity pair', function () {
+    $user = User::factory()->create();
+    grantDrillExportPermission($user, 'export');
+    $a = Product::factory()->create();
+    $b = Product::factory()->create();
+    $customer = Customer::factory()->create(['display_name' => 'Pair Buyer']);
+    DB::table('customer_product_purchases')->insert([
+        ['customer_id' => $customer->id, 'product_id' => $a->id, 'orders_count' => 1, 'items_count' => 1, 'revenue' => 1],
+        ['customer_id' => $customer->id, 'product_id' => $b->id, 'orders_count' => 1, 'items_count' => 1, 'revenue' => 1],
+    ]);
+    $period = DashboardPeriod::lastDays(30, CarbonImmutable::now());
+
+    $csv = drillStreamedCsv(app(DrillService::class)->export('affinity_pair', $period, ['affinity_level' => 'product', 'entity_a_id' => (string) $a->id, 'entity_b_id' => (string) $b->id], $user));
+
+    expect($csv)->toContain('Pair Buyer');
 });

@@ -4,18 +4,20 @@ declare(strict_types=1);
 
 use App\Modules\Analytics\Services\DrillService;
 use App\Modules\Analytics\Support\DashboardPeriod;
+use App\Modules\Catalog\Models\Product;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Orders\Models\Order;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /*
-| P6-07 (TEST FIRST): PRD Sec.18's "هیچ عددی که پشتش دیده نشود قابل اعتماد نیست" — one uniform
-| GET /internal/drill/{widget} behind it, DrillService::rows(). Scoped to the widgets that are a
-| straightforward filtered row list (orders, new/repeat customers, RFM segment, churn level); cohort-cell
-| and affinity-pair drill need real re-derivation and are documented as deferred, not guessed at.
-| Rows never carry a name or phone (same PII-minimal rule as RfmPageService::topChampions()) -- only the
-| audited CSV export (DrillExportServiceTest) may include identity columns.
+| P6-07/P6-08 (TEST FIRST): PRD Sec.18's "هیچ عددی که پشتش دیده نشود قابل اعتماد نیست" — one uniform
+| GET /internal/drill/{widget} behind it, DrillService::rows(). orders/customers_new/customers_repeat/
+| rfm_segment/churn_level shipped in P6-07; cohort_period/affinity_pair (product/category/variation only
+| -- basket is a different row shape, still deferred) were added in P6-08 once the Cohort/Affinity pages
+| made the exact use case concrete. Rows never carry a name or phone (same PII-minimal rule as
+| RfmPageService::topChampions()) -- only the audited CSV export (DrillExportTest) may include identity
+| columns.
 */
 
 function drillPeriod(string $from, string $to): DashboardPeriod
@@ -124,4 +126,63 @@ it('truncates the JSON view and flags it, for a widget with more rows than the c
     $result = app(DrillService::class)->rows('orders', drillPeriod('2026-06-01', '2026-06-02'), []);
 
     expect($result->rows)->toHaveCount(DrillService::JSON_LIMIT)->and($result->truncated)->toBeTrue();
+});
+
+// ================================================================= cohort_period (P6-08)
+
+it('lists customers active in a specific cohort/period cell, matching CohortSnapshotService\'s own definition', function () {
+    $orderedAt = '2026-06-01 10:00:00';
+    $cohortMonth = DB::selectOne('SELECT to_jalali_month(?::timestamptz) AS m', [$orderedAt])->m;
+
+    $active = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $active->id, 'cohort_month' => $cohortMonth]);
+    realizedOrder($active, $orderedAt, ['total' => 200_000]);
+
+    $earlierPeriod = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $earlierPeriod->id, 'cohort_month' => $cohortMonth]);
+    realizedOrder($earlierPeriod, '2020-01-01 10:00:00');
+
+    $laterPeriod = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $laterPeriod->id, 'cohort_month' => $cohortMonth]);
+    realizedOrder($laterPeriod, '2026-08-01 10:00:00');
+
+    $result = app(DrillService::class)->rows('cohort_period', drillPeriod('2026-06-01', '2026-06-02'), [
+        'cohort_month' => $cohortMonth, 'period_number' => '0',
+    ]);
+
+    expect($result->rows)->toHaveCount(1)->and($result->rows[0]['customer_id'])->toBe($active->id);
+});
+
+it('returns no rows for a cohort/period cell with no activity, not an error', function () {
+    $result = app(DrillService::class)->rows('cohort_period', drillPeriod('2026-06-01', '2026-06-02'), [
+        'cohort_month' => '1300-01', 'period_number' => '5',
+    ]);
+
+    expect($result->rows)->toHaveCount(0);
+});
+
+// ================================================================= affinity_pair (P6-08)
+
+it('lists customers who bought both entities of a stored product-level affinity pair', function () {
+    $a = Product::factory()->create();
+    $b = Product::factory()->create();
+    $both = Customer::factory()->create();
+    DB::table('customer_product_purchases')->insert([
+        ['customer_id' => $both->id, 'product_id' => $a->id, 'orders_count' => 1, 'items_count' => 1, 'revenue' => 1],
+        ['customer_id' => $both->id, 'product_id' => $b->id, 'orders_count' => 1, 'items_count' => 1, 'revenue' => 1],
+    ]);
+    $onlyA = Customer::factory()->create();
+    DB::table('customer_product_purchases')->insert(['customer_id' => $onlyA->id, 'product_id' => $a->id, 'orders_count' => 1, 'items_count' => 1, 'revenue' => 1]);
+
+    $result = app(DrillService::class)->rows('affinity_pair', drillPeriod('2026-06-01', '2026-06-02'), [
+        'affinity_level' => 'product', 'entity_a_id' => (string) $a->id, 'entity_b_id' => (string) $b->id,
+    ]);
+
+    expect($result->rows)->toHaveCount(1)->and($result->rows[0]['customer_id'])->toBe($both->id);
+});
+
+it('returns null for affinity_pair at the basket level, which is not implemented', function () {
+    expect(app(DrillService::class)->rows('affinity_pair', drillPeriod('2026-06-01', '2026-06-02'), [
+        'affinity_level' => 'basket', 'entity_a_id' => '1', 'entity_b_id' => '2',
+    ]))->toBeNull();
 });

@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Analytics\AffinityPageController;
+use App\Http\Controllers\Analytics\CohortPageController;
+use App\Http\Controllers\Analytics\RetentionPageController;
 use App\Http\Controllers\Catalog\ProductListController;
 use App\Http\Controllers\Customers\CustomerListController;
 use App\Http\Controllers\Customers\CustomerNotesController;
@@ -46,6 +49,17 @@ Route::middleware(['auth', 'permission:dashboard,view'])->group(function () {
 
 Route::middleware(['auth', 'permission:dashboard,view', 'permission:customers,export'])->group(function () {
     Route::get('internal/drill/{widget}/export', DrillExportController::class)->name('drill.export');
+});
+
+// P6-08: PRD §15/§16's standalone Cohort/Retention/Affinity pages — read-only, behind analytics.view
+// (seeded since Sprint 6 started, PRD §07's own module table names AnalyticsService/CohortService/
+// AffinityService under "Analytics", not "Metrics" or "Dashboard" — this was the first route to actually
+// use it). Each is one Service call already built and tested in P6-04/06/07: CohortSnapshotService::
+// matrix(), RetentionService::summary(), AffinityService::topAll().
+Route::middleware(['auth', 'permission:analytics,view'])->group(function () {
+    Route::get('analytics/cohort', CohortPageController::class)->name('analytics.cohort');
+    Route::get('analytics/retention', RetentionPageController::class)->name('analytics.retention');
+    Route::get('analytics/affinity', AffinityPageController::class)->name('analytics.affinity');
 });
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
