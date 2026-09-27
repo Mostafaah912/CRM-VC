@@ -585,3 +585,48 @@ trend rows: 29 از 30 روز (یک روز، «امروز»، هنوز توسط 
 تست کامل: `php artisan test` → ۳٬۰۴۰/۳٬۰۴۰ سبز (بعد از رفع دو تست بالا). PHPStan (`app/Modules/Analytics`, `app/Modules/Metrics`, کنترلر/ریکوئست تازه) → ۰ خطا (۲ ایراد نوع لیست/آرایه پیدا و رفع شد: `array_values()` روی خروجی‌های `Collection::map()->all()`، و تکمیل PHPDoc تو‌درتوی `dashboard()`). Pint → تمیز (چند فایل با `ordered_imports`/`fully_qualified_strict_types` اصلاح شدند). `npm run types:check` → تمیز. `npm run build` → موفق. `vp check --fix` فقط روی فایل تازهٔ خودم (`dashboard.tsx`) اجرا شد، نه کل مخزن (که فرمت‌نشدگی‌های قدیمی و نامرتبط زیادی در فایل‌های دیگر دارد).
 
 **فایل‌ها:** `app/Modules/Analytics/Services/AnalyticsService.php` (تازه)، `app/Modules/Analytics/Support/DashboardPeriod.php` (تازه)، `app/Modules/Analytics/Services/AffinityService.php` (+`top()`)، `app/Modules/Analytics/Services/CohortSnapshotService.php` (+`matrix()`)، `app/Modules/Metrics/Services/ChurnDistributionService.php` (تازه)، `app/Http/Requests/DashboardRequest.php` (تازه)، `app/Http/Controllers/DashboardController.php` (تازه)، `routes/web.php` (حذف placeholder)، `routes/internal.php` (+مسیر dashboard)، `resources/js/pages/dashboard.tsx` (بازنویسی کامل)، `resources/js/types/dashboard.ts` (تازه)، تست‌ها: `AnalyticsServiceTest.php`، `ChurnDistributionServiceTest.php`، `DashboardControllerTest.php` (همه تازه) + افزوده به `AffinityServiceTest.php`/`CohortSnapshotServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۵ به ۱۶).
+
+## P6-07 — Drill-down + export
+
+خواندن: ARCHITECTURE.md، sprint-6.md، و کل متن PRD مربوط به drill/export — که فقط **یک جملهٔ توصیفی** و **یک جزئیات فنی جعبه‌ای** است: «فیلتر بازه، مقایسه دوره، Export، Drill-down یکنواخت (`GET /internal/drill/{widget}`). هیچ تجمیع سنگینی در لحظه بارگذاری. عددی که نتوانید پشتش را ببینید، قابل اعتماد نیست.» (§۱۸) و «GATE: dashboard < 1s, every number drillable» (§۲۵). هیچ لیست ویجت، هیچ فرمت پاسخ، هیچ ستون export مشخص نشده — این تسک به‌شدت کم‌مشخصات است؛ زیر تصمیم‌های گرفته‌شده و دلیلشان آمده، نه حدس.
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام ویجت‌ها واقعاً drill می‌شوند؟** PRD «هر عدد» می‌گوید اما هیچ لیستی نمی‌دهد. تصمیم: ۵ ویجت که یک فهرست ردیف فیلترشدهٔ ساده‌اند — `orders` (پشت سفارش‌ها/درآمد خالص/AOV با هم، چون هر سه از یک مجموعه سفارش مشتق می‌شوند)، `customers_new`، `customers_repeat`، `rfm_segment`، `churn_level`. **drill سلول کوهورت و جفت‌های Affinity ساخته نشد** — برخلاف این ۵ تا، این دو نیاز به بازتولید واقعی دارند (کدام مشتریان در دورهٔ N کوهورت X فعال بودند؛ کدام مشتریان دقیقاً جفت A/B را هم‌خریده‌اند) نه یک فیلتر ساده روی جدول موجود — دامنه‌ای واقعاً بزرگ‌تر، به‌عنوان Open Item مستند شد (ARCHITECTURE.md)، نه حدس‌زده.
+۲. **مسیر `GET /internal/drill/{widget}` — دقیقاً همین رشته پیاده شد**، با `internal/` به‌عنوان بخشی از URL (برخلاف بقیهٔ صفحات همین فایل که بدون این پیشوندند) — چون این تنها جزئیات فنی صریح PRD برای کل این تسک است.
+۳. **Export با کدام مجوز؟** هیچ `dashboard.export`/`analytics.export` در seed موجود نیست. تصمیم: از `customers.export` موجود استفاده شد — دقیقاً همان استدلال از‌پیش‌مستند در `routes/internal.php` برای export سگمنت: «این هم همان خروج‌گیری ممیزی‌شدهٔ PII است، مثل هر export دیگر مشتریان». مسیر export علاوه‌بر `customers,export`، به `dashboard,view` هم نیاز دارد (چون همچنان یک drill از داشبورد است).
+۴. **چه ستون‌هایی در پاسخ JSON قابل‌قبول است؟** طبق قاعدهٔ از‌پیش‌موجود `RfmPageService::topChampions()` («هرگز نام یا تلفن در یک نمای تجمیعی») — ردیف‌های JSON فقط id و عدد دارند، هرگز display_name/phone. فقط CSV ممیزی‌شده (با `customers.export` جدا) اجازهٔ نام/تلفن (ماسک‌شده مگر `customers.view_full_phone`) دارد — دقیقاً هم‌الگوی `SegmentService::export()`.
+۵. **تعارض معماری مشابه P6-06 (که کاربر از قبل پیش‌بینی کرده بود):** برای فیلتر `segment`/`level`، اعتبارسنجی مقدار باید دربرابر `RfmSegment`/`ChurnRiskLevel` انجام شود. به‌جای import این Enumها داخل ماژول Analytics (که دقیقاً همان تخلف P6-06 را تکرار می‌کرد)، اعتبارسنجی در لایهٔ HTTP (`DrillRequest`, که ماژول نیست و آزادانه از هر Enum می‌تواند import کند) انجام شد؛ رشتهٔ معتبرشده بدون import کردن Enum به `DrillService` می‌رسد — دقیقاً همان الگوی سرویس عمومی/مرز ماژول که در P6-06 کشف و رفع شد، این‌بار حتی بدون نیاز به یک سرویس تازه.
+۶. **مشکل واقعی دیگر کشف‌شده حین کد زدن:** برای گرفتن رشتهٔ شمسی معادل بازهٔ داشبورد (لازم برای ساخت لینک drill از صفحهٔ React)، فرانت‌اند نمی‌توانست خودش Gregorian→Jalali تبدیل کند (قاعدهٔ «تاریخ شمسی فقط با JalaliDate»). رفع: `AnalyticsService::dashboard()` اکنون `period.from_jalali`/`period.to_jalali` را هم برمی‌گرداند (با `App\Support\JalaliDate::format()`)، تا صفحه بدون منطق تبدیل تاریخ خودش، این رشته‌ها را مستقیم به drill پاس بدهد.
+
+### پیاده‌سازی
+
+- `DrillService` (ماژول Analytics) — `rows(string $widget, DashboardPeriod, array $params): ?DrillResult` (خواندن، محدود به ۲۰۰ ردیف با پرچم `truncated`) و `export(...)` (استریم CSV، بدون محدودیت، ممیزی‌شده). `orders`/`customer_metrics` مستقیم خوانده می‌شوند (Query Builder، بدون مدل Eloquent، بدون import Enum) — همان الگوی از‌پیش‌موجود `RetentionService`/`DailyMetricsService`. تعریف «سفارش واقعی‌شده» و «مشتری بازگشتی» (`ordered_at روز != first_order_at روز`) دقیقاً همان تعریف `BaseAggregateService`/`DailyMetricsService` است.
+- `DrillResult` (Support DTO)، دو Exception تازه (`DrillExportForbiddenException`, `UnknownDrillWidgetException`) با mapping متمرکز در `bootstrap/app.php` (هم‌الگوی `SegmentException`/`RuleValidationException` موجود) — کنترلرها بدون try/catch می‌مانند.
+- `DrillRequest` — `from`/`to` شمسی (هم‌الگوی `DashboardRequest`، عمداً تکرار نه انتزاع مشترک — سه خط مشابه بهتر از انتزاع زودهنگام)، به‌علاوهٔ `segment`/`level` (فقط برای ویجت مربوطه لازم، با `Rule::in` از مقادیر واقعی Enum + مقدار مصنوعی `none`).
+- `DrillController` (JSON) و `DrillExportController` (CSV) — هرکدام نازک، یک Service call.
+- مسیرها: `GET internal/drill/{widget}` پشت `dashboard,view`؛ `GET internal/drill/{widget}/export` پشت `dashboard,view` **و** `customers,export` (هردو در سطح route، به‌علاوه چک دوباره داخل خود Service — هم‌الگوی segments/export).
+- Frontend: `resources/js/components/dashboard/drill-dialog.tsx` (کامپوننت تازه، قابل‌استفادهٔ مجدد) — روی کلیک، JSON را fetch می‌کند و در یک Dialog (shadcn) به‌صورت جدول عمومی نمایش می‌دهد، با لینک «دانلود CSV». در `dashboard.tsx` سیم‌کشی شد: هر ۵ کارت KPI (سفارش/درآمد/AOV/مشتری‌جدید/بازگشتی) و هر سلول گرید RFM و Churn حالا قابل‌کلیک‌اند.
+
+### TEST FIRST
+
+`DrillServiceTest.php` (۹ تست): فیلتر بازهٔ هرکدام از ۵ ویجت، حذف سفارش غیرواقعی/مستردشدهٔ‌کامل، بدون name/phone در ستون‌ها، bucket مصنوعی `none`، ویجت ناشناس → null نه خطا، truncation دقیق در سقف. `DrillExportTest.php` (۶ تست، هم‌الگوی دقیق `SegmentServiceExportTest`): رد بدون مجوز + بدون ثبت audit، ثبت ردیف audit با widget/بازه، ماسک/عدم‌ماسک تلفن، BOM+هدر، ویجت ناشناس → خطا. `DrillControllerTest.php`/`DrillExportControllerTest.php` (۱۳ تست): مهمان، بدون مجوز (هردو مجوز جدا برای export)، ۴۰۴ ویجت ناشناس، ۴۲۲ مقدار segment نامعتبر/غایب، فیلتر واقعی، جریان CSV واقعی + ردیف audit واقعی.
+
+Mutation check: وارونه‌کردن مقایسهٔ `!=` بین روز سفارش و روز اولین سفارش (تعریف «بازگشتی») → تست مربوطه با شکست واقعی قرمز شد؛ بازگردانده شد. وارونه‌کردن `denies()`→`allows()` در چک مجوز export → تست رد‌شدن قرمز شد؛ بازگردانده شد.
+
+### کراس‌چک مستقل روی dev (بازهٔ پیش‌فرض ۳۰ روز اخیر: 2026-08-29 .. 2026-09-27)
+
+```
+orders:           drill=200 (truncated) | مستقل COUNT=1,111   (هم‌ارز با current.orders_count داشبورد P6-06)
+customers_new:    drill=200 (truncated) | مستقل COUNT=930     (هم‌ارز با current.customers_new داشبورد P6-06)
+customers_repeat: drill=161             | مستقل COUNT=161     — برابر دقیق
+rfm_segment=champion: drill=61          | مستقل COUNT=61      — برابر دقیق
+churn_level=high: drill=200 (truncated) | مستقل COUNT=3,841
+```
+هر ۵ کوئری drill با شرط WHERE یکسان، جدا و مستقیم روی dev دوباره اجرا شد و دقیقاً برابر بود؛ دو موردی که truncate شده‌اند (۲۰۰ سقف JSON) با شمارش کامل مستقل تأیید شدند که واقعاً بیشتر از ۲۰۰ ردیف دارند، نه یک باگ. مسیر export همان شرط‌های WHERE را دارد (فقط با JOIN اضافه برای phone/display_name) — با همین کراس‌چک‌ها به‌طور غیرمستقیم تأیید شد؛ دانلود واقعی CSV روی dev اجرا نشد (نیاز به یک کاربر واقعی با `customers.export`)، اما مسیر کد یکسان با `rows()` است و در تست‌های Pest با استریم واقعی (نه mock) پوشش داده شده.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرها/ریکوئست‌ها، `bootstrap/app.php`) → ۰ خطا (چند ایراد نوع پیدا و رفع شد: `array_values()` روی خروجی‌های `map()->all()`، `whereColumn()` با `Expression` نپذیرفته‌شده → `whereRaw()` ایستا، و typing بستارهای export از `object` به `\stdClass` برای دسترسی امن به خواص). Pint → تمیز. `npm run types:check`/`npm run build` → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/DrillService.php` (تازه)، `app/Modules/Analytics/Support/DrillResult.php` (تازه)، `app/Modules/Analytics/Exceptions/{DrillExportForbiddenException,UnknownDrillWidgetException}.php` (تازه)، `app/Http/Requests/DrillRequest.php` (تازه)، `app/Http/Controllers/{DrillController,DrillExportController}.php` (تازه)، `bootstrap/app.php` (+mapping استثنا)، `routes/internal.php` (+۲ مسیر)، `app/Modules/Analytics/Services/AnalyticsService.php` (+`period.from_jalali`/`to_jalali`)، `resources/js/components/dashboard/drill-dialog.tsx` (تازه)، `resources/js/pages/dashboard.tsx` (سیم‌کشی drill)، `resources/js/types/dashboard.ts` (+فیلدهای جدید)، تست‌ها: `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`, `DrillExportControllerTest.php` (همه تازه) + یک تست به `AnalyticsServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۶ به ۱۸).

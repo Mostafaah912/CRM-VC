@@ -8,6 +8,7 @@ use App\Modules\Analytics\Services\AnalyticsService;
 use App\Modules\Analytics\Support\DashboardPeriod;
 use App\Modules\Catalog\Models\Product;
 use App\Modules\Customers\Models\Customer;
+use App\Support\JalaliDate;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
@@ -48,6 +49,15 @@ it('sums orders/revenue/aov over the requested period only, not the whole table'
     expect($data['current']['orders_count'])->toBe(5)
         ->and($data['current']['net_revenue'])->toBe(450_000)
         ->and($data['current']['aov'])->toBe(90_000);
+});
+
+it('includes the Jalali equivalent of the period boundaries, for the drill-down links', function () {
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+
+    $data = app(AnalyticsService::class)->dashboard($period);
+
+    expect($data['period']['from_jalali'])->toBe(JalaliDate::format(CarbonImmutable::parse('2026-06-01'), '/'))
+        ->and($data['period']['to_jalali'])->toBe(JalaliDate::format(CarbonImmutable::parse('2026-06-02'), '/'));
 });
 
 it('computes the previous period of equal length immediately before the current one, for compare', function () {

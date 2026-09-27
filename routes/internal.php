@@ -11,6 +11,8 @@ use App\Http\Controllers\Customers\CustomerShowController;
 use App\Http\Controllers\Customers\CustomerTimelineController;
 use App\Http\Controllers\Customers\PhoneRevealController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DrillController;
+use App\Http\Controllers\DrillExportController;
 use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
@@ -31,6 +33,19 @@ use Illuminate\Support\Facades\Route;
 // `dashboard` (breadcrumbs across the app already link to it by that name).
 Route::middleware(['auth', 'permission:dashboard,view'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
+});
+
+// P6-07: PRD §18's boxed literal `GET /internal/drill/{widget}` — the uniform drill-down behind every
+// drillable Dashboard number, gated the same as the Dashboard page itself (dashboard.view). The CSV
+// export sibling additionally needs customers.export (checked here for a plain 403 on a direct visit,
+// and again inside DrillService::export() so the Service enforces it regardless of caller — same
+// double-gate reasoning as segments/{segment}/export below).
+Route::middleware(['auth', 'permission:dashboard,view'])->group(function () {
+    Route::get('internal/drill/{widget}', DrillController::class)->name('drill.show');
+});
+
+Route::middleware(['auth', 'permission:dashboard,view', 'permission:customers,export'])->group(function () {
+    Route::get('internal/drill/{widget}/export', DrillExportController::class)->name('drill.export');
 });
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user

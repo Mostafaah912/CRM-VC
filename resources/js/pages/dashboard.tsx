@@ -18,6 +18,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
+import { DrillDialog } from '@/components/dashboard/drill-dialog';
 import { formatNumber, formatToman } from '@/lib/format';
 import { churnLevels, rfmSegments } from '@/lib/customer-labels';
 import { useCan } from '@/hooks/use-can';
@@ -73,7 +74,7 @@ function delta(current: number, previous: number): string {
     return `${sign}${formatNumber(change)}٪ نسبت به دوره قبل`;
 }
 
-function KpiCard({
+function KpiBox({
     title,
     value,
     compare,
@@ -83,11 +84,39 @@ function KpiCard({
     compare: string;
 }) {
     return (
-        <div className="flex flex-col gap-1 rounded-lg border p-3">
+        <div className="flex flex-col gap-1 rounded-lg border p-3 text-right">
             <span className="text-muted-foreground text-xs">{title}</span>
             <span className="text-lg font-medium">{value}</span>
             <span className="text-muted-foreground text-xs">{compare}</span>
         </div>
+    );
+}
+
+/** P6-07: a drillable KPI — the whole box opens DrillDialog for `widget`, scoped to the dashboard's own period. */
+function KpiCard({
+    title,
+    value,
+    compare,
+    widget,
+    period,
+}: {
+    title: string;
+    value: string;
+    compare: string;
+    widget: string;
+    period: { from_jalali: string; to_jalali: string };
+}) {
+    return (
+        <DrillDialog
+            widget={widget}
+            params={{ from: period.from_jalali, to: period.to_jalali }}
+            title={title}
+            trigger={
+                <button type="button" className="text-right">
+                    <KpiBox title={title} value={value} compare={compare} />
+                </button>
+            }
+        />
     );
 }
 
@@ -191,6 +220,8 @@ export default function Dashboard({ data, filters }: Props) {
                                 data.current.orders_count,
                                 data.previous.orders_count,
                             )}
+                            widget="orders"
+                            period={data.period}
                         />
                         <KpiCard
                             title="درآمد خالص"
@@ -199,11 +230,15 @@ export default function Dashboard({ data, filters }: Props) {
                                 data.current.net_revenue,
                                 data.previous.net_revenue,
                             )}
+                            widget="orders"
+                            period={data.period}
                         />
                         <KpiCard
                             title="میانگین ارزش سفارش (AOV)"
                             value={formatToman(data.current.aov)}
                             compare={delta(data.current.aov, data.previous.aov)}
+                            widget="orders"
+                            period={data.period}
                         />
                         <KpiCard
                             title="مشتریان جدید"
@@ -212,6 +247,8 @@ export default function Dashboard({ data, filters }: Props) {
                                 data.current.customers_new,
                                 data.previous.customers_new,
                             )}
+                            widget="customers_new"
+                            period={data.period}
                         />
                         <KpiCard
                             title="مشتریان بازگشتی"
@@ -220,6 +257,8 @@ export default function Dashboard({ data, filters }: Props) {
                                 data.current.customers_repeat,
                                 data.previous.customers_repeat,
                             )}
+                            widget="customers_repeat"
+                            period={data.period}
                         />
                     </CardContent>
                 </Card>
@@ -307,23 +346,40 @@ export default function Dashboard({ data, filters }: Props) {
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-                        {RFM_ORDER.map((segment) => (
-                            <div
-                                key={segment}
-                                className="flex flex-col gap-1 rounded-lg border p-3"
-                            >
-                                <span className="text-muted-foreground text-xs">
-                                    {segment === 'none'
-                                        ? 'بدون امتیاز'
-                                        : (rfmSegments[segment] ?? segment)}
-                                </span>
-                                <span className="text-lg font-medium">
-                                    {formatNumber(
-                                        data.rfm_distribution[segment],
-                                    )}
-                                </span>
-                            </div>
-                        ))}
+                        {RFM_ORDER.map((segment) => {
+                            const label =
+                                segment === 'none'
+                                    ? 'بدون امتیاز'
+                                    : (rfmSegments[segment] ?? segment);
+
+                            return (
+                                <DrillDialog
+                                    key={segment}
+                                    widget="rfm_segment"
+                                    params={{ segment }}
+                                    title={`سگمنت RFM: ${label}`}
+                                    trigger={
+                                        <button
+                                            type="button"
+                                            className="text-right"
+                                        >
+                                            <div className="flex flex-col gap-1 rounded-lg border p-3">
+                                                <span className="text-muted-foreground text-xs">
+                                                    {label}
+                                                </span>
+                                                <span className="text-lg font-medium">
+                                                    {formatNumber(
+                                                        data.rfm_distribution[
+                                                            segment
+                                                        ],
+                                                    )}
+                                                </span>
+                                            </div>
+                                        </button>
+                                    }
+                                />
+                            );
+                        })}
                     </CardContent>
                 </Card>
 
@@ -336,24 +392,41 @@ export default function Dashboard({ data, filters }: Props) {
                     </CardHeader>
                     <CardContent className="flex flex-col gap-4">
                         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-                            {CHURN_ORDER.map((level) => (
-                                <div
-                                    key={level}
-                                    className="flex flex-col gap-1 rounded-lg border p-3"
-                                >
-                                    <span className="text-muted-foreground text-xs">
-                                        {level === 'none'
-                                            ? 'بدون امتیاز'
-                                            : (churnLevels[level]?.label ??
-                                              level)}
-                                    </span>
-                                    <span className="text-lg font-medium">
-                                        {formatNumber(
-                                            data.churn_distribution[level],
-                                        )}
-                                    </span>
-                                </div>
-                            ))}
+                            {CHURN_ORDER.map((level) => {
+                                const label =
+                                    level === 'none'
+                                        ? 'بدون امتیاز'
+                                        : (churnLevels[level]?.label ?? level);
+
+                                return (
+                                    <DrillDialog
+                                        key={level}
+                                        widget="churn_level"
+                                        params={{ level }}
+                                        title={`ریسک ریزش: ${label}`}
+                                        trigger={
+                                            <button
+                                                type="button"
+                                                className="text-right"
+                                            >
+                                                <div className="flex flex-col gap-1 rounded-lg border p-3">
+                                                    <span className="text-muted-foreground text-xs">
+                                                        {label}
+                                                    </span>
+                                                    <span className="text-lg font-medium">
+                                                        {formatNumber(
+                                                            data
+                                                                .churn_distribution[
+                                                                level
+                                                            ],
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        }
+                                    />
+                                );
+                            })}
                         </div>
                         <div className="flex flex-col gap-1 rounded-lg border p-3">
                             <span className="text-muted-foreground text-xs">

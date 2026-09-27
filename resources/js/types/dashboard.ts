@@ -72,6 +72,8 @@ export type DashboardData = {
         to: string;
         previous_from: string;
         previous_to: string;
+        from_jalali: string;
+        to_jalali: string;
     };
     current: DashboardPeriodTotals;
     previous: DashboardPeriodTotals;

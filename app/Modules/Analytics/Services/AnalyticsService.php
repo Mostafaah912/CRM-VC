@@ -8,6 +8,8 @@ use App\Modules\Analytics\Enums\AffinityLevel;
 use App\Modules\Analytics\Support\DashboardPeriod;
 use App\Modules\Metrics\Services\ChurnDistributionService;
 use App\Modules\Metrics\Services\RfmPageService;
+use App\Support\JalaliDate;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -50,7 +52,7 @@ final class AnalyticsService
      * Controller.
      *
      * @return array{
-     *     period: array{from: string, to: string, previous_from: string, previous_to: string},
+     *     period: array{from: string, to: string, previous_from: string, previous_to: string, from_jalali: string, to_jalali: string},
      *     current: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
      *     previous: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
      *     trend: list<array{date: string, jalali_date: string, orders_count: int, net_revenue: int, aov: int}>,
@@ -75,6 +77,11 @@ final class AnalyticsService
                 'to' => $period->to,
                 'previous_from' => $period->previousFrom,
                 'previous_to' => $period->previousTo,
+                // Jalali equivalents (App\Support\JalaliDate, CLAUDE.md §2 — the one conversion path):
+                // DrillRequest only accepts a Jalali from/to, matching the dashboard's own filter form
+                // contract, so the page needs these ready-made rather than converting dates in TS.
+                'from_jalali' => JalaliDate::format(CarbonImmutable::parse($period->from), '/'),
+                'to_jalali' => JalaliDate::format(CarbonImmutable::parse($period->to), '/'),
             ],
             'current' => $this->periodTotals($period->from, $period->to),
             'previous' => $this->periodTotals($period->previousFrom, $period->previousTo),
