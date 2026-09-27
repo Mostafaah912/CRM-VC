@@ -125,4 +125,47 @@ final class CohortSnapshotService
             elapsedMs: (int) round((microtime(true) - $start) * 1000),
         );
     }
+
+    /**
+     * Read-only: the `$months` most recent cohorts, each with its full stored period row (P6-06's
+     * dashboard "Cohort matrix" widget, PRD §07's `CohortService::matrix()`). A plain read of the
+     * already-rebuilt table — no computation happens here. `retention_rate` is null for an immature
+     * period (`.claude/rules/metrics.md`: "excluded from retention rates ... greyed out in the UI") —
+     * the raw stored value is never handed to a caller as if it were a finished rate.
+     *
+     * @return list<array{cohort_month: string, cohort_size: int, periods: list<array{period_number: int, retention_rate: float|null, is_mature: bool, active_customers: int}>}>
+     */
+    public function matrix(int $months = 6): array
+    {
+        $recentMonths = DB::table('cohort_snapshots')
+            ->distinct()
+            ->orderByDesc('cohort_month')
+            ->limit($months)
+            ->pluck('cohort_month');
+
+        if ($recentMonths->isEmpty()) {
+            return [];
+        }
+
+        $rows = DB::table('cohort_snapshots')
+            ->whereIn('cohort_month', $recentMonths)
+            ->orderBy('cohort_month')
+            ->orderBy('period_number')
+            ->get(['cohort_month', 'cohort_size', 'period_number', 'retention_rate', 'is_mature', 'active_customers']);
+
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $month = (string) $row->cohort_month;
+            $grouped[$month] ??= ['cohort_month' => $month, 'cohort_size' => (int) $row->cohort_size, 'periods' => []];
+            $grouped[$month]['periods'][] = [
+                'period_number' => (int) $row->period_number,
+                'retention_rate' => $row->is_mature ? (float) $row->retention_rate : null,
+                'is_mature' => (bool) $row->is_mature,
+                'active_customers' => (int) $row->active_customers,
+            ];
+        }
+
+        return array_values($grouped);
+    }
 }

@@ -308,6 +308,27 @@ it('rebuilds every level from scratch: a stale row is gone even if nothing new q
         ->and($summary->variationRows)->toBe(0)->and($summary->basketRows)->toBe(0);
 });
 
+// ================================================================= top() (P6-06 dashboard read)
+
+it('returns the strongest pairs for a level, ordered by lift descending, limited', function () {
+    $a = Product::factory()->create();
+    $b = Product::factory()->create();
+    $c = Product::factory()->create();
+    seedProductCoPurchase($a, $b, coBuyers: 10, noiseBuyers: 10); // lift 2.0
+    seedProductCoPurchase($a, $c, coBuyers: 10, noiseBuyers: 100); // bigger population -> higher lift
+    app(AffinityService::class)->rebuild();
+
+    $top = app(AffinityService::class)->top(AffinityLevel::Product, limit: 1);
+
+    expect($top)->toHaveCount(1)
+        ->and($top[0]['level'])->toBe('product')
+        ->and($top[0]['lift'])->toBeGreaterThan(2.0);
+});
+
+it('returns an empty list for a level with nothing stored', function () {
+    expect(app(AffinityService::class)->top(AffinityLevel::Basket))->toBe([]);
+});
+
 it('reports how many rows it wrote per level', function () {
     $a = Product::factory()->create();
     $b = Product::factory()->create();

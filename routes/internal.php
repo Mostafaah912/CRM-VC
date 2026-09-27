@@ -10,6 +10,7 @@ use App\Http\Controllers\Customers\CustomerProductsController;
 use App\Http\Controllers\Customers\CustomerShowController;
 use App\Http\Controllers\Customers\CustomerTimelineController;
 use App\Http\Controllers\Customers\PhoneRevealController;
+use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
@@ -24,6 +25,13 @@ use App\Http\Controllers\Segments\SegmentShowController;
 use App\Http\Controllers\Segments\SegmentStoreController;
 use App\Http\Controllers\Segments\SegmentUpdateController;
 use Illuminate\Support\Facades\Route;
+
+// P6-06: PRD §18's Dashboard — read-only, behind dashboard.view. Replaces the starter-kit placeholder
+// `Route::inertia('dashboard', 'dashboard')` that used to live in routes/web.php; the route NAME stays
+// `dashboard` (breadcrumbs across the app already link to it by that name).
+Route::middleware(['auth', 'permission:dashboard,view'])->group(function () {
+    Route::get('dashboard', DashboardController::class)->name('dashboard');
+});
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
 // AND a permission (closed by default). P3-01: the customer list. P3-03: one customer's 360 page (a soft-deleted customer is 404). P3-04: that customer's timeline, cursor-paged JSON.

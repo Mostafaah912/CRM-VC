@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Analytics\Services;
 
+use App\Modules\Analytics\Enums\AffinityLevel;
 use App\Modules\Analytics\Support\AffinitySummary;
 use Illuminate\Support\Facades\DB;
 
@@ -55,6 +56,34 @@ final class AffinityService
             basketRows: $basket,
             elapsedMs: (int) round((microtime(true) - $start) * 1000),
         );
+    }
+
+    /**
+     * Read-only: the strongest `$limit` pairs for one level, by lift descending (P6-06's "Top Affinity"
+     * dashboard widget, PRD §07's `AffinityService::top()`). Plain read of the already-rebuilt table —
+     * no computation happens here.
+     *
+     * @return list<array{entity_a_id: int, entity_b_id: int, co_customers: int, support: float, confidence: float, lift: float, level: string}>
+     */
+    public function top(AffinityLevel $level = AffinityLevel::Product, int $limit = 10): array
+    {
+        $rows = DB::table('product_affinities')
+            ->where('level', $level->value)
+            ->orderByDesc('lift')
+            ->limit($limit)
+            ->get(['entity_a_id', 'entity_b_id', 'co_customers', 'support', 'confidence', 'lift'])
+            ->map(fn (object $row): array => [
+                'entity_a_id' => (int) $row->entity_a_id,
+                'entity_b_id' => (int) $row->entity_b_id,
+                'co_customers' => (int) $row->co_customers,
+                'support' => (float) $row->support,
+                'confidence' => (float) $row->confidence,
+                'lift' => (float) $row->lift,
+                'level' => $level->value,
+            ])
+            ->all();
+
+        return array_values($rows);
     }
 
     /** PRD §16: category level, source customer_category_purchases, min co-purchase 20. */

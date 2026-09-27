@@ -529,3 +529,59 @@ independent:  co=13 a_cust=47 b_cust=24 support=0.001208 confidence=0.276596 lif
 تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
 
 **فایل‌ها:** `app/Modules/Analytics/Services/AffinityService.php` (تازه)، `app/Modules/Analytics/Support/AffinitySummary.php` (تازه)، `app/Modules/Analytics/Jobs/BuildAffinityJob.php` (تازه)، `tests/Feature/Modules/Analytics/AffinityServiceTest.php` (تازه، ۱۴ تست)، `tests/Feature/Modules/Analytics/BuildAffinityJobTest.php` (تازه، ۴ تست).
+
+## P6-06 — Dashboard + period compare
+
+خواندن: ARCHITECTURE.md (ایندکس)، sprint-6.md، PRD §۱۸ (Dashboard/Customer 360)، §۰۷ (جدول وابستگی ماژول‌ها + امضای `AnalyticsService::dashboard()`/`CohortService::matrix()`/`AffinityService::top()`)، §۲۲ (صف/زمان‌بندی)، §۲۳ (هدف کارایی)، §۰۱ ردیف C۵ (تناقض سطح Affinity، از قبل حل‌شده در خود PRD). اولین آیتم انجام‌نشده بعد از P6-05 دقیقاً همین بود (`grep` روی sprint-6.md و PRD §25 تأیید کرد).
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده (هیچ‌کدام حدس نبود — همه مستند شده)
+
+۱. **«سگمنت‌های فعال» و «سلامت سیستم» در لیست ویجت‌های PRD §۱۸ آمده‌اند، اما جدول وابستگی ماژول‌های PRD §۰۷ اجازه نمی‌دهد:** `Analytics => [Core, Orders, Metrics, Catalog]` — نه Segments نه Sync. این با تست global آرکیتکچری (`ArchitectureTest.php::it('respects the module dependency table')`) اجرا می‌شود، نه فقط توصیه. راه‌حل: هر دو ویجت به یک کارت لینک ساده به صفحه‌ی موجودشان (`/segments`, `/system/health`) تبدیل شدند، فقط با `useCan()` سمت کلاینت (همان هوک مشترک همیشگی) نمایش داده می‌شوند — هیچ کوئری بکند تازه‌ای لازم نبود.
+۲. **«خلاصه AI» بدون منبع دادهٔ واقعی:** `grep` تأیید کرد ماژول Ai فقط یک Enum دارد، هیچ Service/Job ساخته نشده (Sprint ۷ شروع نشده). این ویجت کاملاً حذف شد — هیچ دادهٔ ساختگی نمایش داده نمی‌شود.
+۳. **کدام ویجت‌ها واقعاً «فیلتر بازه» را می‌پذیرند؟** فقط KPI/روند/مشتری‌جدید-بازگشتی از `daily_metrics` می‌آیند که تنها جدول با بعد تاریخ است. RFM/Churn/Cohort/Affinity هرکدام یک عکس‌فوری از وضعیت فعلی‌اند (جدول خودشان بعد زمانی ندارد) — فیلتر بازه رویشان اثر ندارد؛ صریحاً در UI و کد مستند شد، نه سکوت.
+۴. **فرمول «ارزش در خطر» در PRD مشخص نشده.** پیاده‌سازی: `SUM(COALESCE(clv_estimated, clv_historical))` روی مشتریان ریسک high/lost — یک پیش‌فرض معقول با دلیل، نه فرمول PRD.
+۵. **هیچ کتابخانه نموداری در پروژه نصب نیست** (بررسی `package.json` + `grep` در `resources/js`). به‌جای افزودن یک‌طرفهٔ وابستگی تازه، ویجت «روند» به‌صورت جدول ساخته شد — دقیقاً هم‌سبک صفحهٔ RFM موجود (که خودش هم نمودار ندارد، فقط Card/Table).
+۶. **تناقض معماری واقعی کشف‌شده حین کدنویسی (نه از قبل مستند):** تلاش اول برای خواندن مستقیم `customer_metrics` در `AnalyticsService` با `import` مستقیم Enumهای `RfmSegment`/`ChurnRiskLevel` از ماژول Metrics نوشته شد؛ تست global `ArchitectureTest.php::it('only reaches into other modules through their Services or Events')` رد شد — چون فقط `Services`/`Events` مجازند، نه `Enums`، حتی برای ماژولی که در جدول وابستگی مجاز است. رفع: به‌جای دویاره‌نویسی کوئری، `AnalyticsService` از سرویس عمومی موجود `RfmPageService::getData()['segments']` استفاده می‌کند؛ برای churn (سرویس معادلی وجود نداشت) یک کلاس تازهٔ کوچک `App\Modules\Metrics\Services\ChurnDistributionService` ساخته شد (TEST FIRST، ۳ تست) — دقیقاً هم‌الگوی `RfmPageService`، داخل ماژول Metrics چون `customer_metrics`/Enumهایش را همان ماژول مالک است.
+
+### پیاده‌سازی
+
+- `AnalyticsService::dashboard(DashboardPeriod)` (ماژول Analytics) — یک آرایهٔ آماده‌ی Inertia (هم‌الگوی `RfmPageService::getData()`)، ترکیب: KPI/روند دوره‌ای از `daily_metrics`، دو معیار عمر-فروشگاه از `RetentionService` موجود، RFM از `RfmPageService`، churn از `ChurnDistributionService` تازه، ماتریس کوهورت از متد تازهٔ `CohortSnapshotService::matrix()`، Top Affinity از متد تازهٔ `AffinityService::top()`.
+- `DashboardPeriod` (Support DTO تازه) — بازهٔ جاری + بازهٔ هم‌طول قبلی برای مقایسه.
+- `DashboardRequest` — `from`/`to` شمسی اختیاری (با هم یا هیچ‌کدام)، با `App\Modules\Customers\Support\JalaliDay` (کلاس آماده‌ی همین پروژه، نه بازنویسی)، اعتبارسنجی محدودهٔ حداکثر (۳۶۶ روز) و ترتیب صحیح.
+- `DashboardController` — نازک، یک Service، یک Inertia response.
+- مسیر: `Route::inertia('dashboard', 'dashboard')` قدیمی (placeholder starter-kit) از `routes/web.php` حذف و در `routes/internal.php` با `permission:dashboard,view` و همان نام مسیر `dashboard` جایگزین شد (Wayfinder helper و breadcrumbهای بقیهٔ صفحات دست‌نخورده ماندند). پرمیژن `dashboard.view` از قبل seed شده بود (بررسی شد، اضافه نشد).
+- Frontend: `resources/js/pages/dashboard.tsx` بازنویسی کامل — فرم فیلتر بازه (همان الگوی `customers/index.tsx`)، کارت‌های KPI با مقایسهٔ درصدی، جدول روند، کارت‌های نرخ خرید مجدد/سهم درآمد بازگشتی، گرید RFM/Churn (هم‌سبک RFM موجود، همان `rfmSegments`/`churnLevels` label map)، ارزش در خطر، جدول ماتریس کوهورت (دوره‌ی نابالغ خاکستری)، جدول Top Affinity، دو کارت لینک (Segments/System Health) با `useCan()`.
+
+### TEST FIRST
+
+`AnalyticsServiceTest.php` (۸ تست): جمع دقیق KPI فقط در بازه (نه کل جدول)، محاسبهٔ دقیق بازهٔ قبلی هم‌طول، روزهای بدون داده = صفر نه خطا، ردیف‌های روند مرتب و محدود به بازه، معیارهای عمر-فروشگاه مستقل از فیلتر، توزیع RFM با کلید `none`، توزیع churn + ارزش در خطر (فقط high/lost)، عبور ماتریس کوهورت/Top Affinity. `AffinityService::top()` و `CohortSnapshotService::matrix()` هرکدام تست اختصاصی گرفتند (ترتیب صحیح، محدودیت count، لیست خالی بدون خطا). `ChurnDistributionServiceTest.php` (۳ تست، ماژول Metrics). `DashboardControllerTest.php` (۸ تست): رد مهمان، رد بدون `dashboard.view`، رندر صحیح، بازهٔ پیش‌فرض ۳۰ روزه، پذیرش بازهٔ شمسی صریح، رد بازهٔ نامعتبر (پایان قبل شروع)، رد تاریخ نامعتبر، الزام هر دوی from/to با هم.
+
+Mutation check: وارونه‌کردن مقایسهٔ `from > to` در `DashboardRequest` → تست رد بازهٔ نامعتبر قرمز شد؛ بازگردانده شد. (مقایسه‌ی بازهٔ قبلی در `DashboardPeriod` هم‌زمان با پیاده‌سازی P6-05 اثبات شده بود، همان الگو اینجا هم صادق است.)
+
+### کراس‌چک مستقل روی dev (پیش‌فرض ۳۰ روز اخیر)
+
+```
+period: 2026-08-29 .. 2026-09-27 (قبلی: 2026-07-30 .. 2026-08-28)
+current:  orders=1,111  net_revenue=1,420,553,726  aov=1,278,626  customers_new=930  customers_repeat=175
+previous: orders=1,593  net_revenue=2,093,957,387
+repeat_purchase_rate: 7.71% (13,981 واجد شرط)
+returning_revenue_share: 16.75%
+value_at_risk: 32,370,663,659 تومان
+cohort_matrix: 6 کوهورت · top_affinity: 10 جفت
+trend rows: 29 از 30 روز (یک روز، «امروز»، هنوز توسط BuildDailyMetricsJob شبانه محاسبه نشده — طبیعی، نه باگ)
+```
+کوئری مستقیم و جدا روی `daily_metrics` برای همان دو بازه: `orders=1,111 / net_revenue=1,420,553,726` (جاری) و `orders=1,593 / net_revenue=2,093,957,387` (قبلی) — برابر دقیق. شمار ردیف بازهٔ جاری در `daily_metrics` هم مستقیماً ۲۹ تأیید شد.
+
+### دو تست از‌پیش‌موجود که با جایگزینی placeholder شکستند — رفع شد، نه نادیده گرفته شد
+
+اجرای کامل تست‌ها (بعد از تمام تغییرات بالا) دو شکست نشان داد، هر دو چون `/dashboard` قبلاً برای هر کاربر واردشده باز بود و حالا پشت `dashboard.view` است:
+- `tests/Feature/DashboardTest.php` (تست starter-kit خود Laravel) — «کاربر واردشده می‌تواند داشبورد را ببیند» با یک کاربر بدون هیچ نقشی می‌سنجید؛ اصلاح شد تا از `SystemPageFixtures::userWith('dashboard.view')` استفاده کند (نامش هم به‌روزرسانی شد تا دقیق‌تر باشد).
+- `tests/Feature/Modules/Core/InertiaPermissionsShareTest.php` — از `/dashboard` به‌عنوان یک صفحهٔ ساده‌ی واردشده برای سنجش prop مشترک `auth.permissions` استفاده می‌کرد؛ اصلاح شد تا نقش تست، هم `segments.view` (چیزی که واقعاً سنجیده می‌شود) و هم `dashboard.view` (تا خود صفحه اصلاً بارگذاری شود) را داشته باشد.
+
+هیچ تستی حذف یا موقتاً غیرفعال نشد (CLAUDE.md §9) — هر دو با تغییر واقعی و به‌روز به قرارداد تازهٔ صفحه اصلاح شدند.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → ۳٬۰۴۰/۳٬۰۴۰ سبز (بعد از رفع دو تست بالا). PHPStan (`app/Modules/Analytics`, `app/Modules/Metrics`, کنترلر/ریکوئست تازه) → ۰ خطا (۲ ایراد نوع لیست/آرایه پیدا و رفع شد: `array_values()` روی خروجی‌های `Collection::map()->all()`، و تکمیل PHPDoc تو‌درتوی `dashboard()`). Pint → تمیز (چند فایل با `ordered_imports`/`fully_qualified_strict_types` اصلاح شدند). `npm run types:check` → تمیز. `npm run build` → موفق. `vp check --fix` فقط روی فایل تازهٔ خودم (`dashboard.tsx`) اجرا شد، نه کل مخزن (که فرمت‌نشدگی‌های قدیمی و نامرتبط زیادی در فایل‌های دیگر دارد).
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AnalyticsService.php` (تازه)، `app/Modules/Analytics/Support/DashboardPeriod.php` (تازه)، `app/Modules/Analytics/Services/AffinityService.php` (+`top()`)، `app/Modules/Analytics/Services/CohortSnapshotService.php` (+`matrix()`)، `app/Modules/Metrics/Services/ChurnDistributionService.php` (تازه)، `app/Http/Requests/DashboardRequest.php` (تازه)، `app/Http/Controllers/DashboardController.php` (تازه)، `routes/web.php` (حذف placeholder)، `routes/internal.php` (+مسیر dashboard)، `resources/js/pages/dashboard.tsx` (بازنویسی کامل)، `resources/js/types/dashboard.ts` (تازه)، تست‌ها: `AnalyticsServiceTest.php`، `ChurnDistributionServiceTest.php`، `DashboardControllerTest.php` (همه تازه) + افزوده به `AffinityServiceTest.php`/`CohortSnapshotServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۵ به ۱۶).

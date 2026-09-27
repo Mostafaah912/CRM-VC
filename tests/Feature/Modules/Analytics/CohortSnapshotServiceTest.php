@@ -161,3 +161,41 @@ it('rebuilds from scratch: a stale cohort_month no longer present in customer_me
 
     expect(DB::table('cohort_snapshots')->where('cohort_month', '1399-01')->exists())->toBeFalse();
 });
+
+// ================================================================= matrix() (P6-06 dashboard read)
+
+it('returns the most recent cohorts with every stored period, nulling the rate for an immature one', function () {
+    DB::table('cohort_snapshots')->insert([
+        ['cohort_month' => '1402-11', 'period_number' => 0, 'cohort_size' => 10, 'active_customers' => 10, 'retention_rate' => 1, 'orders_count' => 10, 'revenue' => 1, 'cumulative_revenue' => 1, 'is_mature' => true],
+        ['cohort_month' => '1402-11', 'period_number' => 1, 'cohort_size' => 10, 'active_customers' => 3, 'retention_rate' => 0.3, 'orders_count' => 3, 'revenue' => 1, 'cumulative_revenue' => 2, 'is_mature' => true],
+        ['cohort_month' => '1403-01', 'period_number' => 0, 'cohort_size' => 5, 'active_customers' => 5, 'retention_rate' => 1, 'orders_count' => 5, 'revenue' => 1, 'cumulative_revenue' => 1, 'is_mature' => true],
+        ['cohort_month' => '1403-01', 'period_number' => 1, 'cohort_size' => 5, 'active_customers' => 0, 'retention_rate' => 0, 'orders_count' => 0, 'revenue' => 0, 'cumulative_revenue' => 1, 'is_mature' => false],
+    ]);
+
+    $matrix = app(CohortSnapshotService::class)->matrix();
+
+    expect($matrix)->toHaveCount(2);
+    $latest = collect($matrix)->firstWhere('cohort_month', '1403-01');
+    $immaturePeriod = collect($latest['periods'])->firstWhere('period_number', 1);
+    expect($immaturePeriod['is_mature'])->toBeFalse()->and($immaturePeriod['retention_rate'])->toBeNull();
+    $maturePeriod = collect($latest['periods'])->firstWhere('period_number', 0);
+    expect($maturePeriod['retention_rate'])->toBe(1.0);
+});
+
+it('limits to the requested number of most recent cohort months', function () {
+    foreach (['1402-09', '1402-10', '1402-11', '1403-01'] as $month) {
+        DB::table('cohort_snapshots')->insert([
+            'cohort_month' => $month, 'period_number' => 0, 'cohort_size' => 1, 'active_customers' => 1,
+            'retention_rate' => 1, 'orders_count' => 1, 'revenue' => 1, 'cumulative_revenue' => 1,
+        ]);
+    }
+
+    $matrix = app(CohortSnapshotService::class)->matrix(months: 2);
+
+    expect($matrix)->toHaveCount(2)
+        ->and(collect($matrix)->pluck('cohort_month')->sort()->values()->all())->toBe(['1402-11', '1403-01']);
+});
+
+it('returns an empty list when nothing has been computed yet, not an error', function () {
+    expect(app(CohortSnapshotService::class)->matrix())->toBe([]);
+});
