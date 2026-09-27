@@ -24,8 +24,10 @@ it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and P4-07
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
+        'app/Console/Commands/CatalogDryRunCommand.php',
         'app/Console/Commands/MetricsRecompute.php',
         'app/Console/Commands/ReconcileCommand.php',
+        'app/Console/Commands/ResolveOrderItemsCommand.php',
         'app/Console/Commands/SyncCommand.php',
     ])
         ->and(Scanner::phpCode(syncCommandFile()))->toMatch('/hm:sync \{--entity=orders[^}]*\} \{--full[^}]*\}/');

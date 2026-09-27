@@ -503,6 +503,27 @@ it('refuses the same SKU twice inside one payload and writes nothing', function 
     expect(Product::count())->toBe(0)->and(ProductVariation::count())->toBe(0);
 });
 
+// ============================= tryUpsertProduct (P6 decision: a non-throwing outcome for callers outside Catalog)
+
+it('accepts a clean product through tryUpsertProduct and returns its id', function () {
+    $outcome = catalog()->tryUpsertProduct(product(103, variations: [variation(1031, 'SYN-OK')]));
+
+    expect($outcome->accepted)->toBeTrue()
+        ->and($outcome->productId)->toBe(Product::sole()->id)
+        ->and($outcome->rejectionReason)->toBeNull();
+});
+
+it('rejects a SKU conflict through tryUpsertProduct without throwing, writing nothing, and carries the reason', function () {
+    catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-TAKEN', 250000)]));
+
+    $outcome = catalog()->tryUpsertProduct(product(104, variations: [variation(1041, 'SYN-TAKEN', 999)]));
+
+    expect($outcome->accepted)->toBeFalse()
+        ->and($outcome->productId)->toBeNull()
+        ->and($outcome->rejectionReason)->toContain('1041')->toContain('SYN-TAKEN')
+        ->and(Product::count())->toBe(1);
+});
+
 it('is backed by the database: the partial unique index refuses a duplicate SKU but allows many NULLs', function () {
     catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-A'), variation(1032, null), variation(1033, null)]));
     $productId = Product::sole()->id;

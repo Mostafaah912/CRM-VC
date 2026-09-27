@@ -370,3 +370,85 @@ order_items با product_id قابل‌حل — الان: 0 / 61,358 (0.00%) —
 **تصمیم لازم از شما (برای ادامه‌ی تصمیم ۳):** فرمت قیمت اعشاری Woo (`"159990.0"`) چطور مدیریت شود — (الف) `PayloadReader::toman()`/`Money::parseToman()` رشته‌ی اعشاری با بخش کسری صفر را بپذیرد (`floor` یا Round، فقط وقتی کسر واقعاً صفر است، رد کند اگر غیرصفر)، (ب) فقط برای `ProductDto::price` (نه بقیه‌ی مصرف‌کننده‌های `toman()`) یک مسیر Parse اعشاری جدا ساخته شود، یا (ج) این محصولات را رد کند (NULL برای price) و با Warning لاگ کند، ادامه بدهد؟ بعد از تصمیم، اجرای زنده و گزارش کامل کراس‌چک (طبق درخواست شما) تکرار می‌شود.
 
 **فایل‌ها:** `database/migrations/2026_09_27_110000_widen_product_categories_name_slug.php` (تازه)، `tests/Feature/Modules/Catalog/CatalogServiceTest.php` (+۲ تست).
+
+## رفع بخش دوم تصمیم ۳ (قیمت اعشاری Woo) + بخش ۴ (اجرای زنده و backfill): sync زنده کامل شد؛ یک باگ تازه و نامرتبط جلوی aggregate را گرفت
+
+تصمیم انتخابی شما از سه گزینهٔ قبلی: **(ب)** — مسیر Parse اعشاری جدا، فقط برای `ProductDto::price`.
+
+### ۱) `PayloadReader::nullableDecimalMoney()` — TEST FIRST
+
+متد جدید (نه تغییر `toman()`/`nullableMoney()` موجود): یک رشتهٔ اعشاری با کسر تماماً صفر (`"159990.0"`, `"159990.00"`, `"0.0"`) را به بخش صحیح تبدیل می‌کند و همان مسیر سخت‌گیرانهٔ `toman()` را روی آن اجرا می‌کند؛ کسر غیرصفر دست‌نخورده به `toman()` می‌رود و دقیقاً مثل قبل رد می‌شود. تست‌ها (`PayloadReaderTest.php`) قبل از افزودن متد قرمز بودند (`Call to undefined method`)، بعد سبز. Mutation check: حذف موقت خط collapse رشته → تست‌های "real Woo value"/"zero itself" با پیام دقیق toman قرمز شدند؛ بازگردانده شد.
+
+`ProductMapper::map()` تنها مصرف‌کنندهٔ متد جدید شد (`nullableMoney('price')` → `nullableDecimalMoney('price')`). `VariationMapper` دست‌نخورده ماند — طبق تصمیم صریح شما، محدود به `ProductDto::price`.
+
+### ۲) یک محصول نامعتبر، کل sync را متوقف نکند — TEST FIRST
+
+`CatalogSyncService::syncProducts()`: نگاشت هر محصول (و variationهای آن، چون همان واحد کاری‌اند) داخل `try/catch(WooMappingException)` است؛ گرفتار شدن یعنی شمارش `rejectedProducts++`، یک `Log::warning` با دلیل، و ادامهٔ حلقه. برای تعارض کاتالوگ (SKU تکراری و مانند آن) که با استثنای `CatalogIntegrityException` (متعلق به ماژول Catalog) نشان داده می‌شود، **نه** با catch مستقیم آن در Sync — چون قانون مرزی ماژول‌ها (`CLAUDE.md` §۱، تست global در `ArchitectureTest.php`: «فقط از طریق Services یا Events») اجازهٔ import کردن `Catalog\Exceptions` را از ماژول دیگر نمی‌دهد. راه‌حل: متد تازهٔ غیرپرتاب‌کنندهٔ `CatalogService::tryUpsertProduct(ProductInput): CatalogUpsertOutcome` — تعارض را به‌صورت یک مقدار برگشتی (`accepted`/`rejectionReason`) گزارش می‌کند، نه استثنا؛ `upsertProduct()` قدیمی و پرتاب‌کننده برای مصرف‌کنندگان داخل Catalog دست‌نخورده ماند.
+
+نکتهٔ مهم که موقع پیاده‌سازی کشف شد: یک تلاش اول با `catch (WooMappingException|CatalogIntegrityException $e)` مستقیم در `CatalogSyncService` نوشته شد و تست‌های واحدی محلی سبز شدند، اما تست global مرزی (`ArchitectureTest.php::it('only reaches into other modules through their Services or Events')`) قرمز شد — این تست فقط `Services`/`Events` را مجاز می‌داند، نه `Exceptions`. بازطراحی به `tryUpsertProduct()`/`CatalogUpsertOutcome` انجام شد تا مرز دقیقاً به همان سختی قبل بماند.
+
+تست‌های قبلی که رفتار «پرتاب و توقف کامل» را انتظار داشتند (`fails loudly on a malformed product payload...`, `fails loudly...SKU is already taken...`) به رفتار تازه (`rejects one malformed product with a warning and keeps syncing the rest`, `rejects with a warning, corrupting nothing...`) بازنویسی شدند — این یک تغییر عمدی قرارداد است، نه رگرسیون؛ رفتار قدیم Woo رقابتی/۵xx (`WooRequestException`) دست‌نخورده ماند (هنوز کل run را متوقف می‌کند). Mutation check: محدود کردن catch فقط به `CatalogIntegrityException` → تست محصول بدشکل قرمز شد؛ تنظیم شرط رد به `if (false)` → تست تعارض SKU قرمز شد (۲ به‌جای ۱ محصول شمرده شد). هر دو بازگردانده شدند.
+
+### ۳) ابزار dry-run فقط‌خواندنی — TEST FIRST
+
+`CatalogDryRunService` (بدون هیچ وابستگی به `CatalogService` — از نظر ساختاری قادر به نوشتن نیست) + کامند نازک `hm:catalog-dry-run`. از همان الگوی generator موجود (`WooClient::pages()`) استفاده می‌کند، دقیقاً مثل `CatalogSyncService` اثبات‌شده — نه اسکریپت خام قبلی. هر محصول/variation را با mapperهای P2-03 اعتبارسنجی می‌کند و هر کلاس خطا را با شمار و یک نمونه جمع می‌کند؛ دسته‌بندی‌ها فقط بر اساس فیلد+پیام است.
+
+### ۴) `hm:resolve-order-items` (backfill محلی) — TEST FIRST
+
+بررسی شد: هیچ مکانیزم موجودی برای تحلیل مجدد `order_items` از دادهٔ محلی وجود نداشت. ساخته شد: `OrderItemBackfillService::resolveUnresolved()` + کامند نازک. محدودیت واقعی که در بررسی کد کشف شد: جدول `order_items` هیچ ستون `woo_product_id`/`woo_variation_id` ندارد، پس مراحل ۱ و ۲ الگوریتم اصلی `OrderService::resolve()` از روی یک ردیف ذخیره‌شده قابل بازسازی نیستند — فقط مراحل SKU-محور (۳، سپس ۳.۵) قابل تکرارند. کوئری فقط ردیف‌هایی را می‌گیرد که `product_id`/`variation_id` هر دو NULL و `sku` NOT NULL باشند (پس ۵٬۷۹۸ ردیف بدون SKU هرگز لمس نمی‌شوند)، در chunk های ۵۰۰تایی. Idempotent: تست اختصاصی دو بار اجرا می‌کند و بار دوم صفر تغییر تازه می‌بیند؛ تست دیگری ردیف از‌قبل-حل‌شده را حتی وقتی SKU‌اش الان به چیز دیگری هم می‌خورد دست‌نخورده نگه می‌دارد (Mutation check: حذف شرط `whereNull('product_id')` → این تست قرمز شد؛ بازگردانده شد).
+
+### اجرای زنده — نتایج واقعی
+
+**dry-run (فقط‌خواندنی، هیچ نوشتنی):** روی کل کاتالوگ واقعی — ۲٬۵۲۲ محصول، ۸۲۲ variation اسکن شد. تنها کلاس خطا: همان فرمت قیمت اعشاری — **۵ محصول** (کسر غیرصفر، رد صحیح طبق تصمیم شما) و **۲۰۲ variation**. طبق دستور صریح شما («اگر فقط از جنس رد-با-warning است، همان مسیر ۲ کافی است»)، این کلاس خطای تازه‌ای نبود که نیاز به توقف داشته باشد — مستقیم به اجرای زنده رفتیم.
+
+**اجرای زنده `CatalogSyncJob` (همان مسیر `syncCategories()`→`syncProducts()`، از طریق tinker تا شمارش‌ها قابل‌ثبت باشند):**
+اولین تلاش با `php artisan tinker` (حد پیش‌فرض CLI، ۱۲۸M) با «Allowed memory size... exhausted» شکست خورد — همان کلاس خطای قبلاً مستندشدهٔ این اسپرینت (نه دادهٔ جدید)؛ تکرار با `-d memory_limit=1G` (رفع قبلاً اثبات‌شده) موفق شد:
+
+```
+{"categories":173,"products":2300,"variations":142,"rejected":222}
+```
+
+این نتیجه، Open Item قبلی «کاتالوگ خیلی بزرگ / احتمال hang» را **حل می‌کند**: مشکل حد حافظهٔ پیش‌فرض PHP CLI بود، نه نشتی یا گیرکردن — dry-run فقط‌خواندنی (بدون نوشتن Eloquent) با حد پیش‌فرض هم مشکلی نداشت؛ فقط نوشتن هزاران رکورد Eloquent در یک پردازش طولانی به حافظهٔ بیشتری نیاز داشت.
+
+جمع رد‌شده‌ها (۲۲۲) بیشتر از ۵ محصول با قیمت اعشاری خودشان است، چون یک variation بدشکل کل محصول والدش را رد می‌کند (نگاشت variation قبل از نوشتن محصول، در همان try یکسان اتفاق می‌افتد) — یعنی از ۶۲۰ variation معتبر یافته‌شده در dry-run، فقط ۱۴۲ تا واقعاً نوشته شد؛ ۴۷۸ تای دیگر معتبر بودند اما چون همراهشان (در همان محصول) یک variation بد بود، محصولشان رد شد. این رفتار جدید این تسک نیست — از طراحی قبلاً موجود و مستند P2-05 می‌آید («یک محصول (ردیف+لینک‌ها+variationها) یک واحد کاری است»)؛ تصمیم ۲ فقط تعیین کرد که این رد، کل sync را متوقف نکند.
+
+شمار نهایی در DB (mirror هرگز-حذف‌نشو، شامل اجراهای قبلی جزئی): **۱۷۸ دسته، ۲٬۳۱۲ محصول، ۱۶۶ variation** (کراس‌چک مستقیم DB).
+
+**Backfill (`hm:resolve-order-items`):**
+```
+resolved as variation: 81, resolved as product: 41826, still unresolved: 13653
+```
+۸۱+۴۱٬۸۲۶+۱۳٬۶۵۳ = ۵۵٬۵۶۰ = دقیقاً همان تعداد ردیف با SKU (۶۱٬۳۵۸ − ۵٬۷۹۸). کراس‌چک مستقل با کوئری مستقیم: `order_items` با `product_id IS NOT NULL` = **۴۱٬۹۰۷** (مطابق)، ردیف‌های بدون SKU که اشتباهاً حل شده باشند = **۰** (تأیید دست‌نخوردگی ۵٬۷۹۸ ردیف).
+
+**درصد نهایی resolve شدهٔ order_items: ۴۱٬۹۰۷ / ۶۱٬۳۵۸ = ۶۸.۲۹٪** (از ۰.۰۰٪).
+
+### باگ تازه: `BuildCustomerPurchaseAggregatesJob` — متوقف شد، نیاز به تصمیم شما
+
+اجرا با `dispatchSync()` روی dev شکست خورد:
+```
+SQLSTATE[23502]: Not null violation: 7 ERROR: null value in column "customer_id" of relation "customer_product_purchases"
+```
+علت ریشه‌ای: کوئری `CustomerPurchaseAggregateService` با `FROM orders o JOIN order_items oi` نوشته شده و هیچ‌جا `o.customer_id IS NOT NULL` را فیلتر نمی‌کند — این یک نقص از قبل موجود در SQL این سرویس (P6-01) است که تا امروز چون شرط `oi.product_id IS NOT NULL` روی dev صفر ردیف می‌خورد (نرخ ۰٪ resolve)، هرگز خودش را نشان نداده بود. سرویس خواهر `BaseAggregateService` (P4) این مشکل را اصلاً ندارد چون جهت کوئری‌اش برعکس است: `FROM customers c LEFT JOIN orders o` — از نظر ساختاری هرگز به یک مشتری NULL برنمی‌خورد.
+
+اندازهٔ واقعی مشکل: از ۲۷٬۵۶۷ `order_items` واقعی‌شده (`is_realized`) و resolve‌شده، فقط **۲۲۱ (٪۰.۸)** به سفارشی با `customer_id IS NULL` تعلق دارند (شکست نرمال‌سازی تلفن، PRD §۰۸ گام ۱، `needs_phone_review`).
+
+این یک باگ **تازه و نامرتبط** به کار این تسک است (خودش را فقط به‌خاطر موفقیت خودِ این تسک نشان داد) و خارج از حیطهٔ مجوز صریح این تسک — طبق الگوی ثابت این نشست، رفعش نکردم و اینجا گزارش می‌کنم:
+
+**تصمیم لازم از شما:** راه‌حل واضح و هم‌راستا با الگوی موجود کد (`BaseAggregateService`) افزودن `AND o.customer_id IS NOT NULL` به کوئری `CustomerPurchaseAggregateService` است — اما چون این خارج از دامنهٔ مجاز این تسک است، بدون تأیید صریح شما اعمال نشد. گزینه‌های ممکن: (الف) همین فیلتر ساده اضافه شود (سفارش بدون مشتری، در aggregate هیچ مشتری‌ای هم شمرده نمی‌شود — سازگار با طراحی موجود)، (ب) گزینهٔ دیگری که شما ترجیح می‌دهید. تا آن زمان `customer_product_purchases`/`customer_category_purchases` روی dev خالی می‌مانند و کراس‌چک نهایی درخواستی شما (شمار ردیف این دو جدول) قابل تولید نیست.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → ۲٬۹۹۷/۲٬۹۹۷ سبز (۱۳٬۸۰۷ Assertion) — قبل از اجرای زنده، چون هیچ کد بعد از آن تغییر نکرد. PHPStan (کل app) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:**
+- `app/Modules/Sync/Mappers/PayloadReader.php` (+`nullableDecimalMoney()`)
+- `app/Modules/Sync/Mappers/ProductMapper.php` (سیم‌کشی متد تازه)
+- `app/Modules/Sync/Services/CatalogSyncService.php` (رد-با-warning به‌جای توقف کامل)
+- `app/Modules/Sync/Support/CatalogSyncResult.php` (+`rejectedProducts`)
+- `app/Modules/Catalog/Services/CatalogService.php` (+`tryUpsertProduct()`)
+- `app/Modules/Catalog/Services/CatalogUpsertOutcome.php` (تازه)
+- `app/Modules/Sync/Services/CatalogDryRunService.php` + `app/Modules/Sync/Support/CatalogDryRunResult.php` (تازه)
+- `app/Console/Commands/CatalogDryRunCommand.php` (تازه، `hm:catalog-dry-run`)
+- `app/Modules/Orders/Services/OrderItemBackfillService.php` + `app/Modules/Orders/Support/OrderItemBackfillResult.php` (تازه)
+- `app/Console/Commands/ResolveOrderItemsCommand.php` (تازه، `hm:resolve-order-items`)
+- تست‌ها: `PayloadReaderTest.php`, `CatalogMappersTest.php`, `CatalogSyncServiceTest.php`, `CatalogServiceTest.php`, `CatalogDryRunServiceTest.php` (تازه), `OrderItemBackfillServiceTest.php` (تازه), `CatalogDryRunCommandTest.php` (تازه), `ResolveOrderItemsCommandTest.php` (تازه), `tests/Arch/CatalogSyncBoundaryTest.php`, `tests/Arch/SyncCommandBoundaryTest.php` (لیست کامندها).

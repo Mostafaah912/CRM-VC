@@ -107,6 +107,20 @@ final class CatalogService
         });
     }
 
+    /**
+     * Like upsertProduct(), but for a caller outside Catalog (P6 decision, ARCHITECTURE.md): a SKU
+     * conflict comes back as a CatalogUpsertOutcome instead of a thrown CatalogIntegrityException, since
+     * the module boundary never lets another module import Catalog's Exceptions, only its Services.
+     */
+    public function tryUpsertProduct(ProductInput $input): CatalogUpsertOutcome
+    {
+        try {
+            return CatalogUpsertOutcome::accepted($this->upsertProduct($input));
+        } catch (CatalogIntegrityException $e) {
+            return CatalogUpsertOutcome::rejected($e->getMessage());
+        }
+    }
+
     /** Read-only lookup by Woo variation id. Woo's 0 means "no variation": callers must not ask with it. */
     public function resolveVariationByWooId(int $wooVariationId): ?ResolvedCatalogItem
     {
