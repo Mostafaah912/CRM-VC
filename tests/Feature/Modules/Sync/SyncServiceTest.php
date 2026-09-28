@@ -614,3 +614,77 @@ it('fails the run if a refund read fails, keeping the orders already stored and 
         ->and(Refund::count())->toBe(0)
         ->and(SyncCursor::findOrFail('orders')->cursor_value)->toBeNull();
 });
+
+// ================================================================== P6-10: pruneLogs()
+
+function pruneRun(): SyncJob
+{
+    return SyncJob::create([
+        'entity' => SyncEntity::Orders,
+        'mode' => SyncMode::Incremental,
+        'status' => SyncStatus::Completed,
+        'pages_processed' => 0,
+        'records_processed' => 0,
+        'records_failed' => 0,
+        'started_at' => now(),
+        'finished_at' => now(),
+    ]);
+}
+
+function pruneLog(SyncJob $run, string $createdAt): SyncLog
+{
+    $log = SyncLog::create(['sync_job_id' => $run->id, 'level' => SyncLogLevel::Info, 'message' => 'x']);
+    $log->created_at = CarbonImmutable::parse($createdAt, 'UTC');
+    $log->save();
+
+    return $log;
+}
+
+it('deletes only sync_logs rows older than the given retention window', function () {
+    $run = pruneRun();
+    $this->travelTo(CarbonImmutable::parse('2026-06-30 00:00:00', 'UTC'));
+    $old = pruneLog($run, '2026-05-29 23:59:59'); // 32 days ago — outside a 30-day window
+    $exactlyAtCutoff = pruneLog($run, '2026-05-31 00:00:00'); // exactly 30 days ago — the window is "older than", not "at or older"
+    $boundary = pruneLog($run, '2026-05-31 00:00:01'); // just under 30 days ago — inside the window
+    $recent = pruneLog($run, '2026-06-29 00:00:00'); // 1 day ago — inside the window
+
+    $deleted = runService()->pruneLogs(30);
+
+    expect($deleted)->toBe(1)
+        ->and(SyncLog::whereKey($old->id)->exists())->toBeFalse()
+        ->and(SyncLog::whereKey($exactlyAtCutoff->id)->exists())->toBeTrue()
+        ->and(SyncLog::whereKey($boundary->id)->exists())->toBeTrue()
+        ->and(SyncLog::whereKey($recent->id)->exists())->toBeTrue();
+});
+
+it('is idempotent: running pruneLogs twice deletes nothing the second time', function () {
+    $run = pruneRun();
+    $this->travelTo(CarbonImmutable::parse('2026-06-30 00:00:00', 'UTC'));
+    pruneLog($run, '2026-01-01 00:00:00');
+
+    $first = runService()->pruneLogs(30);
+    $second = runService()->pruneLogs(30);
+
+    expect($first)->toBe(1)->and($second)->toBe(0);
+});
+
+it('reads the orders cursor\'s consecutive_failures (P6-10, for HealthCheckService\'s SyncFailure alert)', function () {
+    runCursor('2026-06-01 10:00:00+00', failures: 3);
+
+    expect(runService()->ordersConsecutiveFailures())->toBe(3);
+});
+
+it('returns 0 when the orders cursor row does not exist yet', function () {
+    expect(runService()->ordersConsecutiveFailures())->toBe(0);
+});
+
+it('deletes across more than one chunk', function () {
+    $run = pruneRun();
+    $this->travelTo(CarbonImmutable::parse('2026-06-30 00:00:00', 'UTC'));
+    foreach (range(1, 5) as $i) {
+        pruneLog($run, '2026-01-01 00:00:00');
+    }
+
+    expect(runService()->pruneLogs(30, chunkSize: 2))->toBe(5)
+        ->and(SyncLog::count())->toBe(0);
+});

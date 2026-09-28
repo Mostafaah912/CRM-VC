@@ -756,3 +756,88 @@ RebuildAllSegmentsJob:                 4,279ms  (۱۲ سگمنت موفق، ۰ �
 تست کامل: `php artisan test` → [در گزارش چت]. PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز.
 
 **فایل‌ها:** `app/Console/Commands/NightlyChainCommand.php` (تازه)، `app/Modules/Sync/Jobs/ReconcileRecentMonthsJob.php` (تازه)، `app/Modules/Sync/Support/ReconciliationMonths.php` (+`lastN()`)، `app/Modules/Sync/Services/ReconciliationService.php` (+`dispatchRecentMonths()`)، `routes/console.php` (بازنویسی زمان‌بندی شبانه/هفتگی)، `config/queue.php` (+`retry_after` 330→930)، `config/horizon.php` (+`timeout` 60→900)، `app/Modules/Sync/Jobs/ReconcileMonthJob.php` (کامنت به‌روزشده)، تست‌ها: `tests/Feature/Console/NightlyChainCommandTest.php` (تازه)، `tests/Feature/Modules/Sync/ReconcileRecentMonthsJobTest.php` (تازه) + افزوده به `ReconciliationMonthsTest.php`, `ReconciliationServiceTest.php`, `ReconcileMonthJobTest.php`.
+
+## P6-10 — Alerts + log pruning
+
+خواندن: ARCHITECTURE.md (ایندکس، به‌خصوص Open Item زنجیرهٔ P6-09 دربارهٔ ۶ جاب نامشخص)، sprint-6.md (بخش P6-09)، `AlertService`/`AlertKind`/`SettingKey` موجود (P0-09 — از پیش ساخته شده بودند، هیچ‌کدام تا این تسک واقعاً صدا زده نمی‌شدند)، PRD §22 (لیست شش هشدار + زمان‌بندی `PruneLogsJob`/`HealthCheckJob`)، PRD §09/§21 برای جداول لاگ و بازهٔ نگهداری (§21 فقط بازهٔ Backup را نام می‌برد، نه هیچ جدول لاگ اپلیکیشن).
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام جاب‌ها واقعاً به P6-10 تعلق دارند؟** طبق دستور صریح شما، `GenerateDailyBriefJob`/`GenerateWeeklyReviewJob` دست نخوردند — PRD §25 هر دو را زیر Sprint 7 (P7-08 «AnalystService + daily/weekly jobs») می‌آورد، نه Sprint 6. `backup:run`/`horizon:snapshot` هم دست نخوردند — هیچ تسک بک‌لاگی (P8-0x) هنوز صریحاً به آن‌ها نگاشت نشده. فقط `PruneLogsJob` و `HealthCheckJob` ساخته شدند — دقیقاً همان‌هایی که PRD §22 در زمان‌بندی نام می‌برد و متعلق به هیچ Sprint دیگری نیستند.
+۲. **«هشدارها» یعنی چه، فنی؟** `AlertService`/`AlertKind` (۶ مورد)/`SettingKey` (۵ آستانهٔ عددی) از P0-09 از قبل کامل ساخته شده بودند — `tests/Feature/Modules/Core/AlertServiceTest.php` تأیید می‌کند «هر ۶ شرط PRD §22» را پوشش می‌دهند. تا این تسک، **هیچ‌کدام از جایی صدا زده نمی‌شدند** — Enumها فقط وجود داشتند. کار واقعی P6-10: پیدا کردن سیگنال واقعی هرکدام و وصل‌کردنش، نه ساخت مکانیزم تازه.
+۳. **کجا این اتصال زندگی کند؟** بررسی شد: هیچ ماژولی هم‌زمان به Sync + Metrics + Core دسترسی مجاز ندارد (جدول PRD §۰۷: `Sync=[Core,Customers,Catalog,Orders]`، `Metrics=[Core,Orders,Customers]` — نه Sync). تست معماری `only reaches into other modules through their Services or Events` فقط `app/Modules/**` را اسکن می‌کند — پس `App\Support\HealthCheckService` (تازه، خارج از هر ماژول) تنها محل معتبر معماری برای این ترکیب است؛ دقیقاً همان استدلال `NightlyChainCommand` در P6-09. تلاش اولیه برای وصل‌کردن هشدار در همان لحظهٔ رخداد (مثلاً داخل `ReconciliationService::reconcile()`) رد شد چون آن فایل زیرمجموعهٔ یک محدودیت سخت‌گیرانه‌تر موجود است (`ReconciliationBoundaryTest`: فقط `Sync\` یا `Orders\Services` مجازند) — تغییر آن تست یک تصمیم معماری جدا و خارج از Scope این تسک بود؛ به‌جایش هر پنج شرط با خواندن دوره‌ای (`HealthCheckJob`، هر ۱۵ دقیقه، طبق PRD §22) از متدهای عمومی موجود/تازهٔ هر سرویس محاسبه می‌شوند.
+۴. **کدام جدول لاگ prune شود؟** PRD §09 دو جدول لاگ‌مانند دارد: `sync_logs` (P2-12، صفحهٔ «Sync Logs») و `audit_logs`. تصمیم: فقط `sync_logs`. دلیل: CLAUDE.md §21 (بخش Backup) صریحاً «audit logs» را جزو داده‌های **غیرقابل‌بازیابی از Woo** می‌شمارد (همان دلیل وجود Backup) — یعنی نشانهٔ روشنی که این جدول باید نگه داشته شود، نه prune. `sync_logs` صرفاً نویز عملیاتی/دیباگ سطح صفحه است، بدون چنین محافظتی.
+۵. **بازهٔ نگهداری چقدر؟** PRD نامی از جاب می‌برد ولی هیچ عددی برای بازهٔ نگهداری نمی‌دهد — سکوت واقعی PRD، نه ابهام قابل‌حدس‌زدن از SQL جعبه‌ای. تصمیم مستدل: ۳۰ روز (`config('woo.sync_log_retention_days')`) — هم‌ارز بازهٔ Backup روزانهٔ PRD §21 («Daily pg_dump... ۳۰-day»)، یک عدد آشنا در همین سند، نه یک انتخاب دلبخواه.
+۶. **آستانهٔ هشدار Reconciliation در برابر مرز قرمز/سبز GATE 1 چیست؟** این دو عمداً جدا نگه داشته شدند. `RevenueVariance` (P2-11) مرز ۱٪ را دقیق و ثابت (Integer، هرگز شناور) برای قرمز/سبز GATE 1 محاسبه می‌کند. `SettingKey::AlertsReconciliationDiffPercent` (پیش‌فرض ۱.۰، قابل‌تغییر توسط تیم) یک آستانهٔ هشدار عملیاتی جداست — یکی‌کردنشان یعنی تغییر آستانهٔ هشدار، مرز سخت GATE 1 را هم عوض کند، که هیچ دستوری آن را نخواسته بود.
+
+### پیاده‌سازی
+
+- `App\Support\HealthCheckService::check(): list<string>` — پنج شرط را می‌خواند و هرکدام را (اگر true) از طریق `AlertService::critical()` موجود بالا می‌برد (بدون هیچ مکانیزم موازی):
+  - **SyncFailure**: `SyncService::ordersConsecutiveFailures()` (متد تازه، خواندن مستقیم `sync_cursors.consecutive_failures`) در برابر `AlertsConsecutiveSyncFailures`.
+  - **MetricRunFailure**: `MetricRunService::latestRunFailed()` (متد تازه) — آخرین ردیف `metric_runs`، بدون آستانه (دودویی، PRD «metric_runs failed»).
+  - **FailedJobsThreshold**: از همان `SyncHealthService::snapshot()->failedJobs` موجود (P2-12، از طریق `FailedJobProviderInterface`) در برابر `AlertsFailedJobsThreshold` — هیچ کوئری تازه‌ای لازم نبود.
+  - **ReconciliationVariance**: از همان `SyncHealthService::snapshot()->recentMonths[0]` موجود (P2-12) — فقط جدیدترین ماه (نه هر سه)، چون Dedupe سرویس `AlertService` فقط بر اساس نوع هشدار است نه نوع+ماه؛ چند ماه قرمز هم‌زمان یکی را خاموش می‌کرد.
+  - **NightlyChainTimeout**: `MetricRunService::fullRunCompletedSince($chainStart)` (متد تازه) — فقط بعد از ساعت ۵ صبح تهران چک می‌شود، `$chainStart` = ۳ صبح تهران همان روز.
+- `App\Jobs\HealthCheckJob` (تازه، **خارج از `app/Modules`**) — فقط `HealthCheckService::check()` را صدا می‌زند، بدون منطق.
+- `App\Modules\Sync\Jobs\PruneLogsJob` (تازه) — فقط `SyncService::pruneLogs()` را صدا می‌زند.
+- `SyncService::pruneLogs(int $days, int $chunkSize=1000): int` (متد تازه) — حذف `sync_logs` قدیمی‌تر از بازه، در Chunkهای ۱۰۰۰تایی (نه یک تراکنش/قفل بزرگ روی کل جدول)، Idempotent (اجرای دوباره روی همان بازه چیزی حذف نمی‌کند).
+- زمان‌بندی (`routes/console.php`، PRD §22): `HealthCheckJob` هر ۱۵ دقیقه (کنار Poll سفارش‌ها)، `PruneLogsJob` روزانه ۰۴:۳۰ تهران (نیم‌ساعت بعد از شروع زنجیرهٔ شبانه، فرصت برای تمام‌شدنش قبل از مهلت ۵ صبح).
+
+### یافتهٔ واقعی حین TEST FIRST — باگ منطقهٔ زمانی
+
+اولین تلاش برای `NightlyChainTimeout` مقدار `$chainStart` (یک `CarbonImmutable` در `Asia/Tehran`) را مستقیماً به کوئری `fullRunCompletedSince()` می‌داد. تست دقیقاً همین را گرفت: یک Run واقعاً «امشب» ساعت ۰۰:۰۰ UTC (= ۰۳:۳۰ تهران) ثبت‌شده بود ولی هشدار همچنان اشتباهاً بالا می‌رفت. علت: وقتی یک شیء Carbon با منطقهٔ زمانی غیر-UTC مستقیماً در یک `where()` باند می‌شود، مقدار به‌صورت رشتهٔ ساعت محلی (نه UTC) سریالایز و به Postgres فرستاده می‌شود — که آن را با فرض منطقهٔ زمانی اتصال (UTC، طبق CLAUDE.md §2) می‌خواند، یعنی «۰۳:۰۰ تهران» به‌اشتباه «۰۳:۰۰ UTC» تعبیر می‌شد (بیش از ۳ ساعت خطا). رفع: `->utc()` صریح قبل از پاس‌دادن به کوئری. دقیقاً همان دستهٔ باگ خاموشی که CLAUDE.md §2 دربارهٔ Jalali/timestamptz هشدار می‌دهد — اینجا با Carbon خام، نه `JalaliDate`.
+
+### TEST FIRST
+
+- `SyncServiceTest.php` (+۳ تست `pruneLogs`): حذف صحیح خارج از بازه (با یک fixture دقیقاً روی مرز، تا Mutation `<` به `<=` را بگیرد)، عدم حذف داخل بازه، Idempotency، Chunk چندتایی.
+- `SyncServiceTest.php` (+۲ تست): `ordersConsecutiveFailures()`.
+- `MetricRunServiceTest.php` (تازه، ۷ تست): `latestRunFailed()`, `fullRunCompletedSince()` (شامل مرز mode=dirty، status=running/failed).
+- `HealthCheckServiceTest.php` (تازه، ۱۰ تست، `tests/Feature/Support/`): هر پنج شرط با آستانهٔ دقیق (`>=`/`>` روی مرز، نه یک‌طرف آن)، بدون‌داده = بدون هشدار، مسیر واقعی `AlertService` (ردیف Audit، غیرفعال‌کردن Setting همه را خاموش می‌کند).
+- `PruneLogsJobTest.php`, `HealthCheckJobTest.php` (تازه): شکل Job + یک اجرای واقعی سرتاسری.
+
+Mutation checkها (هرکدام قرمز واقعی، بازگردانده شد):
+- `pruneLogs`: `<` → `<=` — ردیف دقیقاً روی مرز هم حذف شد، تست با `2 is not identical to 1` شکست.
+- `fullRunCompletedSince`: `>=` → `>` — تست مرز دقیق شکست.
+- `HealthCheckService`: `SyncFailure`/`FailedJobsThreshold` هرکدام `>=` → `>` — هر دو تست مرز دقیق شکستند.
+- `NightlyChainTimeout`: حذف `->utc()` — همان باگ بالا، به‌عنوان Mutation هم تأیید شد (تست بدون آن رفع قرمز می‌ماند).
+
+### اجرای دستی روی dev با اعداد واقعی
+
+```
+sync_logs (قبل از prune): ۶۲۰ ردیف، همه جدیدتر از ۳۰ روز (قدیمی‌ترین: ۲۰۲۶-۰۹-۱۹)
+PruneLogsJob اجرا شد → ۰ ردیف حذف شد (درست؛ چیزی هنوز از بازه خارج نشده)
+
+HealthCheckService::check() اجرا شد (۲۰۲۶-۰۹-۲۸، ساعت واقعی dev ۱۷:۳۴ تهران):
+  orders consecutive_failures = ۰      → SyncFailure: خاموش
+  آخرین metric_runs = completed        → MetricRunFailure: خاموش
+  failed_jobs = ۳ (آستانه ۲۰)          → FailedJobsThreshold: خاموش
+  آخرین Reconciliation = ۰٪ اختلاف     → ReconciliationVariance: خاموش
+  NightlyChainTimeout: روشن ✓ (واقعی، نه باگ — dev هرگز زنجیرهٔ شبانهٔ زنده اجرا نکرده، طبق مستندات از ابتدای Sprint؛ یک ردیف alert.critical واقعی در audit_logs ثبت شد)
+```
+
+این نتیجه دقیقاً همان محدودیت شناخته‌شدهٔ dev است (هیچ GET زنده‌ای به Woo در کل این Sprint انجام نشد) — یک نمونهٔ واقعی از کارکرد صحیح هشدار، نه یک باگ.
+
+### بستن Sprint 6 — بررسی معیار دروازه
+
+طبق دستور صریح شما، معیار سه‌بخشی پایان Sprint 6 («dashboard زیر ۱ ثانیه، هر عدد drillable، زنجیرهٔ شبانه کامل اجرا می‌شود») یک‌بار بررسی و اینجا نتیجه‌گیری شد:
+
+| معیار | نتیجه | شواهد |
+|---|---|---|
+| **Dashboard < 1s** | ✓ **قبول** | `AnalyticsService::dashboard()` روی dev، ۳ اجرای پیاپی گرم: ۱۶۳ms، ۲۱۸ms، ۳۴۵ms (اجرای اول سرد Process، ۹۹۴ms — شامل Bootstrap PHP، نه معیار واقعی درخواست HTTP گرم). این فقط زمان لایهٔ سرویس است؛ رفت‌وبرگشت کامل HTTP/Inertia (شبکه+Render) در این محیط بدون مرورگر زنده اندازه‌گیری نشد. |
+| **هر عدد Drillable** | ⚠ **قبول با یک استثنای مستند** | ۷ ویجت drill (`orders`, `customers_new`, `customers_repeat`, `rfm_segment`, `churn_level`, `cohort_period`, `affinity_pair` سطح product/category/variation) — P6-07/۰۸. **یک استثنای شناخته‌شده باقی است:** جفت‌های سطح `basket` (نه Drillable) — شکل ردیفشان سفارش است، نه مشتری؛ در P6-08 آگاهانه مستند و رد شد، نه فراموش‌شده. |
+| **زنجیرهٔ شبانه کامل اجرا می‌شود** | ⚠ **قبول (سیم‌کشی + تست)، بدون اجرای زندهٔ کامل روی Woo واقعی** | Wiring/ترتیب هر ۸ گام با `Bus::assertChained` تست شده (P6-09)؛ زیرزنجیرهٔ متریک→آنالیتیکس→سگمنت‌ها واقعاً روی dev اجرا شد (۲۱.۵ ثانیه، P6-09). مراحل Woo‌محور (Catalog/Orders sync، Reconcile) هرگز به‌صورت زنده روی این dev اجرا نشده‌اند (هیچ GET زنده‌ای در کل Sprint 6 — مستند از ابتدا)؛ `HealthCheckJob`'s `NightlyChainTimeout` این نبود را همین الان به‌درستی تشخیص و هشدار می‌دهد (بالا). |
+
+**نتیجهٔ کلی: PASS، با دو استثنای باریک و مستند** (نه دو شکست پنهان) — هیچ‌کدام یک تسک ناتمام نیست؛ هر دو محدودیت واقعی، کشف‌شده و ثبت‌شده‌اند (ARCHITECTURE.md، Open Items).
+
+### یافتهٔ دوم حین TEST FIRST — چرا `ordersConsecutiveFailures()` روی `SyncService` است، نه `SyncHealthService` تلاش اول این متد را (منطقاً) کنار بقیهٔ خواندن‌های صفحهٔ Health گذاشت. `php artisan test` کامل این را رد کرد: `SystemPagesBoundaryTest` یک قاعدهٔ صریح از P2-12 دارد — «صفحهٔ Health هرگز به Cursor دست نمی‌زند» (کلمهٔ `cursor` هرجا در `SyncHealthService.php`/`SyncHealthReport.php` ممنوع است، حتی برای یک ستون بی‌ضرر مثل شمارندهٔ شکست، چون خودِ Model اسمش `SyncCursor` است). این یک تصمیم معماری از‌پیش‌گرفته‌شده بود، نه یک محدودیت این تسک — پس متد به `SyncService` منتقل شد (که از قبل کل چرخهٔ عمر `SyncCursor` را در اختیار دارد)، نه اینکه آن تست تغییر کند.
+
+**سه رگرسیون دیگر از تست‌های موجود، هرکدام رفع شد (نه نادیده گرفته):**
+- `HttpWooClientTest`'s «هیچ HTTP write-verb در ماژول Sync» با `pruneLogs()`'s `->delete()` محلی (روی `sync_logs`، نه Woo) اشتباهاً برخورد کرد — Regex این تست فقط اسم متد را می‌بیند، نه هدف آن. رفع: یک استثنای دقیق و خودتأییدکننده به همان تست اضافه شد (دقیقاً همان خط کد را از متن حذف می‌کند قبل از بررسی؛ هر تغییری در آن خط، حتی جزئی، دوباره تست را قرمز می‌کند).
+- `SyncRunBoundaryTest`'s «جاب‌ها بدون `Log::`» با `Log::info()` داخل `PruneLogsJob` برخورد کرد — الگوی موجود ماژول Sync (برخلاف Analytics/Segments) این است که فقط Service خودش لاگ می‌نویسد، نه خودِ Job؛ خط `Log::info` حذف شد (نه اینکه تست نرم شود).
+- `SyncRunBoundaryTest`'s «هیچ `+=`/`-=` در SyncService» با شمارندهٔ محلی `$deleted += ...` داخل `pruneLogs()` برخورد کرد (نه یک ستون ذخیره‌شده، فقط یک متغیر لوکال) — به `$deleted = $deleted + ...` بازنویسی شد تا این توکن خاص را نداشته باشد، معنا بدون تغییر.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا (کل پروژه). Pint → تمیز.
+
+**فایل‌ها:** `app/Support/HealthCheckService.php` (تازه)، `app/Jobs/HealthCheckJob.php` (تازه)، `app/Modules/Sync/Jobs/PruneLogsJob.php` (تازه)، `app/Modules/Sync/Services/SyncService.php` (+`pruneLogs()`, +`ordersConsecutiveFailures()`)، `app/Modules/Metrics/Services/MetricRunService.php` (+`latestRunFailed()`, +`fullRunCompletedSince()`)، `config/woo.php` (+`sync_log_retention_days`)، `routes/console.php` (+۲ ورودی زمان‌بندی)، تست‌ها: `tests/Feature/Support/HealthCheckServiceTest.php` (تازه)، `tests/Feature/Jobs/HealthCheckJobTest.php` (تازه)، `tests/Feature/Modules/Sync/PruneLogsJobTest.php` (تازه)، `tests/Feature/Modules/Metrics/MetricRunServiceTest.php` (تازه) + افزوده به `SyncServiceTest.php`؛ رگرسیون‌های موجود رفع‌شده: `tests/Feature/Console/ReconcileCommandTest.php`, `tests/Feature/Modules/Sync/HttpWooClientTest.php`, `tests/Arch/{ReconciliationBoundaryTest,SyncCommandBoundaryTest,SyncRunBoundaryTest}.php`.

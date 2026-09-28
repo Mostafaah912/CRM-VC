@@ -140,7 +140,7 @@ it('no longer schedules hm:reconcile directly in routes/console.php (P6-09): Rec
         ->and($console)->toContain("Schedule::command('hm:nightly-chain')")
         ->and($console)->toContain("->dailyAt('03:00')")
         ->and($console)->toContain("->timezone('Asia/Tehran')")
-        ->and(substr_count($console, 'Schedule::'))->toBe(3)
+        ->and(substr_count($console, 'Schedule::'))->toBe(5)
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground/');
 });
 

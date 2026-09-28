@@ -22,11 +22,11 @@ function syncJobFiles(): array
     return Scanner::phpFiles(['app/Modules/Sync/Jobs']);
 }
 
-it('has exactly the jobs the sync features ask for (P2-08 the two run jobs, P2-11 the month job, P6 the catalog job, P6-09 the recent-months job), all unique and queued', function () {
+it('has exactly the jobs the sync features ask for (P2-08 the two run jobs, P2-11 the month job, P6 the catalog job, P6-09 the recent-months job, P6-10 the prune job), all unique and queued', function () {
     $names = array_map(fn (string $f) => basename($f, '.php'), syncJobFiles());
     sort($names);
 
-    expect($names)->toBe(['CatalogSyncJob', 'ReconcileMonthJob', 'ReconcileRecentMonthsJob', 'SyncEntityJob', 'SyncPageJob']);
+    expect($names)->toBe(['CatalogSyncJob', 'PruneLogsJob', 'ReconcileMonthJob', 'ReconcileRecentMonthsJob', 'SyncEntityJob', 'SyncPageJob']);
 
     foreach (syncJobFiles() as $file) {
         $code = Scanner::phpCode($file);

@@ -110,8 +110,10 @@ it('registers only the hm:sync orders poll in routes/console.php, with no overla
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 
-it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11)', function () {
-    $names = array_map(fn (string $f) => basename($f), Scanner::phpFiles(['app']));
+it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11) — P6-10 later added exactly HealthCheckJob + HealthCheckService, nothing else', function () {
+    $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app']));
+    $healthCheckFiles = array_values(array_filter($names, fn (string $n) => preg_match('/HealthCheck/i', $n) === 1));
+    sort($healthCheckFiles);
 
-    expect(array_filter($names, fn (string $n) => preg_match('/HealthCheck/i', $n) === 1))->toBe([]);
+    expect($healthCheckFiles)->toBe(['app/Jobs/HealthCheckJob.php', 'app/Support/HealthCheckService.php']);
 });

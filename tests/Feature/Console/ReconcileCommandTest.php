@@ -159,14 +159,17 @@ it('no longer schedules hm:reconcile directly (P6-09): its nightly evidence now 
     expect(scheduledReconcileEvents())->toHaveCount(0);
 });
 
-it('schedules exactly three tasks: the orders poll, the nightly chain (P6-09), and the weekly affinity rebuild', function () {
+it('schedules exactly five tasks: the orders poll, HealthCheckJob (P6-10), the nightly chain (P6-09), PruneLogsJob (P6-10), and the weekly affinity rebuild', function () {
     Artisan::all();
     $events = app(Schedule::class)->events();
 
-    // Schedule::job() (BuildAffinityJob) produces a CallbackEvent with no ->command, only ->description.
+    // Schedule::job() (HealthCheckJob/PruneLogsJob/BuildAffinityJob) produces a CallbackEvent with no
+    // ->command, only ->description.
     $labels = array_map(fn ($event) => (string) ($event->command ?? $event->description ?? ''), $events);
 
-    expect($labels)->toHaveCount(3)
+    expect($labels)->toHaveCount(5)
         ->and(implode(' ', $labels))->toContain('hm:sync')->toContain('hm:nightly-chain')
+        ->and(implode(' ', $labels))->toContain('HealthCheckJob')
+        ->and(implode(' ', $labels))->toContain('PruneLogsJob')
         ->and(implode(' ', $labels))->toContain('BuildAffinityJob');
 });
