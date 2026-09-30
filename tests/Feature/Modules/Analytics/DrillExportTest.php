@@ -90,6 +90,32 @@ it('includes the full phone for an exporter with customers.view_full_phone', fun
     expect($csv)->toContain('989123456789');
 });
 
+it('formats the orders CSV\'s ordered_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
+    $user = User::factory()->create();
+    grantDrillExportPermission($user, 'export');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => '2026-06-01 10:00:00+00', 'total' => 100_000]);
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+
+    $csv = drillStreamedCsv(app(DrillService::class)->export('orders', $period, [], $user));
+
+    expect($csv)->toMatch('/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/')
+        ->and($csv)->not->toContain('2026-06-01 10:00:00');
+});
+
+it('formats the customers_new CSV\'s first_order_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
+    $user = User::factory()->create();
+    grantDrillExportPermission($user, 'export');
+    $customer = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $customer->id, 'first_order_at' => '2026-06-01 08:00:00+00']);
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+
+    $csv = drillStreamedCsv(app(DrillService::class)->export('customers_new', $period, [], $user));
+
+    expect($csv)->toMatch('/\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}/')
+        ->and($csv)->not->toContain('2026-06-01 08:00:00');
+});
+
 it('writes a UTF-8 BOM and a header row', function () {
     $user = User::factory()->create();
     grantDrillExportPermission($user, 'export');

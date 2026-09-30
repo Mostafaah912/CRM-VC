@@ -62,6 +62,16 @@ it('never includes a display_name or phone column in the orders widget', functio
     expect($result->columns)->not->toContain('display_name')->not->toContain('phone')->not->toContain('phone_normalized');
 });
 
+it('formats the orders widget\'s ordered_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
+    $customer = Customer::factory()->create();
+    realizedOrder($customer, '2026-06-01 10:00:00+00'); // Tehran 13:30
+
+    $result = app(DrillService::class)->rows('orders', drillPeriod('2026-06-01', '2026-06-02'), []);
+
+    expect($result->rows[0]['ordered_at'])->toMatch('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/')
+        ->and($result->rows[0]['ordered_at'])->not->toContain('2026-06-01');
+});
+
 it('lists customers whose first order fell in the period, for customers_new', function () {
     $inPeriod = Customer::factory()->create();
     DB::table('customer_metrics')->insert(['customer_id' => $inPeriod->id, 'first_order_at' => '2026-06-01 08:00:00+00']);
@@ -71,6 +81,16 @@ it('lists customers whose first order fell in the period, for customers_new', fu
     $result = app(DrillService::class)->rows('customers_new', drillPeriod('2026-06-01', '2026-06-02'), []);
 
     expect($result->rows)->toHaveCount(1)->and($result->rows[0]['customer_id'])->toBe($inPeriod->id);
+});
+
+it('formats the customers_new widget\'s first_order_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
+    $customer = Customer::factory()->create();
+    DB::table('customer_metrics')->insert(['customer_id' => $customer->id, 'first_order_at' => '2026-06-01 08:00:00+00']);
+
+    $result = app(DrillService::class)->rows('customers_new', drillPeriod('2026-06-01', '2026-06-02'), []);
+
+    expect($result->rows[0]['first_order_at'])->toMatch('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/')
+        ->and($result->rows[0]['first_order_at'])->not->toContain('2026-06-01');
 });
 
 it('lists customers whose order in the period was not their first, for customers_repeat', function () {

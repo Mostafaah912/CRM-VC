@@ -183,6 +183,28 @@ it('has no console.log, debugger, or dangerouslySetInnerHTML in the frontend', f
         ], stripPhpComments: false))->toBeEmpty();
 });
 
+/**
+ * P6-11: every date shown to the user is Jalali, converted exactly once on the backend
+ * (App\Support\JalaliDate/TehranDateTime) — never in a component. These are the ways a component could
+ * quietly reintroduce a Gregorian date or a second, divergent conversion path: the JS runtime's own
+ * locale/ISO formatters, and third-party date libraries this project has never depended on (no `dayjs`/
+ * `moment`/`date-fns` in package.json — checked). `toLocaleString` alone is not banned: `formatNumber()`/
+ * `formatToman()` (resources/js/lib/format.ts) legitimately use it for NUMBERS, not dates.
+ */
+it('never formats a date in the frontend: no Intl.DateTimeFormat, toLocaleDateString, toLocaleTimeString, toISOString, or a date library', function () {
+    $files = Scanner::files(['resources/js'], 'ts,tsx', ['resources/js/actions', 'resources/js/routes', 'resources/js/wayfinder']);
+
+    expect($files)->not->toBeEmpty()
+        ->and(Scanner::violations($files, [
+            '/Intl\s*\.\s*DateTimeFormat/',
+            '/\btoLocaleDateString\s*\(/',
+            '/\btoLocaleTimeString\s*\(/',
+            '/\btoISOString\s*\(/',
+            '/\bfrom\s+[\'"](dayjs|moment|date-fns)/',
+            '/\brequire\s*\(\s*[\'"](dayjs|moment|date-fns)/',
+        ], stripPhpComments: false))->toBeEmpty();
+});
+
 /** Rule 8: tests run on real PostgreSQL only. */
 it('never configures SQLite for tests', function () {
     $phpunit = (string) file_get_contents(Scanner::root().'/phpunit.xml');

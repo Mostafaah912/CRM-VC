@@ -841,3 +841,56 @@ HealthCheckService::check() اجرا شد (۲۰۲۶-۰۹-۲۸، ساعت واق�
 تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا (کل پروژه). Pint → تمیز.
 
 **فایل‌ها:** `app/Support/HealthCheckService.php` (تازه)، `app/Jobs/HealthCheckJob.php` (تازه)، `app/Modules/Sync/Jobs/PruneLogsJob.php` (تازه)، `app/Modules/Sync/Services/SyncService.php` (+`pruneLogs()`, +`ordersConsecutiveFailures()`)، `app/Modules/Metrics/Services/MetricRunService.php` (+`latestRunFailed()`, +`fullRunCompletedSince()`)، `config/woo.php` (+`sync_log_retention_days`)، `routes/console.php` (+۲ ورودی زمان‌بندی)، تست‌ها: `tests/Feature/Support/HealthCheckServiceTest.php` (تازه)، `tests/Feature/Jobs/HealthCheckJobTest.php` (تازه)، `tests/Feature/Modules/Sync/PruneLogsJobTest.php` (تازه)، `tests/Feature/Modules/Metrics/MetricRunServiceTest.php` (تازه) + افزوده به `SyncServiceTest.php`؛ رگرسیون‌های موجود رفع‌شده: `tests/Feature/Console/ReconcileCommandTest.php`, `tests/Feature/Modules/Sync/HttpWooClientTest.php`, `tests/Arch/{ReconciliationBoundaryTest,SyncCommandBoundaryTest,SyncRunBoundaryTest}.php`.
+
+## Bugfix — یکدست‌سازی تاریخ‌های شمسی (P6-11)
+
+**زمینه:** روی `/dashboard` سه مشکل واقعی دیده شد: (۱) سرتیتر بازه میلادی با جداکنندهٔ `..` بود، (۲) متن «در مقایسه با دورهٔ هم‌طول قبلی» هم میلادی بود (و P6-06 اصلاً معادل شمسی برای دورهٔ *قبلی* نساخته بود، فقط برای دورهٔ جاری)، (۳) فیلدهای فیلتر از/تا وقتی هیچ بازه‌ای در URL نبود خالی می‌ماندند — با اینکه یک بازهٔ پیش‌فرض واقعی (۳۰ روز اخیر) واقعاً اعمال شده بود؛ فقط placeholder نشانش می‌داد، نه مقدار واقعی.
+
+### ممیزی کامل (فقط grep، طبق دستور)
+
+هر صفحه‌ای که تاریخ/زمان نشان می‌دهد بررسی شد. **از قبل درست بودند** (منبع واحد `App\Support\JalaliDate`/`TehranDateTime`، هیچ تغییری لازم نبود): Customer 360 (`CustomerShowData::when()`)، فهرست/تب‌های سفارش و محصول مشتری (`CustomerOrdersService`/`CustomerProductsService`، الگوی `_jalali`+`_iso`)، Timeline مشتری (`CustomerTimelineService`)، فهرست مشتریان (`CustomerListRow`)، صفحهٔ RFM (`RfmPageService::latestRun()`)، فهرست/جزئیات Segment (`SegmentListRow`/`SegmentMemberRow`)، صفحهٔ Health (`SyncHealthService`→`SyncRunRow`)، صفحهٔ Sync Logs (`SyncRunLogService`)، صفحهٔ Identity Conflicts (`IdentityConflictRow`)، فهرست/جزئیات سفارش‌ها (`ordered_at_jalali`)، ردیف Trend داشبورد (`day.jalali_date`). `cohort_month` (صفحهٔ Cohort، `YYYY-MM`) از قبل شمسی است — جداکنندهٔ `-` و نبود روز، بخشی از تعریف ستون در کل خط‌لولهٔ Analytics از P6-01 است (یک کلید ماه، نه یک تاریخ کامل)؛ تغییر آن یعنی تغییر یک مقدار ذخیره/محاسبه‌شده در کل ماژول، نه فقط نمایش — خارج از Scope این باگ‌فیکس.
+
+**سه‌جا واقعاً میلادی بودند** (فهرست کامل، همان‌طور که خواسته شد):
+۱. سرتیتر و متن مقایسهٔ `/dashboard` (بالا).
+۲. صفحهٔ Audit Log (`/audit`): `AuditService::paginate()` مستقیماً مدل Eloquent را serialize می‌کرد — `created_at` بدون تبدیل، به‌صورت رشتهٔ میلادی JSON می‌شد (`AuditLog.php`'s `$timestamps=false` یعنی Eloquent خودش created_at را نمی‌نویسد؛ ستون DB خودش `useCurrent()` دارد، ولی خواندنش هرگز از `TehranDateTime` عبور نمی‌کرد).
+۳. Drill-down داشبورد (`DrillService`): ویجت‌های `orders` (`ordered_at`) و `customers_new` (`first_order_at`) — هم در JSON (`DrillDialog`) و هم در خروجی CSV — مستقیماً `(string) $row->ordered_at` را برمی‌گرداندند.
+
+### رفع
+
+- بک‌اند، منبع واحد: `AnalyticsService::dashboard()` دو فیلد تازه اضافه کرد — `previous_from_jalali`/`previous_to_jalali` (همان الگوی `from_jalali`/`to_jalali` موجود از P6-07، فقط برای دورهٔ قبلی هم). `AuditService::paginate()` حالا `->through()` می‌زند و `created_at` را با `TehranDateTime::format()` برمی‌گرداند (شکل خروجی از مدل Eloquent خام به آرایهٔ ساده تغییر کرد). `DrillService` یک متد خصوصی تازه گرفت (`jalali()`) که هر دو ستون تاریخ (JSON و CSV) از آن عبور می‌کنند.
+- فرانت، util واحد: کامپوننت تازهٔ `resources/js/components/date-range.tsx` — عبارت «از X تا Y» می‌سازد، هرگز `..`؛ هر تاریخ در `<bdi dir="ltr">` جدا پیچیده می‌شود تا ترتیبش در متن RTL هرگز برعکس نشود، مستقل از هرچه قبل/بعدش بیاید. این کامپوننت **چیزی تبدیل نمی‌کند** — فقط دو رشتهٔ شمسیِ از‌پیش‌آماده را می‌چیند (منبع تبدیل همیشه بک‌اند است، طبق دستور).
+- `dashboard.tsx`: سرتیتر و متن مقایسه هر دو حالا از `<DateRange>` با فیلدهای `*_jalali` استفاده می‌کنند؛ فیلدهای فیلتر از/تا حالا `useState(filters.from ?? data.period.from_jalali)` هستند — وقتی کاربر چیزی تایپ نکرده، مقدار واقعیِ بازهٔ پیش‌فرض اعمال‌شده را نشان می‌دهند، نه یک ورودی خالی با فقط placeholder.
+
+### ابهام‌های حل‌شده (طبق دستور، حدس زده نشد)
+
+۱. **قالب زمان `HH:mm` (بدون ثانیه) خواسته شده بود، ولی util موجود پروژه (`TehranDateTime::format()`، از پیش در همهٔ صفحات درستِ بالا استفاده می‌شود) `HH:mm:ss` می‌دهد.** تصمیم: همان util موجود و از‌قبل‌جاافتاده نگه داشته شد (دقیقاً همان «منبع واحد»ی که خودِ دستور می‌خواهد)، به‌جای بریدن ثانیه یا ساختن یک قالب دوم موازی — تغییر آن قالب یک تغییر سراسری روی همهٔ صفحات از‌قبل‌درست بالا هم می‌بود، خارج از Scope این باگ‌فیکس.
+۲. **ارقام فارسی در نمونهٔ متن گزارش («۱۴۰۵/۰۶/۱۰») در برابر ارقام لاتین `JalaliDate::format()` (که همهٔ صفحات از‌قبل‌درست بالا همین را نشان می‌دهند).** تصمیم: ارقام لاتین نگه داشته شد — یکدست با کل اپ موجود؛ تغییر به ارقام فارسی یک تصمیم طراحی سراسری جداست، نه بخشی از رفع باگ نمایش میلادی.
+۳. **قاعدهٔ تاریخ در CSV:** PRD/CLAUDE.md دربارهٔ این موضوع ساکت‌اند (بررسی شد، هیچ خطی پیدا نشد). تصمیم: شمسی — هم‌راستا با «هیچ تاریخ میلادی در UI» و با همان util بک‌اند.
+
+### TEST FIRST
+
+- `AnalyticsServiceTest.php` (+۱ تست): `previous_from_jalali`/`previous_to_jalali`.
+- `AuditServiceTest.php` (+۱ تست، +۱ تست موجود اصلاح‌شده به دسترسی آرایه‌ای): شکل `HH:mm:ss` شمسی، نه سال میلادی — `created_at` یک ستون `useCurrent()` سمت DB است (نه Eloquent timestamp)، پس `travelTo()` رویش اثر ندارد؛ تست به‌جای مقدار دقیق، شکل را بررسی می‌کند.
+- `DrillServiceTest.php`/`DrillExportTest.php` (+۲ تست هرکدام): `ordered_at`/`first_order_at` در JSON و CSV.
+- `DashboardControllerTest.php`/`AuditLogPageTest.php`/`DrillControllerTest.php` (+۱ تست هرکدام): سطح HTTP/Props، با داده واقعی.
+- `ArchitectureTest.php` (+۱ arch-check تازه): هیچ `Intl.DateTimeFormat`/`toLocaleDateString`/`toLocaleTimeString`/`toISOString`/کتابخانهٔ `dayjs`/`moment`/`date-fns` در کل `resources/js` (به‌جز `routes`/`actions`/`wayfinder` خودکار) — صفر استثنا لازم بود چون هیچ‌کدام از قبل استفاده نمی‌شدند.
+
+Mutation checkها (هرکدام قرمز واقعی، بازگردانده شد): `DrillService::jalali()` موقتاً حذف شد → هر دو تست jalali با مقدار خام میلادی شکست خوردند؛ arch-check تازه با افزودن موقت `new Date().toLocaleDateString()` به `date-range.tsx` تست شد → قرمز شد، حذف شد.
+
+### یافتهٔ جانبی PHPStan
+
+`AuditLog.php` هیچ `@property` برای `created_at` نداشت (چون `$timestamps=false` است، Larastan نوعش را خودکار حدس نمی‌زند) — بدون آن، `TehranDateTime::format($log->created_at)` با «`string|null` داده شد، `DateTimeInterface` انتظار می‌رفت» رد می‌شد. رفع: `@property Carbon $created_at` اضافه شد (نوع واقعی Cast، نه `CarbonImmutable`).
+
+### بررسی دستی (بدون مرورگر زنده در این محیط — طبق سرویس‌های واقعی روی dev)
+
+```
+period.{from,to,previous_from,previous_to}_jalali (dev, امروز): "1405/06/10".."1405/07/08" و "1405/05/11".."1405/06/09" — همه شمسی، هیچ عدد میلادی
+audit created_at (۳ ردیف واقعی dev): "1405/07/08 18:10:36" و مشابه — شمسی، ثانیه‌دار
+drill orders.ordered_at (۳ ردیف واقعی dev): "1405/07/03 20:35:37" و مشابه — شمسی
+```
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا (کل پروژه). Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` فقط روی فایل‌های تازه/تغییریافتهٔ خودم.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AnalyticsService.php` (+`previous_from_jalali`/`previous_to_jalali`)، `app/Modules/Analytics/Services/DrillService.php` (+`jalali()`)، `app/Modules/Core/Services/AuditService.php` (`paginate()` بازنویسی)، `app/Modules/Core/Models/AuditLog.php` (+`@property Carbon $created_at`)، `resources/js/components/date-range.tsx` (تازه)، `resources/js/pages/dashboard.tsx`، `resources/js/types/dashboard.ts`، تست‌ها: `tests/Feature/Modules/Analytics/{AnalyticsServiceTest,DrillServiceTest,DrillExportTest}.php`، `tests/Feature/Modules/Core/AuditServiceTest.php`، `tests/Feature/Http/{DashboardControllerTest,DrillControllerTest}.php`، `tests/Feature/Modules/Core/AuditLogPageTest.php`، `tests/Arch/ArchitectureTest.php` (+۱ arch-check).

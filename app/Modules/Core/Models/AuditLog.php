@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Modules\Core\Enums\AuditActorType;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Carbon;
 
 /**
  * @property int $id
@@ -20,6 +21,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * @property array<string, mixed>|null $after
  * @property string|null $ip
  * @property string|null $source
+ * @property Carbon $created_at
  */
 class AuditLog extends Model
 {

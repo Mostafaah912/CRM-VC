@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { DrillDialog } from '@/components/dashboard/drill-dialog';
+import { DateRange } from '@/components/date-range';
 import { formatNumber, formatToman } from '@/lib/format';
 import { churnLevels, rfmSegments } from '@/lib/customer-labels';
 import { useCan } from '@/hooks/use-can';
@@ -122,8 +123,11 @@ function KpiCard({
 
 export default function Dashboard({ data, filters }: Props) {
     const can = useCan();
-    const [from, setFrom] = useState(filters.from ?? '');
-    const [to, setTo] = useState(filters.to ?? '');
+    // filters.from/to are only set when the user typed a custom range; empty otherwise, even though a
+    // real default period IS applied (the last 30 days). The fields must show that applied default, not
+    // sit empty with just a placeholder hint (P6-11).
+    const [from, setFrom] = useState(filters.from ?? data.period.from_jalali);
+    const [to, setTo] = useState(filters.to ?? data.period.to_jalali);
     const { errors } = usePage<{ errors: Record<string, string> }>().props;
     const messages = Object.values(errors ?? {});
 
@@ -158,8 +162,11 @@ export default function Dashboard({ data, filters }: Props) {
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <div className="flex items-baseline justify-between gap-4">
                     <h1 className="text-xl font-medium">داشبورد</h1>
-                    <span className="text-muted-foreground text-sm" dir="ltr">
-                        {data.period.from} .. {data.period.to}
+                    <span className="text-muted-foreground text-sm">
+                        <DateRange
+                            from={data.period.from_jalali}
+                            to={data.period.to_jalali}
+                        />
                     </span>
                 </div>
 
@@ -208,8 +215,11 @@ export default function Dashboard({ data, filters }: Props) {
                         <CardTitle>خلاصه دوره</CardTitle>
                         <CardDescription>
                             در مقایسه با دوره‌ی هم‌طول قبلی (
-                            {data.period.previous_from} ..{' '}
-                            {data.period.previous_to})
+                            <DateRange
+                                from={data.period.previous_from_jalali}
+                                to={data.period.previous_to_jalali}
+                            />
+                            )
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">

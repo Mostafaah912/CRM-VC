@@ -35,6 +35,16 @@ it('returns the orders behind the default period, PII-minimal, for a holder of d
         ->and($response->json('rows'))->toHaveCount(1);
 });
 
+/** P6-11: the orders drill's ordered_at column used to be the raw Gregorian timestamptz value. */
+it('formats the orders drill\'s ordered_at as Jalali/Tehran time, never a Gregorian-looking date', function () {
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => now(), 'total' => 250_000]);
+
+    $response = $this->actingAs(Fx::userWith('dashboard.view'))->get('/internal/drill/orders');
+
+    expect($response->json('rows.0.ordered_at'))->toMatch('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/');
+});
+
 it('rejects an rfm_segment drill with no segment parameter', function () {
     $this->actingAs(Fx::userWith('dashboard.view'))->get('/internal/drill/rfm_segment')->assertInvalid('segment');
 });

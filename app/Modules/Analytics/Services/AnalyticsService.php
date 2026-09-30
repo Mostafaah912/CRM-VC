@@ -52,7 +52,7 @@ final class AnalyticsService
      * Controller.
      *
      * @return array{
-     *     period: array{from: string, to: string, previous_from: string, previous_to: string, from_jalali: string, to_jalali: string},
+     *     period: array{from: string, to: string, previous_from: string, previous_to: string, from_jalali: string, to_jalali: string, previous_from_jalali: string, previous_to_jalali: string},
      *     current: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
      *     previous: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
      *     trend: list<array{date: string, jalali_date: string, orders_count: int, net_revenue: int, aov: int}>,
@@ -82,6 +82,10 @@ final class AnalyticsService
                 // contract, so the page needs these ready-made rather than converting dates in TS.
                 'from_jalali' => JalaliDate::format(CarbonImmutable::parse($period->from), '/'),
                 'to_jalali' => JalaliDate::format(CarbonImmutable::parse($period->to), '/'),
+                // P6-11: the page's "compared to the previous period" text needs these too — Jalali
+                // everywhere the period is shown, never a raw Gregorian date (CLAUDE.md §2).
+                'previous_from_jalali' => JalaliDate::format(CarbonImmutable::parse($period->previousFrom), '/'),
+                'previous_to_jalali' => JalaliDate::format(CarbonImmutable::parse($period->previousTo), '/'),
             ],
             'current' => $this->periodTotals($period->from, $period->to),
             'previous' => $this->periodTotals($period->previousFrom, $period->previousTo),

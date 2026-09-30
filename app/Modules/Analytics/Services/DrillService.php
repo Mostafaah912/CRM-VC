@@ -12,6 +12,8 @@ use App\Modules\Analytics\Support\DrillResult;
 use App\Modules\Core\Services\AuditService;
 use App\Modules\Core\Services\PermissionService;
 use App\Support\PhoneMask;
+use App\Support\TehranDateTime;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -81,7 +83,7 @@ final class DrillService
             ->map(fn (object $row): array => [
                 'order_id' => (int) $row->id,
                 'customer_id' => $row->customer_id === null ? null : (int) $row->customer_id,
-                'ordered_at' => (string) $row->ordered_at,
+                'ordered_at' => $this->jalali($row->ordered_at),
                 'total' => (int) $row->total,
                 'net_revenue' => (int) $row->net_revenue,
             ])
@@ -102,7 +104,7 @@ final class DrillService
             ->get(['cm.customer_id', 'cm.first_order_at'])
             ->map(fn (object $row): array => [
                 'customer_id' => (int) $row->customer_id,
-                'first_order_at' => (string) $row->first_order_at,
+                'first_order_at' => $this->jalali($row->first_order_at),
             ])
             ->all();
 
@@ -318,7 +320,7 @@ final class DrillService
                     ->select(['o.customer_id', 'c.phone_normalized', 'c.display_name', 'o.id as order_id', 'o.ordered_at', 'o.total', 'o.net_revenue']),
                 'row' => fn (\stdClass $r, bool $full): array => [
                     $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name,
-                    $r->order_id, (string) $r->ordered_at, $r->total, $r->net_revenue,
+                    $r->order_id, $this->jalali($r->ordered_at), $r->total, $r->net_revenue,
                 ],
             ],
             'customers_new' => [
@@ -331,7 +333,7 @@ final class DrillService
                     ->orderByDesc('cm.first_order_at')
                     ->select(['cm.customer_id', 'c.phone_normalized', 'c.display_name', 'cm.first_order_at']),
                 'row' => fn (\stdClass $r, bool $full): array => [
-                    $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name, (string) $r->first_order_at,
+                    $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name, $this->jalali($r->first_order_at),
                 ],
             ],
             'customers_repeat' => [
@@ -429,6 +431,12 @@ final class DrillService
         };
 
         return $query === null ? null : ['headers' => $headers, 'query' => $query, 'row' => $row];
+    }
+
+    /** P6-11: every date a drill widget shows is Jalali/Tehran time — never the raw stored value (CLAUDE.md §2). */
+    private function jalali(mixed $value): string
+    {
+        return TehranDateTime::format(CarbonImmutable::parse((string) $value, 'UTC'));
     }
 
     private function phone(?string $phoneNormalized, bool $canViewFullPhone): ?string

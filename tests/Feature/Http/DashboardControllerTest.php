@@ -71,3 +71,22 @@ it('requires from and to together', function () {
     $this->actingAs(Fx::userWith('dashboard.view'))->get('/dashboard?from=1403/01/01')
         ->assertInvalid('to');
 });
+
+/*
+| P6-11: the header ("از X تا Y") and the compare card's text both read period.*_jalali — never the plain
+| Gregorian from/to also present in props for other consumers (the drill-down query params). This asserts
+| the Jalali fields exist and are shaped like a Jalali date (a 13xx/14xx year), not that the plain
+| Gregorian fields are absent — they still have a legitimate, non-displayed use (DrillDialog's params).
+*/
+it('gives the current AND previous period both a Jalali date, so nothing on the page ever needs to format one itself', function () {
+    $this->actingAs(Fx::userWith('dashboard.view'))->get('/dashboard?from=1403/01/01&to=1403/01/10')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('data.period.from_jalali', '1403/01/01')
+            ->where('data.period.to_jalali', '1403/01/10')
+            ->has('data.period.previous_from_jalali')
+            ->has('data.period.previous_to_jalali')
+            ->where('data.period.previous_from_jalali', fn (string $v) => (bool) preg_match('/^1[34]\d{2}\/\d{2}\/\d{2}$/', $v))
+            ->where('data.period.previous_to_jalali', fn (string $v) => (bool) preg_match('/^1[34]\d{2}\/\d{2}\/\d{2}$/', $v))
+        );
+});

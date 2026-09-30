@@ -60,6 +60,15 @@ it('includes the Jalali equivalent of the period boundaries, for the drill-down 
         ->and($data['period']['to_jalali'])->toBe(JalaliDate::format(CarbonImmutable::parse('2026-06-02'), '/'));
 });
 
+it('includes the Jalali equivalent of the PREVIOUS period boundaries too, for the compare text (no Gregorian date anywhere on the page)', function () {
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-03'), CarbonImmutable::parse('2026-06-04'));
+
+    $data = app(AnalyticsService::class)->dashboard($period);
+
+    expect($data['period']['previous_from_jalali'])->toBe(JalaliDate::format(CarbonImmutable::parse('2026-06-01'), '/'))
+        ->and($data['period']['previous_to_jalali'])->toBe(JalaliDate::format(CarbonImmutable::parse('2026-06-02'), '/'));
+});
+
 it('computes the previous period of equal length immediately before the current one, for compare', function () {
     dm('2026-06-03', ['orders_count' => 10, 'net_revenue' => 1_000_000]);
     dm('2026-06-04', ['orders_count' => 10, 'net_revenue' => 1_000_000]);
