@@ -20,6 +20,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
 import { useCan } from '@/hooks/use-can';
 import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
 import { formatNumber } from '@/lib/format';
@@ -232,7 +233,13 @@ export default function SegmentShow({ segment, members }: Props) {
                             {members.data.map((member) => (
                                 <TableRow key={member.id}>
                                     <TableCell className="text-sm font-medium">
-                                        {member.display_name ?? '—'}
+                                        {member.display_name === null ? (
+                                            '—'
+                                        ) : (
+                                            <TruncatedText
+                                                value={member.display_name}
+                                            />
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         <PhoneRevealButton

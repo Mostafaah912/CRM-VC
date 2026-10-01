@@ -940,3 +940,27 @@ drill orders.ordered_at (۳ ردیف واقعی dev): "1405/07/03 20:35:37" و �
 تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا. Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` فقط روی فایل‌های تازه/تغییریافته.
 
 **فایل‌ها:** `app/Modules/Catalog/Services/CatalogLookupService.php` (تازه)، `app/Modules/Analytics/Services/{AffinityService,DrillService}.php`، `app/Modules/Analytics/Services/AnalyticsService.php` (PHPDoc)، `app/Modules/Customers/Services/CustomerNotesService.php`، `resources/js/lib/{format.ts,drill-labels.ts (تازه)}`، `resources/js/components/{entity-id.tsx (تازه),dashboard/drill-dialog.tsx,ui/card.tsx}`، `resources/js/pages/{dashboard.tsx,analytics/{affinity,cohort,retention}.tsx,metrics/rfm.tsx,system/health.tsx,customers/index.tsx,segments/{index,show}.tsx}`، `resources/js/components/segments/RuleBuilder.tsx`، `resources/js/types/dashboard.ts`، تست‌ها: `tests/Feature/Modules/{Analytics/{AffinityServiceTest,DrillServiceTest,DrillExportTest},Catalog/CatalogLookupServiceTest (تازه),Customers/CustomerNotesServiceTest}.php`، `tests/Arch/ArchitectureTest.php` (+۲ arch-check).
+
+## اصلاح سرریز جدول‌ها (P6-13 بخش الف)
+
+### ریشه‌ی واقعی باقی‌مانده بعد از P6-12
+
+P6-12 مشکل اصلی را حل کرد (`min-w-0` روی `Card`/`CardContent`) اما یک مشکل دیگر باقی مانده بود: جدول «برترین هم‌خریدها» (داشبورد + صفحه‌ی Affinity) طول نام محصول را کنترل نمی‌کرد — `EntityId` نام را inline و بدون `wrap` رندر می‌کرد، و `TableCell` به‌طور پیش‌فرض `whitespace-nowrap` دارد؛ نتیجه: یک نام محصول بلند عرض کمینه‌ی ستون را به‌شدت بزرگ می‌کرد و ستون Lift (آخرین ستون، سمت چپ در RTL) پشت اسکرول افقی پنهان می‌شد. `min-w-0` فقط اجازه‌ی اسکرول را می‌دهد، جلوی وقوعش را نمی‌گیرد.
+
+### رفع
+
+- `EntityId` (`resources/js/components/entity-id.tsx`): از چیدمان inline به چیدمان ستونی تغییر کرد — شناسه (`#id`) همیشه در خط خودش و کامل نمایش داده می‌شود؛ نام (وقتی موجود است) زیرش با `line-clamp-2`/`break-words` و `title` کامل در tooltip.
+- جدول «هم‌خریدها» در `dashboard.tsx` و `affinity.tsx` (`PairsTable`): به `table-fixed` با عرض درصدی ثابت برای هر ستون (۳۸٪/۳۸٪/۱۲٪/۱۲٪) تغییر کرد؛ سلول‌های نام `whitespace-normal`/`align-top` گرفتند تا `EntityId`ی جدید بتواند wrap/clamp کند.
+- ماتریس کوهورت (`analytics/cohort.tsx`): دو ستون اول (کوهورت، اندازه) با `sticky start-0`/`sticky start-28` (موقعیت منطقی RTL) ثابت شدند؛ یک prop تازه روی Primitive مشترک `Table` (`containerRef`) اضافه شد تا صفحه بتواند به `div` اسکرول‌کننده دسترسی داشته باشد — با آن، موقعیت اسکرول در mount صراحتاً `scrollLeft = 0` ست می‌شود (دوره‌های اول در RTL از ابتدا دیده شوند، نه این‌که کاربر مجبور باشد اول اسکرول کند)؛ یک متن راهنما هم زیر جدول اضافه شد.
+- بازبینی کامل بقیه‌ی جدول‌های اپ (طبق دستور صریح تسک): Segments index (بدون ستون نام مشتری، بدون تغییر)، Drill dialog (PII-minimal، بدون متن بلند، بدون تغییر)، RFM/Customers/Orders/Segments-show — سه مورد آخر یک کامپوننت تازه‌ی سبک گرفتند: `resources/js/components/truncated-text.tsx` (تک‌خط + ellipsis + `title` tooltip) روی ستون‌های نام (`display_name`/`customer_display_name`) که گاهی می‌توانند بلند باشند، حتی بدون گزارش باگ مشخص — پیشگیرانه، هم‌سیاست با بقیه‌ی رفع‌ها.
+- یک ناهماهنگی جداگانه‌ی دیده‌شده حین بازبینی: `metrics/rfm.tsx` شناسه‌ی مشتری را با `formatNumber()` (جداکننده‌ی هزارگان) نمایش می‌داد — برخلاف سیاست «بدون جداکننده روی شناسه» که در P6-12 برای Affinity/Drill ثابت شد. رفع شد (یک خط).
+
+### تأیید
+
+`npm run types:check` و `npm run build` تمیز. تأیید بصری واقعی با اسکرین‌شات ممکن نشد: یک مسیر بدون‌افزودن‌وابستگی (Chrome نصب‌شده + CDP خام با `WebSocket` بومی Node، بدون Playwright/Puppeteer) دنبال شد، اما ساخت دستی کوکی نشست (از طریق `php artisan tinker`) موفق به احراز هویت نشد؛ عیب‌یابی نشان داد مکانیزم encrypt/decrypt کوکی خودش درست کار می‌کند (یک کوکی واقعاً صادرشده توسط Laravel با موفقیت decrypt شد)، اما علت دقیق ناسازگاری بین نشست دستی‌ساز و سرور در حال اجرا مشخص نشد (احتمال: عدم تطابق APP_KEY/کش کانفیگ بین پردازه‌ی tinker و پردازه‌ی سرور). طبق بند صریح خود تسک، این مسیر متوقف شد و **این بخش فقط با تحلیل سورس تأیید شده، نه اسکرین‌شات واقعی.** نشست موقت و فایل کوکی موقت پاک‌سازی شدند.
+
+### بستن این بخش
+
+تست کامل: `php artisan test` → 3150/3150 سبز. PHPStan → ۰ خطا. Pint → تمیز (هیچ فایل PHP تغییر نکرد). `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` روی تمام فایل‌های تغییریافته/تازه → تمیز.
+
+**فایل‌ها:** `resources/js/components/{entity-id.tsx,truncated-text.tsx (تازه),ui/table.tsx}`، `resources/js/pages/{dashboard.tsx,analytics/{affinity,cohort}.tsx,metrics/rfm.tsx,customers/index.tsx,orders/index.tsx,segments/show.tsx}`. فقط فرانت — هیچ فایل PHP/migration/تست بک‌اند تغییر نکرد.

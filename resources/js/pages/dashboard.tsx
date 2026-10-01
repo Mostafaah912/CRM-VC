@@ -528,13 +528,25 @@ export default function Dashboard({ data, filters }: Props) {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <Table>
+                        {/* table-fixed + percentage widths (P6-13): the two name columns share the
+                        space and wrap/clamp (EntityId) instead of forcing the table wider than the
+                        card; هم‌خرید/Lift get a small fixed width so they can never be squeezed off
+                        the edge — the whole table fits without a horizontal scroll at normal widths. */}
+                        <Table className="table-fixed">
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>محصول A</TableHead>
-                                    <TableHead>محصول B</TableHead>
-                                    <TableHead>هم‌خرید</TableHead>
-                                    <TableHead>Lift</TableHead>
+                                    <TableHead className="w-[38%]">
+                                        محصول A
+                                    </TableHead>
+                                    <TableHead className="w-[38%]">
+                                        محصول B
+                                    </TableHead>
+                                    <TableHead className="w-[12%]">
+                                        هم‌خرید
+                                    </TableHead>
+                                    <TableHead className="w-[12%]">
+                                        Lift
+                                    </TableHead>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -553,22 +565,25 @@ export default function Dashboard({ data, filters }: Props) {
                                     <TableRow
                                         key={`${pair.entity_a_id}-${pair.entity_b_id}`}
                                     >
-                                        <TableCell>
+                                        <TableCell className="align-top whitespace-normal">
                                             <EntityId
                                                 id={pair.entity_a_id}
                                                 name={pair.entity_a_name}
                                             />
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="align-top whitespace-normal">
                                             <EntityId
                                                 id={pair.entity_b_id}
                                                 name={pair.entity_b_name}
                                             />
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="align-top">
                                             {formatNumber(pair.co_customers)}
                                         </TableCell>
-                                        <TableCell dir="ltr">
+                                        <TableCell
+                                            dir="ltr"
+                                            className="align-top"
+                                        >
                                             {pair.lift.toFixed(2)}
                                         </TableCell>
                                     </TableRow>

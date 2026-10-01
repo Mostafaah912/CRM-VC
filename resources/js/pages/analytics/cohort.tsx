@@ -1,4 +1,5 @@
 import { Head } from '@inertiajs/react';
+import { useEffect, useRef } from 'react';
 import {
     Card,
     CardContent,
@@ -27,6 +28,18 @@ type Props = {
 const EMPTY = '—';
 
 export default function CohortPage({ data }: Props) {
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    // P6-13: force the scroll container's start position explicitly, rather than trust the browser's
+    // own default for an RTL overflow box (historically inconsistent across engines) — scrollLeft = 0
+    // is "start" (the right edge, where کوهورت/اندازه and the first periods sit) in every current
+    // browser's RTL scroll model.
+    useEffect(() => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollLeft = 0;
+        }
+    }, [data]);
+
     return (
         <>
             <Head title="ماتریس کوهورت" />
@@ -48,11 +61,19 @@ export default function CohortPage({ data }: Props) {
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <Table>
+                        <Table containerRef={scrollRef}>
                             <TableHeader>
                                 <TableRow>
-                                    <TableHead>کوهورت</TableHead>
-                                    <TableHead>اندازه</TableHead>
+                                    {/* Sticky "frozen" columns (P6-13): fixed pixel widths so the second
+                                    column's offset can line up exactly after the first — `start-*` is a
+                                    logical inset (right edge in this app's RTL), and `bg-card` keeps
+                                    scrolled-under content from showing through. */}
+                                    <TableHead className="bg-card sticky start-0 z-10 w-28">
+                                        کوهورت
+                                    </TableHead>
+                                    <TableHead className="bg-card sticky start-28 z-10 w-20">
+                                        اندازه
+                                    </TableHead>
                                     {data[0]?.periods.map((period) => (
                                         <TableHead
                                             key={period.period_number}
@@ -76,12 +97,15 @@ export default function CohortPage({ data }: Props) {
                                 )}
                                 {data.map((row) => (
                                     <TableRow key={row.cohort_month}>
-                                        <TableCell dir="ltr">
+                                        <TableCell
+                                            dir="ltr"
+                                            className="bg-card sticky start-0 z-10 w-28"
+                                        >
                                             {formatCohortMonth(
                                                 row.cohort_month,
                                             )}
                                         </TableCell>
-                                        <TableCell>
+                                        <TableCell className="bg-card sticky start-28 z-10 w-20">
                                             {formatNumber(row.cohort_size)}
                                         </TableCell>
                                         {row.periods.map((period) => (
@@ -133,6 +157,12 @@ export default function CohortPage({ data }: Props) {
                                 ))}
                             </TableBody>
                         </Table>
+                        {data.length > 0 && (
+                            <p className="text-muted-foreground mt-2 text-xs">
+                                برای دیدن دوره‌های بیشتر، جدول را به‌صورت افقی
+                                اسکرول کنید — ستون کوهورت/اندازه ثابت می‌ماند.
+                            </p>
+                        )}
                     </CardContent>
                 </Card>
             </div>

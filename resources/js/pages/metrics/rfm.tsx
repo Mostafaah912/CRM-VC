@@ -194,9 +194,7 @@ export default function RfmPage({ data }: Props) {
                                                 className="underline-offset-4 hover:underline"
                                             >
                                                 مشاهده پرونده مشتری #
-                                                {formatNumber(
-                                                    champion.customer_id,
-                                                )}
+                                                {champion.customer_id}
                                             </Link>
                                         </TableCell>
                                         <TableCell

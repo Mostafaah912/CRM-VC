@@ -58,13 +58,15 @@ function PairsTable({
     pairs: DashboardAffinityPair[];
 }) {
     return (
-        <Table>
+        // table-fixed + percentage widths (P6-13): see dashboard.tsx's identical top-affinity table —
+        // the name columns wrap/clamp (EntityId) instead of forcing the table past the card's edge.
+        <Table className="table-fixed">
             <TableHeader>
                 <TableRow>
-                    <TableHead>موجودیت A</TableHead>
-                    <TableHead>موجودیت B</TableHead>
-                    <TableHead>هم‌خرید</TableHead>
-                    <TableHead>Lift</TableHead>
+                    <TableHead className="w-[38%]">موجودیت A</TableHead>
+                    <TableHead className="w-[38%]">موجودیت B</TableHead>
+                    <TableHead className="w-[12%]">هم‌خرید</TableHead>
+                    <TableHead className="w-[12%]">Lift</TableHead>
                 </TableRow>
             </TableHeader>
             <TableBody>
@@ -81,22 +83,22 @@ function PairsTable({
                 {pairs.map((pair) => {
                     const row = (
                         <>
-                            <TableCell>
+                            <TableCell className="align-top whitespace-normal">
                                 <EntityId
                                     id={pair.entity_a_id}
                                     name={pair.entity_a_name}
                                 />
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-top whitespace-normal">
                                 <EntityId
                                     id={pair.entity_b_id}
                                     name={pair.entity_b_name}
                                 />
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="align-top">
                                 {formatNumber(pair.co_customers)}
                             </TableCell>
-                            <TableCell dir="ltr">
+                            <TableCell dir="ltr" className="align-top">
                                 {pair.lift.toFixed(2)}
                             </TableCell>
                         </>
