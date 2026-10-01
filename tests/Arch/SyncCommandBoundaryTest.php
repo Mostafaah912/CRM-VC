@@ -19,13 +19,16 @@ function syncCommandFile(): string
 | The list below grows one file per sprint that adds its own top-level command (same pattern as
 | CustomerListBoundaryTest's route count): P4-07 added MetricsRecompute (`metrics:recompute`, PRD
 | §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile. P6-09 added
-| NightlyChainCommand (`hm:nightly-chain`, PRD §22's actual full chain).
+| NightlyChainCommand (`hm:nightly-chain`, PRD §22's actual full chain). P6-13 added
+| IdentityReresolveCommand (`hm:identity-reresolve`) — composes Customers + Orders, same reason as
+| NightlyChainCommand for living here rather than inside either module.
 */
-it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute and P6-09\'s hm:nightly-chain, nothing else under app/Console', function () {
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute, P6-09\'s hm:nightly-chain and P6-13\'s hm:identity-reresolve, nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
         'app/Console/Commands/CatalogDryRunCommand.php',
+        'app/Console/Commands/IdentityReresolveCommand.php',
         'app/Console/Commands/MetricsRecompute.php',
         'app/Console/Commands/NightlyChainCommand.php',
         'app/Console/Commands/ReconcileCommand.php',

@@ -66,6 +66,12 @@ final class OrderService
         );
     }
 
+    /** How many stored orders still have no customer (PRD §08 step 1: an unusable phone, `needs_phone_review = true`). */
+    public function countNeedingPhoneReview(): int
+    {
+        return Order::query()->where('needs_phone_review', true)->count();
+    }
+
     /**
      * @return int the local order id
      */
