@@ -8,6 +8,11 @@ use Tests\Arch\Scanner;
 | P2-05 boundary: Woo -> (WooClient) -> Sync mappers -> Catalog's public service -> Catalog models.
 | Catalog knows nothing of Woo or Sync (PRD §07: Catalog depends on Core only); Sync never touches
 | Catalog's models or the database, and never talks HTTP itself.
+|
+| P6 decision (ARCHITECTURE.md): one product's write conflict is a warning, not an abort — reported by
+| CatalogService::tryUpsertProduct()'s CatalogUpsertOutcome (a Services-namespace DTO), never by Sync
+| catching CatalogIntegrityException directly, so the "only Services" boundary below stays exactly as
+| strict as it always was.
 */
 
 it('keeps the Catalog module ignorant of Woo, HTTP and Sync', function () {

@@ -424,6 +424,34 @@ it('STEP 3: with no product id, the SKU alone resolves', function () {
     expect([OrderItem::sole()->variation_id, OrderItem::sole()->product_id])->toBe([$c['v2021']->id, $c['p202']->id]);
 });
 
+it('STEP 3.5 (P6 decision, not PRD\'s original 4 steps): a simple product\'s own SKU resolves, with variation_id NULL', function () {
+    $c = seedCatalog();
+    $c['p101']->update(['sku' => 'SIMPLE-SKU']);
+
+    orders()->upsert(orderInput(['items' => [orderItem(['wooVariationId' => null, 'wooProductId' => null, 'sku' => 'SIMPLE-SKU'])]]));
+
+    $item = OrderItem::sole();
+    expect([$item->product_id, $item->variation_id])->toBe([$c['p101']->id, null]);
+});
+
+it('STEP 3.5 only runs once steps 1-3 all miss: a variation SKU still wins over a product SKU', function () {
+    $c = seedCatalog();
+    $c['p202']->update(['sku' => 'SKU-A']); // same value as v1011's SKU, on a DIFFERENT product
+
+    orders()->upsert(orderInput(['items' => [orderItem(['wooVariationId' => null, 'wooProductId' => null, 'sku' => 'SKU-A'])]]));
+
+    // Step 3 (variation SKU) already resolves 'SKU-A' to v1011/p101; step 3.5 never runs.
+    expect([OrderItem::sole()->product_id, OrderItem::sole()->variation_id])->toBe([$c['p101']->id, $c['v1011']->id]);
+});
+
+it('STEP 4: a product SKU that matches nothing still ends up unresolved', function () {
+    seedCatalog();
+
+    orders()->upsert(orderInput(['items' => [orderItem(['wooVariationId' => null, 'wooProductId' => null, 'sku' => 'NO-PRODUCT-SKU'])]]));
+
+    expect([OrderItem::sole()->product_id, OrderItem::sole()->variation_id])->toBe([null, null]);
+});
+
 it('STEP 4: nothing resolves -> NULL ids, sku and name snapshot kept, the order still succeeds, and it is logged', function () {
     seedCatalog();
     $productsBefore = Product::count();

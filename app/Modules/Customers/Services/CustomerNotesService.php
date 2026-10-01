@@ -88,7 +88,7 @@ class CustomerNotesService
         $body = trim($body);
 
         if ($body === '' || mb_strlen($body) > self::BODY_MAX_LENGTH) {
-            throw ValidationException::withMessages(['body' => 'متن یادداشت باید بین ۱ تا ۲۰۰۰ نویسه باشد.']);
+            throw ValidationException::withMessages(['body' => 'متن یادداشت باید بین 1 تا '.self::BODY_MAX_LENGTH.' نویسه باشد.']);
         }
 
         return DB::transaction(function () use ($customer, $author, $body): CustomerNote {

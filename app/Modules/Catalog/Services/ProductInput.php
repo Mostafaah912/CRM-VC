@@ -9,6 +9,10 @@ use Carbon\CarbonImmutable;
 /**
  * A Woo product with the full set of categories and variations Woo currently reports for it. `type` and
  * `status` are Woo's own slugs; mapping them onto Catalog's enums is Catalog's job.
+ *
+ * `sku`/`price` are the product's own — not part of PRD §09's literal `products` schema, added so a
+ * "simple" product (which never has a variation) can still resolve an order line (P6 decision,
+ * ARCHITECTURE.md). Optional with a null default so every existing positional call stays valid.
  */
 final readonly class ProductInput
 {
@@ -25,5 +29,7 @@ final readonly class ProductInput
         public ?CarbonImmutable $createdAtWoo,
         public array $wooCategoryIds,
         public array $variations,
+        public ?string $sku = null,
+        public ?int $price = null,
     ) {}
 }

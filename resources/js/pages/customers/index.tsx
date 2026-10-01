@@ -23,6 +23,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
 import { useCan } from '@/hooks/use-can';
 import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
 import { statusInfo } from '@/lib/system-status';
@@ -202,7 +203,7 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                             onChange={(event) =>
                                 set('search', event.target.value)
                             }
-                            placeholder="مثلاً مریم رضایی یا ۰۹۱۲۳۴۵۶۷۸۹"
+                            placeholder="مثلاً مریم رضایی یا 09123456789"
                         />
                     </div>
 
@@ -341,7 +342,13 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                             {customers.data.map((customer) => (
                                 <TableRow key={customer.id}>
                                     <TableCell className="text-sm font-medium">
-                                        {customer.display_name ?? '—'}
+                                        {customer.display_name === null ? (
+                                            '—'
+                                        ) : (
+                                            <TruncatedText
+                                                value={customer.display_name}
+                                            />
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         <PhoneRevealButton

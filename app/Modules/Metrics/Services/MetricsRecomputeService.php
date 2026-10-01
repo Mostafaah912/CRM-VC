@@ -30,6 +30,14 @@ use Throwable;
  * attempt in one step, so `metric_runs.status='failed'` always means "nothing from this run stuck,"
  * never "some of it did" — and it also means the run's own `fail()` write is never attempted inside an
  * already-poisoned transaction left behind by whichever step actually threw.
+ *
+ * PRD §11 step 11 (`metrics_dirty = false`) is the last write inside that same transaction, via
+ * {@see BaseAggregateService::resetDirtyFlag()} — so a failure anywhere above it rolls the reset back
+ * too, and a customer is never marked clean without every later step having actually run against it.
+ * Known race, accepted rather than solved here (see docs/architecture/sprint-6.md): an order that
+ * lands for a customer *during* this transaction, after step 3 read their aggregates but before this
+ * reset commits, gets its dirty flag cleared here anyway — that order's effect is picked up by the
+ * next nightly full run, not the next dirty run.
  */
 final class MetricsRecomputeService
 {
@@ -69,6 +77,7 @@ final class MetricsRecomputeService
                 $this->clv->compute();
                 $this->churn->compute($thresholds);
                 $this->lifecycle->resolve($thresholds);
+                $this->baseAggregates->resetDirtyFlag($run->id);
 
                 return $count;
             });

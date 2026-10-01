@@ -2,7 +2,6 @@
 
 declare(strict_types=1);
 
-use App\Modules\Catalog\Exceptions\CatalogIntegrityException;
 use App\Modules\Catalog\Models\Product;
 use App\Modules\Catalog\Models\ProductCategory;
 use App\Modules\Catalog\Models\ProductVariation;
@@ -133,6 +132,16 @@ it('syncs products with their categories and reads variations only for variable 
     Http::assertNothingSent();
 });
 
+it('persists the recorded product\'s own sku/price (P6 decision: products.sku/price is not PRD §09\'s literal schema)', function () {
+    $fake = catalogFake();
+    catalogSync($fake)->syncCategories();
+
+    catalogSync($fake)->syncProducts();
+
+    $tee = Product::where('woo_product_id', 101)->sole();
+    expect($tee->sku)->toBe('SYN-TEE-001')->and($tee->price)->toBe(403880)->and(is_int($tee->price))->toBeTrue();
+});
+
 it('keeps the product\'s Woo created date and stamps a local synced_at', function () {
     $this->travelTo(CarbonImmutable::parse('2026-06-01 10:00:00', 'UTC'));
     $fake = catalogFake();
@@ -187,13 +196,15 @@ it('reports an empty catalog as zero without touching the database', function ()
 
 // --------------------------------------------------------------- failures
 
-it('fails loudly on a malformed product payload, keeping the products already committed and writing nothing of it', function () {
+it('rejects one malformed product with a warning and keeps syncing the rest (P6 decision: an invalid product never stops the run)', function () {
     $bad = WooPayloads::without(variableProduct103(), 'name');
     $fake = catalogFake([WooPayloads::items('products')[0], $bad]);
 
-    expect(fn () => catalogSync($fake)->syncProducts())->toThrow(WooMappingException::class, 'name');
+    $result = catalogSync($fake)->syncProducts();
 
-    expect(Product::pluck('woo_product_id')->all())->toBe([101]);
+    expect([$result->products, $result->rejectedProducts])->toBe([1, 1])
+        ->and(Product::pluck('woo_product_id')->all())->toBe([101])
+        ->and(array_filter($GLOBALS['sync_logs'], fn (array $l) => $l['level'] === 'warning' && str_contains($l['context']['reason'] ?? '', 'name')))->not->toBeEmpty();
 });
 
 it('never persists a variable product whose variations could not be read', function () {
@@ -206,15 +217,17 @@ it('never persists a variable product whose variations could not be read', funct
         ->and(ProductVariation::count())->toBe(0);
 });
 
-it('fails loudly, corrupting nothing, when a Woo SKU is already taken by another variation', function () {
+it('rejects with a warning, corrupting nothing, when a Woo SKU is already taken by another variation', function () {
     $other = Product::factory()->create(['woo_product_id' => 900]);
     $owner = ProductVariation::factory()->create(['product_id' => $other->id, 'woo_variation_id' => 9001, 'sku' => 'SYN-SHIRT-103-S', 'price' => 42]);
 
-    expect(fn () => catalogSync(catalogFake())->syncProducts())->toThrow(CatalogIntegrityException::class);
+    $result = catalogSync(catalogFake())->syncProducts();
 
-    expect($owner->fresh()->only(['sku', 'price', 'product_id']))->toBe(['sku' => 'SYN-SHIRT-103-S', 'price' => 42, 'product_id' => $other->id])
+    expect([$result->products, $result->rejectedProducts])->toBe([1, 1])
+        ->and($owner->fresh()->only(['sku', 'price', 'product_id']))->toBe(['sku' => 'SYN-SHIRT-103-S', 'price' => 42, 'product_id' => $other->id])
         ->and(Product::where('woo_product_id', 103)->exists())->toBeFalse()
-        ->and(ProductVariation::count())->toBe(1);
+        ->and(ProductVariation::count())->toBe(1)
+        ->and(array_filter($GLOBALS['sync_logs'], fn (array $l) => $l['level'] === 'warning'))->not->toBeEmpty();
 });
 
 it('reads Woo only through the WooClient contract', function () {

@@ -13,7 +13,6 @@ use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Queue;
-use Symfony\Component\Console\Input\StringInput;
 use Tests\Support\WooOrderTotalsSimulator;
 
 /*
@@ -21,7 +20,8 @@ use Tests\Support\WooOrderTotalsSimulator;
 | ReconcileMonthJob per complete month (from the first, Mehr 1403, to the last complete one); with neither, the last
 | complete month is reconciled now. Both flags together, and a month that is invalid, before the first or not complete, exit 1
 | and touch nothing. A red month is a RESULT, not a usage error: exit 0. It prints counts and a percentage — nothing else.
-| Scheduled daily at 02:00 Asia/Tehran (--all).
+| P6-09: no longer scheduled directly — the nightly chain's ReconcileRecentMonthsJob(2) step covers it; `--all`
+| stays available, unscheduled, for a manual full-history re-check.
 */
 
 beforeEach(function () {
@@ -155,32 +155,21 @@ function scheduledReconcileEvents(): array
     return array_values(array_filter(app(Schedule::class)->events(), fn ($event) => str_contains((string) $event->command, 'hm:reconcile')));
 }
 
-it('schedules hm:reconcile --all daily at 02:00 in Asia/Tehran', function () {
-    $events = scheduledReconcileEvents();
-
-    expect($events)->toHaveCount(1)
-        ->and($events[0]->expression)->toBe('0 2 * * *')
-        ->and((string) $events[0]->timezone)->toBe('Asia/Tehran')
-        ->and($events[0]->command)->toContain('hm:reconcile')->toContain('--all')
-        ->and($events[0]->withoutOverlapping)->toBeFalse();
+it('no longer schedules hm:reconcile directly (P6-09): its nightly evidence now comes from hm:nightly-chain\'s ReconcileRecentMonthsJob(2) step', function () {
+    expect(scheduledReconcileEvents())->toHaveCount(0);
 });
 
-it('schedules a command line the command actually accepts: --all is a flag, and Laravel would compile [--all => true] into --all=\'1\', which it rejects', function () {
-    $command = Artisan::all()['hm:reconcile'];
-    $line = (string) scheduledReconcileEvents()[0]->command;
-    $arguments = trim(substr($line, strpos($line, 'hm:reconcile') + strlen('hm:reconcile')));
-
-    $input = new StringInput($arguments);
-    $input->bind($command->getDefinition()); // throws if the scheduled arguments are not valid for the command
-
-    expect($input->getOption('all'))->toBeTrue()->and($input->getOption('month'))->toBeNull();
-});
-
-it('schedules exactly two tasks: the orders poll and the nightly reconciliation', function () {
+it('schedules exactly five tasks: the orders poll, HealthCheckJob (P6-10), the nightly chain (P6-09), PruneLogsJob (P6-10), and the weekly affinity rebuild', function () {
     Artisan::all();
+    $events = app(Schedule::class)->events();
 
-    $commands = array_map(fn ($event) => (string) $event->command, app(Schedule::class)->events());
+    // Schedule::job() (HealthCheckJob/PruneLogsJob/BuildAffinityJob) produces a CallbackEvent with no
+    // ->command, only ->description.
+    $labels = array_map(fn ($event) => (string) ($event->command ?? $event->description ?? ''), $events);
 
-    expect($commands)->toHaveCount(2)
-        ->and(implode(' ', $commands))->toContain('hm:sync')->toContain('hm:reconcile');
+    expect($labels)->toHaveCount(5)
+        ->and(implode(' ', $labels))->toContain('hm:sync')->toContain('hm:nightly-chain')
+        ->and(implode(' ', $labels))->toContain('HealthCheckJob')
+        ->and(implode(' ', $labels))->toContain('PruneLogsJob')
+        ->and(implode(' ', $labels))->toContain('BuildAffinityJob');
 });

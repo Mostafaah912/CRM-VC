@@ -55,4 +55,8 @@ return [
 
     'webhook_secret' => env('WOO_WEBHOOK_SECRET'),
     'webhook_allowed_ips' => env('WOO_WEBHOOK_ALLOWED_IPS', ''),
+
+    // P6-10: how long a sync_logs row is kept (PruneLogsJob). PRD names the job but never a retention window;
+    // 30 days matches PRD §21's own backup retention (a reasoned default, not a PRD number).
+    'sync_log_retention_days' => 30,
 ];

@@ -172,6 +172,29 @@ it('treats an empty optional amount as null but never a malformed one', function
     failsAt(fn () => reader(['price' => '2.5'])->nullableMoney('price'), 'price');
 });
 
+// -------------------------------------------- decimal money (P6 decision: ProductDto::price only)
+
+it('treats a zero-fraction decimal string as its whole-Toman integer part', function (string $raw, int $expected) {
+    expect(reader(['price' => $raw])->nullableDecimalMoney('price'))->toBe($expected);
+})->with([
+    'real Woo value' => ['159990.0', 159990],
+    'two zero digits' => ['159990.00', 159990],
+    'zero itself' => ['0.0', 0],
+    'still a plain canonical string' => ['403880', 403880],
+]);
+
+it('still rejects a non-zero fraction, exactly like nullableMoney', function () {
+    failsAt(fn () => reader(['price' => '159990.5'])->nullableDecimalMoney('price'), 'price');
+});
+
+it('treats an empty, null or absent decimal price as null but never a malformed one', function () {
+    expect(reader(['price' => ''])->nullableDecimalMoney('price'))->toBeNull()
+        ->and(reader(['price' => null])->nullableDecimalMoney('price'))->toBeNull()
+        ->and(reader([])->nullableDecimalMoney('price'))->toBeNull();
+    failsAt(fn () => reader(['price' => '-159990.0'])->nullableDecimalMoney('price'), 'price');
+    failsAt(fn () => reader(['price' => '0159990.0'])->nullableDecimalMoney('price'), 'price');
+});
+
 it('reads the magnitude of a signed refund amount', function () {
     expect(reader(['total' => '-100000'])->absoluteMoney('total'))->toBe(100000)
         ->and(reader(['total' => '100000'])->absoluteMoney('total'))->toBe(100000);

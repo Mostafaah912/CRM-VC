@@ -130,6 +130,25 @@ final readonly class PayloadReader
         return $value === null || $value === '' ? null : $this->toman($key, $value);
     }
 
+    /**
+     * Like nullableMoney(), plus one extra shape: a decimal string whose fraction is all zeros
+     * ("159990.0" — Woo's own product `price` is not guaranteed to be the clean integer string that
+     * order totals and `regular_price` are). A non-zero fraction is never floored: it falls through to
+     * toman() unchanged and fails exactly like nullableMoney() would. Scoped to
+     * ProductMapper::map()'s 'price' field (P6 decision, ARCHITECTURE.md) — every other money field,
+     * including this same field on a variation, stays on the strict nullableMoney()/money() path.
+     */
+    public function nullableDecimalMoney(string $key): ?int
+    {
+        $value = $this->data[$key] ?? null;
+
+        if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)\.(0+)$/D', $value, $m) === 1) {
+            $value = $m[1];
+        }
+
+        return $value === null || $value === '' ? null : $this->toman($key, $value);
+    }
+
     /** Woo sends refund totals negative ("-100000"); the magnitude of a clean whole amount is what callers want. */
     public function absoluteMoney(string $key): int
     {

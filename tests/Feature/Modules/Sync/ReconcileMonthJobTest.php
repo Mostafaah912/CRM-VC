@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use App\Modules\Analytics\Jobs\BuildAffinityJob;
+use App\Modules\Metrics\Jobs\RecomputeMetricsJob;
 use App\Modules\Sync\Enums\ReconciliationStatus;
 use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Jobs\ReconcileMonthJob;
@@ -65,6 +67,18 @@ it('keeps the queue\'s retry_after at least 30 seconds above every sync job\'s t
     );
 
     expect((int) config('queue.connections.redis.retry_after'))->toBeGreaterThanOrEqual($longest + 30);
+});
+
+it('keeps the queue\'s retry_after above every whole-data job\'s timeout project-wide, not just Sync\'s (P6-09: RecomputeMetricsJob/BuildAffinityJob run up to 900s inside the nightly chain)', function () {
+    $longest = max(
+        (new ReconcileMonthJob('1405-05'))->timeout,
+        (new SyncEntityJob(SyncEntity::Orders))->timeout,
+        (new SyncPageJob(1, 1))->timeout,
+        (new RecomputeMetricsJob)->timeout,
+        (new BuildAffinityJob)->timeout,
+    );
+
+    expect((int) config('queue.connections.redis.retry_after'))->toBeGreaterThan($longest);
 });
 
 it('queues a month once while its job is waiting, and other months separately', function () {

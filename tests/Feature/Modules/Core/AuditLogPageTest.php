@@ -37,3 +37,20 @@ it('renders the audit page for a user whose role grants audit.view', function ()
             ->has('logs.data', 1),
         );
 });
+
+/** P6-11: the audit page used to show the raw Gregorian created_at column value directly. */
+it('shows created_at as Jalali/Tehran time, never a Gregorian-looking date', function () {
+    $permission = Permission::query()->create(['module' => 'audit', 'action' => 'view', 'label' => 'View audit']);
+    $role = Role::query()->create(['name' => 'owner', 'label' => 'Owner']);
+    $role->permissions()->attach($permission);
+    $user = User::factory()->create();
+    $user->roles()->attach($role);
+    app(AuditService::class)->record(AuditActorType::System, 'sync.completed', 'X', 1);
+
+    $this->actingAs($user)
+        ->get('/audit')
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->where('logs.data.0.created_at', fn (string $v) => (bool) preg_match('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/', $v))
+        );
+});

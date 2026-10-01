@@ -7,6 +7,7 @@ namespace App\Modules\Core\Services;
 use App\Models\User;
 use App\Modules\Core\Enums\AuditActorType;
 use App\Modules\Core\Models\AuditLog;
+use App\Support\TehranDateTime;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Request;
 
@@ -100,13 +101,28 @@ final class AuditService
         return $this->record(AuditActorType::User, $action, $auditableType, $auditableId, $before, $after, $user, $source);
     }
 
-    /** @return LengthAwarePaginator<int, AuditLog> */
+    /**
+     * P6-11: rows go out as a plain array, `created_at` Jalali/Tehran (App\Support\TehranDateTime) —
+     * never the raw Gregorian timestamp the column stores (CLAUDE.md §2).
+     *
+     * @return LengthAwarePaginator<int, array{id: int, actor_type: string, action: string, auditable_type: string, auditable_id: int, ip: string|null, created_at: string, user: array{id: int, name: string, email: string}|null}>
+     */
     public function paginate(int $perPage = 25): LengthAwarePaginator
     {
         return AuditLog::query()
             ->with('user:id,name,email')
             ->latest('created_at')
-            ->paginate($perPage);
+            ->paginate($perPage)
+            ->through(fn (AuditLog $log): array => [
+                'id' => $log->id,
+                'actor_type' => $log->actor_type->value,
+                'action' => $log->action,
+                'auditable_type' => $log->auditable_type,
+                'auditable_id' => $log->auditable_id,
+                'ip' => $log->ip,
+                'created_at' => TehranDateTime::format($log->created_at),
+                'user' => $log->user === null ? null : ['id' => $log->user->id, 'name' => $log->user->name, 'email' => $log->user->email],
+            ]);
     }
 
     /**

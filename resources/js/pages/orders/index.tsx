@@ -22,6 +22,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
 import { orderStatuses } from '@/lib/customer-labels';
 import { formatToman } from '@/lib/format';
 import { dashboard } from '@/routes';
@@ -333,8 +334,16 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
                                                 )}
                                                 className="underline-offset-4 hover:underline"
                                             >
-                                                {order.customer_display_name ??
-                                                    '—'}
+                                                {order.customer_display_name ===
+                                                null ? (
+                                                    '—'
+                                                ) : (
+                                                    <TruncatedText
+                                                        value={
+                                                            order.customer_display_name
+                                                        }
+                                                    />
+                                                )}
                                             </Link>
                                         )}
                                     </TableCell>

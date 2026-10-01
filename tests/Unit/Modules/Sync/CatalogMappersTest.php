@@ -101,6 +101,12 @@ it('reads a missing price, sku, slug, date and an empty price as absent', functi
     expect([$dto->price, $dto->sku, $dto->slug, $dto->createdAtWoo])->toBe([null, null, null, null]);
 });
 
+it('accepts the real Woo decimal price string with a zero fraction (P6 decision: ProductDto::price only)', function () {
+    $dto = (new ProductMapper)->map(WooPayloads::set(WooPayloads::items('products')[0], 'price', '159990.0'));
+
+    expect($dto->price)->toBe(159990)->and(is_int($dto->price))->toBeTrue();
+});
+
 it('maps a product with no categories', function () {
     expect((new ProductMapper)->map(WooPayloads::set(WooPayloads::items('products')[0], 'categories', []))->wooCategoryIds)->toBe([]);
 });

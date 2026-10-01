@@ -15,7 +15,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import { formatNumber, formatToman } from '@/lib/format';
+import { formatNumber, formatPercent, formatToman } from '@/lib/format';
 import { dashboard } from '@/routes';
 import { show as customerShow } from '@/routes/customers';
 import { rfm as metricsRfm } from '@/routes/metrics';
@@ -44,11 +44,7 @@ const SEGMENT_ORDER: (keyof RfmPageData['segments'])[] = [
 ];
 
 function percentage(count: number, total: number): string {
-    if (total === 0) {
-        return '۰٪';
-    }
-
-    return `${formatNumber(Math.round((count / total) * 100))}٪`;
+    return total === 0 ? '0%' : formatPercent(count / total);
 }
 
 export default function RfmPage({ data }: Props) {
@@ -118,7 +114,7 @@ export default function RfmPage({ data }: Props) {
                     <CardHeader>
                         <CardTitle>توزیع امتیازها</CardTitle>
                         <CardDescription>
-                            تعداد مشتریان در هر امتیاز، از ۱ تا ۵
+                            تعداد مشتریان در هر امتیاز، از 1 تا 5
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -126,7 +122,7 @@ export default function RfmPage({ data }: Props) {
                             <TableHeader>
                                 <TableRow>
                                     <TableHead />
-                                    {['۱', '۲', '۳', '۴', '۵'].map((label) => (
+                                    {['1', '2', '3', '4', '5'].map((label) => (
                                         <TableHead
                                             key={label}
                                             className="text-center"
@@ -165,7 +161,7 @@ export default function RfmPage({ data }: Props) {
                     <CardHeader>
                         <CardTitle>مشتریان قهرمان برتر</CardTitle>
                         <CardDescription>
-                            بر اساس مجموع خرید، حداکثر ۱۰ مشتری
+                            بر اساس مجموع خرید، حداکثر 10 مشتری
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -198,9 +194,7 @@ export default function RfmPage({ data }: Props) {
                                                 className="underline-offset-4 hover:underline"
                                             >
                                                 مشاهده پرونده مشتری #
-                                                {formatNumber(
-                                                    champion.customer_id,
-                                                )}
+                                                {champion.customer_id}
                                             </Link>
                                         </TableCell>
                                         <TableCell

@@ -3,6 +3,8 @@
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Modules\Analytics\Exceptions\DrillExportForbiddenException;
+use App\Modules\Analytics\Exceptions\UnknownDrillWidgetException;
 use App\Modules\Segments\Exceptions\RuleValidationException;
 use App\Modules\Segments\Exceptions\SegmentException;
 use Illuminate\Foundation\Application;
@@ -58,5 +60,19 @@ return Application::configure(basePath: dirname(__DIR__))
                 : ($e instanceof RuleValidationException ? 'rule' : 'segment');
 
             return back()->withErrors([$field => $e->getMessage()]);
+        });
+
+        // P6-07: DrillService::export() refuses either because the widget's own {widget} route segment
+        // is not one it knows (404 — the export never "silently" finds a different widget) or because
+        // the actor lacks customers.export (403, mirroring SegmentException::exportForbidden()). Kept
+        // centralized so DrillExportController stays a plain FormRequest -> one Service call -> response.
+        $exceptions->render(function (DrillExportForbiddenException|UnknownDrillWidgetException $e, Request $request) {
+            $status = $e instanceof UnknownDrillWidgetException ? 404 : 403;
+
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage()], $status);
+            }
+
+            abort($status, $e->getMessage());
         });
     })->create();
