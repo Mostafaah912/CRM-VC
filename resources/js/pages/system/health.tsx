@@ -48,7 +48,7 @@ function Metric({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 function percent(value: string | null): string {
-    return value === null ? '—' : `${value}٪`;
+    return value === null ? '—' : `${value}%`;
 }
 
 function GatePanel({ gate }: { gate: GateOne }) {
@@ -60,7 +60,7 @@ function GatePanel({ gate }: { gate: GateOne }) {
         >
             <CardHeader>
                 <div className="flex items-center justify-between gap-4">
-                    <CardTitle>دروازه ۱: تطبیق سفارش‌ها با ووکامرس</CardTitle>
+                    <CardTitle>دروازه 1: تطبیق سفارش‌ها با ووکامرس</CardTitle>
                     {gate.passed ? (
                         <ToneBadge tone="success">عبور کرد</ToneBadge>
                     ) : (
@@ -68,8 +68,8 @@ function GatePanel({ gate }: { gate: GateOne }) {
                     )}
                 </div>
                 <CardDescription>
-                    هر ماه از مهر ۱۴۰۳ تا آخرین ماه کامل باید سبز باشد: اختلاف
-                    تعداد سفارش صفر و اختلاف درآمد کمتر از ۱٪.
+                    هر ماه از مهر 1403 تا آخرین ماه کامل باید سبز باشد: اختلاف
+                    تعداد سفارش صفر و اختلاف درآمد کمتر از 1%.
                 </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">

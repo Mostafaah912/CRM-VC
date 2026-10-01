@@ -48,6 +48,32 @@ final class DrillService
 {
     public const JSON_LIMIT = 200;
 
+    /**
+     * Persian labels for every CSV export column (P6-12) — money columns name the unit (CLAUDE.md §2:
+     * Toman everywhere). The JSON `rows()` path keeps English keys on purpose (DrillDialog uses them as
+     * `row[column]` data keys, not just display text); only the CSV header row is literal display text,
+     * so it is translated here, once, for every widget.
+     *
+     * @var array<string, string>
+     */
+    private const COLUMN_LABELS = [
+        'customer_id' => 'شناسه مشتری',
+        'phone' => 'تلفن',
+        'display_name' => 'نام',
+        'order_id' => 'شماره سفارش',
+        'ordered_at' => 'تاریخ سفارش',
+        'total' => 'مبلغ کل (تومان)',
+        'net_revenue' => 'درآمد خالص (تومان)',
+        'first_order_at' => 'تاریخ اولین سفارش',
+        'total_revenue' => 'مجموع درآمد (تومان)',
+        'rfm_score' => 'امتیاز RFM',
+        'churn_risk_score' => 'امتیاز ریسک ریزش',
+        'clv_estimated' => 'ارزش طول عمر تخمینی (تومان)',
+        'clv_historical' => 'ارزش طول عمر تاریخی (تومان)',
+        'orders_in_period' => 'تعداد سفارش در این دوره',
+        'revenue_in_period' => 'درآمد این دوره (تومان)',
+    ];
+
     public function __construct(
         private readonly PermissionService $permissions,
         private readonly AuditService $audit,
@@ -79,9 +105,9 @@ final class DrillService
             ->whereBetween(DB::raw("(ordered_at AT TIME ZONE 'Asia/Tehran')::date"), [$period->from, $period->to])
             ->orderByDesc('ordered_at')
             ->limit(self::JSON_LIMIT + 1)
-            ->get(['id', 'customer_id', 'ordered_at', 'total', 'net_revenue'])
+            ->get(['woo_order_id', 'customer_id', 'ordered_at', 'total', 'net_revenue'])
             ->map(fn (object $row): array => [
-                'order_id' => (int) $row->id,
+                'order_id' => (int) $row->woo_order_id,
                 'customer_id' => $row->customer_id === null ? null : (int) $row->customer_id,
                 'ordered_at' => $this->jalali($row->ordered_at),
                 'total' => (int) $row->total,
@@ -309,7 +335,7 @@ final class DrillService
     {
         return match ($widget) {
             'orders' => [
-                'headers' => ['customer_id', 'phone', 'display_name', 'order_id', 'ordered_at', 'total', 'net_revenue'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'order_id', 'ordered_at', 'total', 'net_revenue']),
                 'query' => DB::table('orders as o')
                     ->leftJoin('customers as c', 'c.id', '=', 'o.customer_id')
                     ->where('o.is_realized', true)
@@ -317,14 +343,14 @@ final class DrillService
                     ->whereNull('o.deleted_at')
                     ->whereBetween(DB::raw("(o.ordered_at AT TIME ZONE 'Asia/Tehran')::date"), [$period->from, $period->to])
                     ->orderByDesc('o.ordered_at')
-                    ->select(['o.customer_id', 'c.phone_normalized', 'c.display_name', 'o.id as order_id', 'o.ordered_at', 'o.total', 'o.net_revenue']),
+                    ->select(['o.customer_id', 'c.phone_normalized', 'c.display_name', 'o.woo_order_id as order_id', 'o.ordered_at', 'o.total', 'o.net_revenue']),
                 'row' => fn (\stdClass $r, bool $full): array => [
                     $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name,
                     $r->order_id, $this->jalali($r->ordered_at), $r->total, $r->net_revenue,
                 ],
             ],
             'customers_new' => [
-                'headers' => ['customer_id', 'phone', 'display_name', 'first_order_at'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'first_order_at']),
                 'query' => DB::table('customer_metrics as cm')
                     ->join('customers as c', 'c.id', '=', 'cm.customer_id')
                     ->whereNull('c.deleted_at')
@@ -337,7 +363,7 @@ final class DrillService
                 ],
             ],
             'customers_repeat' => [
-                'headers' => ['customer_id', 'phone', 'display_name'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name']),
                 'query' => DB::table('orders as o')
                     ->join('customer_metrics as cm', 'cm.customer_id', '=', 'o.customer_id')
                     ->join('customers as c', 'c.id', '=', 'o.customer_id')
@@ -351,7 +377,7 @@ final class DrillService
                 'row' => fn (\stdClass $r, bool $full): array => [$r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name],
             ],
             'rfm_segment' => [
-                'headers' => ['customer_id', 'phone', 'display_name', 'total_revenue', 'rfm_score'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'total_revenue', 'rfm_score']),
                 'query' => DB::table('customer_metrics as cm')
                     ->join('customers as c', 'c.id', '=', 'cm.customer_id')
                     ->whereNull('c.deleted_at')
@@ -365,7 +391,7 @@ final class DrillService
                 ],
             ],
             'churn_level' => [
-                'headers' => ['customer_id', 'phone', 'display_name', 'churn_risk_score', 'clv_estimated', 'clv_historical'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'churn_risk_score', 'clv_estimated', 'clv_historical']),
                 'query' => DB::table('customer_metrics as cm')
                     ->join('customers as c', 'c.id', '=', 'cm.customer_id')
                     ->whereNull('c.deleted_at')
@@ -379,7 +405,7 @@ final class DrillService
                 ],
             ],
             'cohort_period' => [
-                'headers' => ['customer_id', 'phone', 'display_name', 'orders_in_period', 'revenue_in_period'],
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'orders_in_period', 'revenue_in_period']),
                 'query' => DB::table('orders as o')
                     ->join('customer_metrics as cm', 'cm.customer_id', '=', 'o.customer_id')
                     ->join('customers as c', 'c.id', '=', 'o.customer_id')
@@ -405,7 +431,7 @@ final class DrillService
      */
     private function affinityPairExportSpec(string $level, int $entityA, int $entityB): ?array
     {
-        $headers = ['customer_id', 'phone', 'display_name'];
+        $headers = $this->labels(['customer_id', 'phone', 'display_name']);
         $row = fn (\stdClass $r, bool $full): array => [$r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name];
 
         $query = match ($level) {
@@ -431,6 +457,15 @@ final class DrillService
         };
 
         return $query === null ? null : ['headers' => $headers, 'query' => $query, 'row' => $row];
+    }
+
+    /**
+     * @param  list<string>  $columns
+     * @return list<string>
+     */
+    private function labels(array $columns): array
+    {
+        return array_map(fn (string $c): string => self::COLUMN_LABELS[$c] ?? $c, $columns);
     }
 
     /** P6-11: every date a drill widget shows is Jalali/Tehran time — never the raw stored value (CLAUDE.md §2). */

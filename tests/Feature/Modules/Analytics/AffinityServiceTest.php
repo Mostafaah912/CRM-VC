@@ -329,6 +329,63 @@ it('returns an empty list for a level with nothing stored', function () {
     expect(app(AffinityService::class)->top(AffinityLevel::Basket))->toBe([]);
 });
 
+it('names a product-level pair\'s two entities, via Catalog\'s own public service (P6-12)', function () {
+    $a = Product::factory()->create(['name' => 'Alpha Tee']);
+    $b = Product::factory()->create(['name' => 'Beta Tee']);
+    seedProductCoPurchase($a, $b, coBuyers: 10, noiseBuyers: 10);
+    app(AffinityService::class)->rebuild();
+
+    $top = app(AffinityService::class)->top(AffinityLevel::Product, limit: 1);
+
+    [$nameA, $nameB] = $a->id < $b->id ? ['Alpha Tee', 'Beta Tee'] : ['Beta Tee', 'Alpha Tee'];
+    expect($top[0]['entity_a_name'])->toBe($nameA)
+        ->and($top[0]['entity_b_name'])->toBe($nameB);
+});
+
+it('names a category-level pair\'s two entities too', function () {
+    $catA = ProductCategory::factory()->create(['name' => 'Shirts']);
+    $catB = ProductCategory::factory()->create(['name' => 'Pants']);
+    $noiseCat = ProductCategory::factory()->create();
+
+    for ($i = 0; $i < 20; $i++) {
+        $customerId = Customer::factory()->create()->id;
+        ccp($customerId, $catA->id);
+        ccp($customerId, $catB->id);
+    }
+    for ($i = 0; $i < 20; $i++) {
+        ccp(Customer::factory()->create()->id, $noiseCat->id);
+    }
+    app(AffinityService::class)->rebuild();
+
+    $top = app(AffinityService::class)->top(AffinityLevel::Category, limit: 1);
+
+    [$nameA, $nameB] = $catA->id < $catB->id ? ['Shirts', 'Pants'] : ['Pants', 'Shirts'];
+    expect($top[0]['entity_a_name'])->toBe($nameA)
+        ->and($top[0]['entity_b_name'])->toBe($nameB);
+});
+
+it('leaves entity names null for variation/basket levels: no simple name exists for either', function () {
+    $va = ProductVariation::factory()->create();
+    $vb = ProductVariation::factory()->create();
+    $noiseVar = ProductVariation::factory()->create();
+
+    for ($i = 0; $i < 5; $i++) {
+        $order = affOrder(Customer::factory()->create());
+        affItem($order, null, $va);
+        affItem($order, null, $vb);
+    }
+    for ($i = 0; $i < 5; $i++) {
+        affItem(affOrder(Customer::factory()->create()), null, $noiseVar);
+    }
+    app(AffinityService::class)->rebuild();
+
+    $top = app(AffinityService::class)->top(AffinityLevel::Variation, limit: 1);
+
+    expect($top)->toHaveCount(1)
+        ->and($top[0]['entity_a_name'])->toBeNull()
+        ->and($top[0]['entity_b_name'])->toBeNull();
+});
+
 it('reports how many rows it wrote per level', function () {
     $a = Product::factory()->create();
     $b = Product::factory()->create();

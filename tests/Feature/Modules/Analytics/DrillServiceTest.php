@@ -62,6 +62,16 @@ it('never includes a display_name or phone column in the orders widget', functio
     expect($result->columns)->not->toContain('display_name')->not->toContain('phone')->not->toContain('phone_normalized');
 });
 
+it('shows the Woo-facing order number (woo_order_id) as order_id, never the internal row id (P6-12)', function () {
+    $customer = Customer::factory()->create();
+    $order = realizedOrder($customer, '2026-06-01 10:00:00', ['woo_order_id' => 918_273]);
+
+    $result = app(DrillService::class)->rows('orders', drillPeriod('2026-06-01', '2026-06-02'), []);
+
+    expect($result->rows[0]['order_id'])->toBe(918_273)
+        ->and($result->rows[0]['order_id'])->not->toBe($order->id);
+});
+
 it('formats the orders widget\'s ordered_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
     $customer = Customer::factory()->create();
     realizedOrder($customer, '2026-06-01 10:00:00+00'); // Tehran 13:30

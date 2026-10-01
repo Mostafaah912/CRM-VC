@@ -15,7 +15,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { DrillDialog } from '@/components/dashboard/drill-dialog';
-import { formatNumber } from '@/lib/format';
+import { formatCohortMonth, formatNumber, formatRate } from '@/lib/format';
 import { dashboard } from '@/routes';
 import { cohort as analyticsCohort } from '@/routes/analytics';
 import type { CohortPageData } from '@/types/analytics';
@@ -25,14 +25,6 @@ type Props = {
 };
 
 const EMPTY = '—';
-
-function percentText(value: number | null): string {
-    if (value === null) {
-        return 'داده کافی نیست';
-    }
-
-    return `${formatNumber(Math.round(value * 100))}٪`;
-}
 
 export default function CohortPage({ data }: Props) {
     return (
@@ -85,7 +77,9 @@ export default function CohortPage({ data }: Props) {
                                 {data.map((row) => (
                                     <TableRow key={row.cohort_month}>
                                         <TableCell dir="ltr">
-                                            {row.cohort_month}
+                                            {formatCohortMonth(
+                                                row.cohort_month,
+                                            )}
                                         </TableCell>
                                         <TableCell>
                                             {formatNumber(row.cohort_size)}
@@ -120,13 +114,13 @@ export default function CohortPage({ data }: Props) {
                                                                     period.period_number,
                                                                 ),
                                                         }}
-                                                        title={`کوهورت ${row.cohort_month} — دوره ${period.period_number}`}
+                                                        title={`کوهورت ${formatCohortMonth(row.cohort_month)} — دوره ${period.period_number}`}
                                                         trigger={
                                                             <button
                                                                 type="button"
                                                                 className="w-full underline-offset-4 hover:underline"
                                                             >
-                                                                {percentText(
+                                                                {formatRate(
                                                                     period.retention_rate,
                                                                 )}
                                                             </button>

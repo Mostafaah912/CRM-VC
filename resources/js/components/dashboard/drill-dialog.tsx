@@ -14,6 +14,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { drillColumnLabel, isDrillIdColumn } from '@/lib/drill-labels';
 import { formatNumber } from '@/lib/format';
 
 type DrillResponse = {
@@ -42,12 +43,17 @@ function query(
     return `/internal/drill/${widget}${suffix}${search.toString() === '' ? '' : `?${search.toString()}`}`;
 }
 
-function cell(value: string | number | null): string {
+function cell(column: string, value: string | number | null): string {
     if (value === null) {
         return '—';
     }
 
-    return typeof value === 'number' ? formatNumber(value) : value;
+    if (typeof value !== 'number') {
+        return value;
+    }
+
+    // An id is shown plain — never grouped with a thousands separator (P6-12).
+    return isDrillIdColumn(column) ? String(value) : formatNumber(value);
 }
 
 /** P6-07: PRD Sec.18's "هیچ عددی که پشتش دیده نشود قابل اعتماد نیست" — every drillable number opens this. */
@@ -110,8 +116,8 @@ export function DrillDialog({ widget, params, title, trigger }: Props) {
                         <TableHeader>
                             <TableRow>
                                 {data.columns.map((column) => (
-                                    <TableHead key={column} dir="ltr">
-                                        {column}
+                                    <TableHead key={column}>
+                                        {drillColumnLabel(column)}
                                     </TableHead>
                                 ))}
                             </TableRow>
@@ -122,7 +128,7 @@ export function DrillDialog({ widget, params, title, trigger }: Props) {
                                 <TableRow key={index}>
                                     {data.columns.map((column) => (
                                         <TableCell key={column} dir="ltr">
-                                            {cell(row[column])}
+                                            {cell(column, row[column])}
                                         </TableCell>
                                     ))}
                                 </TableRow>

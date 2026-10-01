@@ -12,6 +12,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { useCan } from '@/hooks/use-can';
+import { formatNumber } from '@/lib/format';
 import { dashboard } from '@/routes';
 import {
     create as segmentsCreate,
@@ -107,9 +108,7 @@ export default function SegmentsIndex({ segments }: Props) {
                                                 ارزیابی نشده
                                             </span>
                                         ) : (
-                                            segment.member_count.toLocaleString(
-                                                'fa-IR',
-                                            )
+                                            formatNumber(segment.member_count)
                                         )}
                                     </TableCell>
                                     <TableCell className="text-sm">

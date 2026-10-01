@@ -7,7 +7,11 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="card"
       className={cn(
-        "bg-card text-card-foreground flex flex-col gap-6 rounded-xl border py-6 shadow-sm",
+        // min-w-0 (P6-12): a Card is a flex-col item of the page's own flex-col wrapper; without it, a
+        // wide child (a table with nowrap cells — cohort matrix, affinity pairs, a drill dialog) refuses
+        // to shrink below its own content width and pushes the whole page wider instead of scrolling
+        // inside the card. Table's own wrapper already has overflow-x-auto — this is what lets it use it.
+        "bg-card text-card-foreground flex min-w-0 flex-col gap-6 rounded-xl border py-6 shadow-sm",
         className
       )}
       {...props}
@@ -49,7 +53,7 @@ function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="card-content"
-      className={cn("px-6", className)}
+      className={cn("min-w-0 px-6", className)}
       {...props}
     />
   )

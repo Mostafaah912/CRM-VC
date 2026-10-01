@@ -59,6 +59,8 @@ export type DashboardCohortRow = {
 export type DashboardAffinityPair = {
     entity_a_id: number;
     entity_b_id: number;
+    entity_a_name: string | null;
+    entity_b_name: string | null;
     co_customers: number;
     support: number;
     confidence: number;

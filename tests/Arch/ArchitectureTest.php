@@ -205,6 +205,41 @@ it('never formats a date in the frontend: no Intl.DateTimeFormat, toLocaleDateSt
         ], stripPhpComments: false))->toBeEmpty();
 });
 
+/**
+ * P6-12: every number/percent the app shows is Latin digits, a comma thousands separator, and an ASCII
+ * `%` — never a Persian/Arabic-Indic digit (۰-۹ / ٠-٩) or the Arabic percent sign (٪, U+066A), anywhere
+ * a person reads it. `App\Support\Digits`/`PhoneNormalizer`/`Money` are the one legitimate exception:
+ * they CONSUME Persian/Arabic-Indic digits a user typed, never produce them — the only files excluded.
+ * `tests/` is out of scope on purpose (fixtures/assertions, never shown to a user).
+ */
+it('never shows a Persian or Arabic-Indic digit, or the Arabic percent sign, anywhere in the frontend or a backend-generated string', function () {
+    $jsFiles = Scanner::files(['resources/js'], 'ts,tsx', ['resources/js/actions', 'resources/js/routes', 'resources/js/wayfinder']);
+    $phpFiles = array_values(array_filter(
+        Scanner::phpFiles(['app']),
+        fn (string $f): bool => ! in_array(Scanner::relative($f), [
+            'app/Support/Digits.php',
+            'app/Support/PhoneNormalizer.php',
+            'app/Support/Money.php',
+        ], true)
+    ));
+    $pattern = '/[\x{06F0}-\x{06F9}\x{0660}-\x{066A}]/u';
+
+    expect($jsFiles)->not->toBeEmpty()
+        ->and($phpFiles)->not->toBeEmpty()
+        ->and(Scanner::violations($jsFiles, [$pattern], stripPhpComments: false))->toBeEmpty()
+        ->and(Scanner::violations($phpFiles, [$pattern]))->toBeEmpty();
+});
+
+/** P6-12: the root cause of a Persian digit ever appearing — a `fa`-locale number formatter. Banned outright; `formatNumber()`/`formatToman()`/`formatPercent()` (resources/js/lib/format.ts) are the one place a number is ever formatted. */
+it('never formats a number with the fa-IR locale or a Persian Intl.NumberFormat', function () {
+    $files = Scanner::files(['resources/js'], 'ts,tsx', ['resources/js/actions', 'resources/js/routes', 'resources/js/wayfinder']);
+
+    expect(Scanner::violations($files, [
+        '/toLocaleString\s*\(\s*[\'"]fa(-IR)?[\'"]/',
+        '/Intl\s*\.\s*NumberFormat\s*\(\s*[\'"]fa(-IR)?[\'"]/',
+    ], stripPhpComments: false))->toBeEmpty();
+});
+
 /** Rule 8: tests run on real PostgreSQL only. */
 it('never configures SQLite for tests', function () {
     $phpunit = (string) file_get_contents(Scanner::root().'/phpunit.xml');

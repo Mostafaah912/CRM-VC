@@ -15,6 +15,7 @@ import {
     TableRow,
 } from '@/components/ui/table';
 import { DrillDialog } from '@/components/dashboard/drill-dialog';
+import { EntityId } from '@/components/entity-id';
 import { formatNumber } from '@/lib/format';
 import { dashboard } from '@/routes';
 import { affinity as analyticsAffinity } from '@/routes/analytics';
@@ -29,23 +30,23 @@ const LEVELS: { key: AffinityLevel; title: string; description: string }[] = [
     {
         key: 'category',
         title: 'سطح دسته‌بندی',
-        description: 'قوی‌ترین سیگنال Cross-Sell — حداقل هم‌خرید: ۲۰',
+        description: 'قوی‌ترین سیگنال Cross-Sell — حداقل هم‌خرید: 20',
     },
     {
         key: 'product',
         title: 'سطح محصول',
-        description: 'پیشنهاد محصول مکمل — حداقل هم‌خرید: ۱۰',
+        description: 'پیشنهاد محصول مکمل — حداقل هم‌خرید: 10',
     },
     {
         key: 'variation',
         title: 'سطح تنوع (Variation)',
-        description: 'Reorder همان SKU — حداقل هم‌خرید: ۵',
+        description: 'Reorder همان SKU — حداقل هم‌خرید: 5',
     },
     {
         key: 'basket',
         title: 'سطح سبد خرید',
         description:
-            'با هم خریده می‌شوند (در یک سفارش) — حداقل هم‌خرید: ۱۰. با سبد کوچک، نمونه کافی ندارد؛ این سطح فعلاً قابل‌کلیک نیست.',
+            'با هم خریده می‌شوند (در یک سفارش) — حداقل هم‌خرید: 10. با سبد کوچک، نمونه کافی ندارد؛ این سطح فعلاً قابل‌کلیک نیست.',
     },
 ];
 
@@ -80,11 +81,17 @@ function PairsTable({
                 {pairs.map((pair) => {
                     const row = (
                         <>
-                            <TableCell dir="ltr">
-                                #{formatNumber(pair.entity_a_id)}
+                            <TableCell>
+                                <EntityId
+                                    id={pair.entity_a_id}
+                                    name={pair.entity_a_name}
+                                />
                             </TableCell>
-                            <TableCell dir="ltr">
-                                #{formatNumber(pair.entity_b_id)}
+                            <TableCell>
+                                <EntityId
+                                    id={pair.entity_b_id}
+                                    name={pair.entity_b_name}
+                                />
                             </TableCell>
                             <TableCell>
                                 {formatNumber(pair.co_customers)}

@@ -202,7 +202,7 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                             onChange={(event) =>
                                 set('search', event.target.value)
                             }
-                            placeholder="مثلاً مریم رضایی یا ۰۹۱۲۳۴۵۶۷۸۹"
+                            placeholder="مثلاً مریم رضایی یا 09123456789"
                         />
                     </div>
 

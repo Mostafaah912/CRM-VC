@@ -90,6 +90,18 @@ it('includes the full phone for an exporter with customers.view_full_phone', fun
     expect($csv)->toContain('989123456789');
 });
 
+it('shows the Woo-facing order number in the orders CSV, never the internal row id (P6-12)', function () {
+    $user = User::factory()->create();
+    grantDrillExportPermission($user, 'export');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => '2026-06-01 10:00:00', 'total' => 100_000, 'woo_order_id' => 918_273]);
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+
+    $csv = drillStreamedCsv(app(DrillService::class)->export('orders', $period, [], $user));
+
+    expect($csv)->toContain('918273');
+});
+
 it('formats the orders CSV\'s ordered_at as Jalali/Tehran time (P6-11), never the raw Gregorian value', function () {
     $user = User::factory()->create();
     grantDrillExportPermission($user, 'export');
@@ -116,14 +128,19 @@ it('formats the customers_new CSV\'s first_order_at as Jalali/Tehran time (P6-11
         ->and($csv)->not->toContain('2026-06-01 08:00:00');
 });
 
-it('writes a UTF-8 BOM and a header row', function () {
+it('writes a UTF-8 BOM and a Persian header row, with the money unit named (P6-12)', function () {
     $user = User::factory()->create();
     grantDrillExportPermission($user, 'export');
     $period = DashboardPeriod::lastDays(30, CarbonImmutable::now());
 
     $csv = drillStreamedCsv(app(DrillService::class)->export('orders', $period, [], $user));
 
-    expect(substr($csv, 0, 3))->toBe("\xEF\xBB\xBF")->and($csv)->toContain('customer_id,phone,display_name');
+    expect(substr($csv, 0, 3))->toBe("\xEF\xBB\xBF")
+        ->and($csv)->toContain('شناسه مشتری')
+        ->and($csv)->toContain('شماره سفارش')
+        ->and($csv)->toContain('مبلغ کل (تومان)')
+        ->and($csv)->toContain('درآمد خالص (تومان)')
+        ->and($csv)->not->toContain('customer_id');
 });
 
 it('throws for an unknown widget rather than exporting nothing silently', function () {

@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table';
 import { useCan } from '@/hooks/use-can';
 import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
+import { formatNumber } from '@/lib/format';
 import { dashboard } from '@/routes';
 import {
     destroy as segmentsDestroy,
@@ -162,7 +163,7 @@ export default function SegmentShow({ segment, members }: Props) {
                                     ارزیابی نشده
                                 </span>
                             ) : (
-                                segment.member_count.toLocaleString('fa-IR')
+                                formatNumber(segment.member_count)
                             )
                         }
                     />
@@ -183,7 +184,7 @@ export default function SegmentShow({ segment, members }: Props) {
                         value={
                             segment.last_eval_ms === null
                                 ? '—'
-                                : `${segment.last_eval_ms.toLocaleString('fa-IR')} ms`
+                                : `${formatNumber(segment.last_eval_ms)} ms`
                         }
                     />
                     <Stat

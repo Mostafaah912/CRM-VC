@@ -6,6 +6,8 @@ namespace App\Modules\Analytics\Services;
 
 use App\Modules\Analytics\Enums\AffinityLevel;
 use App\Modules\Analytics\Support\AffinitySummary;
+use App\Modules\Catalog\Services\CatalogLookupService;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -34,6 +36,8 @@ use Illuminate\Support\Facades\DB;
  */
 final class AffinityService
 {
+    public function __construct(private readonly CatalogLookupService $catalog) {}
+
     public function rebuild(): AffinitySummary
     {
         $start = microtime(true);
@@ -63,7 +67,7 @@ final class AffinityService
      * dashboard widget, PRD §07's `AffinityService::top()`). Plain read of the already-rebuilt table —
      * no computation happens here.
      *
-     * @return list<array{entity_a_id: int, entity_b_id: int, co_customers: int, support: float, confidence: float, lift: float, level: string}>
+     * @return list<array{entity_a_id: int, entity_b_id: int, entity_a_name: string|null, entity_b_name: string|null, co_customers: int, support: float, confidence: float, lift: float, level: string}>
      */
     public function top(AffinityLevel $level = AffinityLevel::Product, int $limit = 10): array
     {
@@ -71,19 +75,42 @@ final class AffinityService
             ->where('level', $level->value)
             ->orderByDesc('lift')
             ->limit($limit)
-            ->get(['entity_a_id', 'entity_b_id', 'co_customers', 'support', 'confidence', 'lift'])
-            ->map(fn (object $row): array => [
-                'entity_a_id' => (int) $row->entity_a_id,
-                'entity_b_id' => (int) $row->entity_b_id,
-                'co_customers' => (int) $row->co_customers,
-                'support' => (float) $row->support,
-                'confidence' => (float) $row->confidence,
-                'lift' => (float) $row->lift,
-                'level' => $level->value,
-            ])
-            ->all();
+            ->get(['entity_a_id', 'entity_b_id', 'co_customers', 'support', 'confidence', 'lift']);
 
-        return array_values($rows);
+        $names = $this->namesFor($level, $rows);
+
+        return array_values($rows->map(fn (object $row): array => [
+            'entity_a_id' => (int) $row->entity_a_id,
+            'entity_b_id' => (int) $row->entity_b_id,
+            'entity_a_name' => $names[(int) $row->entity_a_id] ?? null,
+            'entity_b_name' => $names[(int) $row->entity_b_id] ?? null,
+            'co_customers' => (int) $row->co_customers,
+            'support' => (float) $row->support,
+            'confidence' => (float) $row->confidence,
+            'lift' => (float) $row->lift,
+            'level' => $level->value,
+        ])->all());
+    }
+
+    /**
+     * A human label next to an id (reasoned addition, P6-12): only `product`/`category` have one simple
+     * name to show (Catalog's own `products`/`product_categories.name`, via its public
+     * CatalogLookupService — never a direct Model import across the module boundary). `variation` has no
+     * name of its own (only attributes on its parent product) and `basket`'s pair is orders, not a named
+     * entity at all — both stay unnamed rather than inventing a label PRD never defined.
+     *
+     * @param  Collection<int, \stdClass>  $rows
+     * @return array<int, string>
+     */
+    private function namesFor(AffinityLevel $level, Collection $rows): array
+    {
+        $ids = array_values(array_unique($rows->flatMap(fn (\stdClass $row): array => [(int) $row->entity_a_id, (int) $row->entity_b_id])->all()));
+
+        return match ($level) {
+            AffinityLevel::Product => $this->catalog->productNames($ids),
+            AffinityLevel::Category => $this->catalog->categoryNames($ids),
+            default => [],
+        };
     }
 
     /**
@@ -91,7 +118,7 @@ final class AffinityService
      * PRD's own backlog title is "Affinity (4 levels)", so the page shows all four, not just one). Pure
      * composition of the four already-tested `top()` calls; no new query happens here.
      *
-     * @return array<string, list<array{entity_a_id: int, entity_b_id: int, co_customers: int, support: float, confidence: float, lift: float, level: string}>>
+     * @return array<string, list<array{entity_a_id: int, entity_b_id: int, entity_a_name: string|null, entity_b_name: string|null, co_customers: int, support: float, confidence: float, lift: float, level: string}>>
      */
     public function topAll(int $limitPerLevel = 10): array
     {

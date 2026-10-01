@@ -14,7 +14,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import { formatNumber } from '@/lib/format';
+import { formatNumber, formatRate } from '@/lib/format';
 import { dashboard } from '@/routes';
 import { retention as analyticsRetention } from '@/routes/analytics';
 import type { RetentionPageData } from '@/types/analytics';
@@ -22,14 +22,6 @@ import type { RetentionPageData } from '@/types/analytics';
 type Props = {
     data: RetentionPageData;
 };
-
-function percentText(value: number | null): string {
-    if (value === null) {
-        return 'داده کافی نیست';
-    }
-
-    return `${formatNumber(Math.round(value * 100))}٪`;
-}
 
 export default function RetentionPage({ data }: Props) {
     return (
@@ -50,7 +42,7 @@ export default function RetentionPage({ data }: Props) {
                         </CardHeader>
                         <CardContent className="flex flex-col gap-1">
                             <span className="text-2xl font-semibold">
-                                {percentText(data.repeat_purchase_rate.rate)}
+                                {formatRate(data.repeat_purchase_rate.rate)}
                             </span>
                             <span className="text-muted-foreground text-xs">
                                 {formatNumber(
@@ -75,9 +67,7 @@ export default function RetentionPage({ data }: Props) {
                         </CardHeader>
                         <CardContent>
                             <span className="text-2xl font-semibold">
-                                {percentText(
-                                    data.returning_revenue_share.share,
-                                )}
+                                {formatRate(data.returning_revenue_share.share)}
                             </span>
                         </CardContent>
                     </Card>
@@ -118,7 +108,7 @@ export default function RetentionPage({ data }: Props) {
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            {percentText(window.retention_rate)}
+                                            {formatRate(window.retention_rate)}
                                         </TableCell>
                                     </TableRow>
                                 ))}

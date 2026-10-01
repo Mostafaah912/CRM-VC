@@ -20,7 +20,14 @@ import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { DrillDialog } from '@/components/dashboard/drill-dialog';
 import { DateRange } from '@/components/date-range';
-import { formatNumber, formatToman } from '@/lib/format';
+import { EntityId } from '@/components/entity-id';
+import {
+    formatCohortMonth,
+    formatNumber,
+    formatPercent,
+    formatRate,
+    formatToman,
+} from '@/lib/format';
 import { churnLevels, rfmSegments } from '@/lib/customer-labels';
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
@@ -55,14 +62,6 @@ const CHURN_ORDER: (keyof DashboardData['churn_distribution'])[] = [
     'none',
 ];
 
-function percentText(value: number | null): string {
-    if (value === null) {
-        return 'داده کافی نیست';
-    }
-
-    return `${formatNumber(Math.round(value * 100))}٪`;
-}
-
 /** A signed percentage change vs the previous period; null when the previous period was zero (no baseline). */
 function delta(current: number, previous: number): string {
     if (previous === 0) {
@@ -72,7 +71,7 @@ function delta(current: number, previous: number): string {
     const change = Math.round(((current - previous) / previous) * 100);
     const sign = change > 0 ? '+' : '';
 
-    return `${sign}${formatNumber(change)}٪ نسبت به دوره قبل`;
+    return `${sign}${formatNumber(change)}% نسبت به دوره قبل`;
 }
 
 function KpiBox({
@@ -206,7 +205,7 @@ export default function Dashboard({ data, filters }: Props) {
                     </div>
                     <Button type="submit">اعمال بازه</Button>
                     <Button type="button" variant="outline" onClick={reset}>
-                        بازه پیش‌فرض (۳۰ روز اخیر)
+                        بازه پیش‌فرض (30 روز اخیر)
                     </Button>
                 </form>
 
@@ -329,7 +328,7 @@ export default function Dashboard({ data, filters }: Props) {
                         </CardHeader>
                         <CardContent>
                             <span className="text-2xl font-semibold">
-                                {percentText(data.repeat_purchase_rate.rate)}
+                                {formatRate(data.repeat_purchase_rate.rate)}
                             </span>
                         </CardContent>
                     </Card>
@@ -342,7 +341,7 @@ export default function Dashboard({ data, filters }: Props) {
                         </CardHeader>
                         <CardContent>
                             <span className="text-2xl font-semibold">
-                                {percentText(data.returning_revenue_share.rate)}
+                                {formatRate(data.returning_revenue_share.rate)}
                             </span>
                         </CardContent>
                     </Card>
@@ -491,7 +490,9 @@ export default function Dashboard({ data, filters }: Props) {
                                 {data.cohort_matrix.map((row) => (
                                     <TableRow key={row.cohort_month}>
                                         <TableCell dir="ltr">
-                                            {row.cohort_month}
+                                            {formatCohortMonth(
+                                                row.cohort_month,
+                                            )}
                                         </TableCell>
                                         <TableCell>
                                             {formatNumber(row.cohort_size)}
@@ -507,7 +508,7 @@ export default function Dashboard({ data, filters }: Props) {
                                             >
                                                 {period.retention_rate === null
                                                     ? EMPTY
-                                                    : percentText(
+                                                    : formatPercent(
                                                           period.retention_rate,
                                                       )}
                                             </TableCell>
@@ -552,11 +553,17 @@ export default function Dashboard({ data, filters }: Props) {
                                     <TableRow
                                         key={`${pair.entity_a_id}-${pair.entity_b_id}`}
                                     >
-                                        <TableCell dir="ltr">
-                                            #{formatNumber(pair.entity_a_id)}
+                                        <TableCell>
+                                            <EntityId
+                                                id={pair.entity_a_id}
+                                                name={pair.entity_a_name}
+                                            />
                                         </TableCell>
-                                        <TableCell dir="ltr">
-                                            #{formatNumber(pair.entity_b_id)}
+                                        <TableCell>
+                                            <EntityId
+                                                id={pair.entity_b_id}
+                                                name={pair.entity_b_name}
+                                            />
                                         </TableCell>
                                         <TableCell>
                                             {formatNumber(pair.co_customers)}
