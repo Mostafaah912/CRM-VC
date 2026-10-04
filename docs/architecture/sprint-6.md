@@ -1006,3 +1006,41 @@ P6-12 مشکل اصلی را حل کرد (`min-w-0` روی `Card`/`CardContent`)
 تست کامل: `php artisan test` → ۳۱۵۸/۳۱۵۸ سبز (۸ تست تازه در این بخش؛ ۲ تست Arch موجود عمداً به‌روزرسانی شد — نه سست، تصمیم‌های تازه را قفل می‌کنند). PHPStan → ۰ خطا. Pint → تمیز. `npm run types:check`/`build` → تمیز.
 
 **فایل‌ها:** `app/Modules/Customers/Services/{IdentityConflictReresolveService.php (تازه),IdentityConflictService.php}`، `app/Modules/Customers/Support/{IdentityConflictReresolveResult.php (تازه),IdentityConflictRow.php}`، `app/Modules/Orders/Services/OrderService.php` (+`countNeedingPhoneReview`)، `app/Console/Commands/IdentityReresolveCommand.php` (تازه، `hm:identity-reresolve`)، `resources/js/{pages/system/identity-conflicts.tsx,types/system.ts}`، تست‌ها: `tests/Feature/{Modules/Customers/IdentityConflictReresolveTest,Console/IdentityReresolveCommandTest,Http/System/IdentityConflictsControllerTest}.php`، `tests/Arch/{SystemPagesBoundaryTest,SyncCommandBoundaryTest}.php`. هیچ Migration تازه‌ای لازم نشد (`confirmed_same` ۱۳ کاراکتر، در `varchar(15)` جا می‌شود؛ باگ شناخته‌شده‌ی `confirmed_different` دست‌نخورده و خارج از Scope ماند).
+
+## Sprint 6 (ادامه) — شش فاز جدید، طبق دستور صریح پروژه‌مالک (۲۰۲۶-۱۰-۰۴)
+
+**تناقض با CLAUDE.md §5 («یک Feature در هر جلسه») به‌صراحت اعلام شد** پیش از شروع — شش فاز زیر در یک جلسه اجرا شدند چون هرکدام تست/commit/push مستقل خودش را دارد (روح §۴ حفظ شد) و دستور صریح، مکتوب و آگاهانه‌ی پروژه‌مالک بود، نه حدس یا گسترش دامنه‌ی خاموش.
+
+## P6-14 — فاز ۱: همپوشانی Layout (RTL sidebar) + سرریز جدول تعارض‌های هویت
+
+### ریشه‌یابی (با خواندن کد، نه حدس)
+
+۱) **باگ اصلی:** `ui/sidebar.tsx`'s `SidebarInset` مارجین فیزیکی `ml-0` را همیشه صفر می‌کرد، صرف‌نظر از اینکه پنل واقعی (`fixed`, `side==="left" ? left-0 : right-0`) کدام سمت رندر می‌شود. `app-sidebar.tsx` هیچ `side` نمی‌داد → پیش‌فرض primitive («left»)، درحالی‌که `resources/views/app.blade.php` کل صفحه را `dir="rtl"` می‌کند. فاصله‌گیر داخل جریان فلکس (که از RTL پیروی می‌کند) سمت راست می‌نشست، ولی پنل `fixed` واقعی فیزیکی چپ می‌ماند — محتوا فکر می‌کرد فاصله در راست رزرو شده، سایدبار واقعی در چپ بود، پس محتوا زیرش می‌رفت. این دقیقاً همان Open Item ثبت‌شده در ARCHITECTURE.md («P6-12», خط ۵۶) بود که عمداً برای یک تصمیم صریح باز مانده بود — اکنون آن تصمیم گرفته شد: `side="right"`.
+۲) **باگ دوم (مستقل):** `TableCell` پایه (`ui/table.tsx`) همیشه `whitespace-nowrap` است، بدون overflow-guard. در `identity-conflicts.tsx`، ستون «زمان» (`w-28`=112px) برای رشته‌ی کامل `YYYY/MM/DD HH:mm:ss` (۱۹ کاراکتر) جا کم آورد و با Playwright اندازه‌گیری شد: `cRect {l:895,r:1007}` در برابر `chRect {l:873.95,r:999}` — یعنی حدود ۲۱px سرریز سمت چپ (دقیقاً جهت سرریز RTL: محتوا به لبه‌ی راست پدینگ می‌چسبد، سرریز به چپ می‌رود). ستون‌های «دلیل»/«وضعیت» نیز با همین الگو (متن طولانی فارسی / Badge با برچسب دوبخشی) مستعد همین سرریز بودند، پیش از اینکه با عرض/wrap اصلاح شوند.
+
+### رفع
+
+- `resources/js/components/ui/sidebar.tsx`: `SidebarInset` مارجین را side-aware کرد (`peer-data-[side=left]:ml-0` در برابر `peer-data-[side=right]:mr-0`، هم حالت پایه هم collapsed). `SidebarTrigger` یک prop اختیاری `side` گرفت تا آیکون باز/بسته (`PanelRightOpen/CloseIcon` در برابر `PanelLeftOpen/CloseIcon`) با سمت واقعی سایدبار هم‌خوان باشد (پیش‌فرض `"left"`، سازگار با عقب).
+- `resources/js/components/app-sidebar.tsx`: `<Sidebar collapsible="icon" variant="inset" side="right">`.
+- `resources/js/components/app-sidebar-header.tsx`: `<SidebarTrigger side="right" className="-ms-1" />` (مارجین فیزیکی `-ml-1` به منطقی `-ms-1` تبدیل شد).
+- Sheet موبایل: نیاز به تغییر کد نداشت — `Sidebar`'s isMobile branch از قبل `side={side}` را به `<Sheet>` پاس می‌دهد؛ با رفع بالا خودکار درست شد.
+- `resources/js/pages/system/identity-conflicts.tsx`: عرض ستون «زمان» (`w-28`→`w-36`)، «وضعیت» (`w-28`→`w-36`, Badge با `whitespace-normal break-words`)، «دلیل» (`w-28`→`w-40`, سلول با `whitespace-normal break-words`) — صفحه‌بندی‌شده، نه تغییر پایه‌ی `TableCell` (تغییر کل primitive بدون شواهد سرریز در صفحات دیگر، حدس می‌بود؛ به‌جایش با اسکریپت زیر همه‌ی صفحات دیگر عملاً بررسی شدند).
+
+### تأیید اجباری (Playwright، خارج از ریپو، بدون وابستگی پروژه)
+
+اسکریپت موقت در scratchpad (`phase1-verify.mjs`, حذف نشده در ریپو — هرگز اضافه نشد)، `channel:'chrome'`، لاگین با `test@example.com` / `password` (seed موجود، نقش Owner از قبل متصل — بدون تغییر DB). ۱۳ مسیر (dashboard, customers, orders, rfm, segments, segment‌ی ۹, cohort, retention, affinity, audit, health, sync-logs, identity-conflicts) × عرض ۱۲۸۰/۱۴۴۰/۱۹۲۰ × سایدبار باز/جمع‌شده = **۷۸ ترکیب**.
+
+بررسی خودکار هر صفحه: (۱) `document.documentElement.scrollWidth` > `clientWidth` (اسکرول افقی سطح صفحه)، (۲) هیچ عنصر مرئی زیر `main` نباید مستطیلش با مستطیل پنل واقعی سایدبار (`[data-sidebar="sidebar"]:not([data-mobile="true"])`) تقاطع کند، (۳) در هر `<table>`، هیچ فرزند مستقیم هیچ `td`/`th` نباید از مستطیل سلول خودش بیرون بزند — مگر داخل یک `[data-slot="table-container"]` که خودش `scrollWidth > clientWidth` دارد (overflow-x-auto عمدی).
+
+**قبل از رفع عرض ستون «زمان» (بعد از رفع sidebar):** ۷۷/۷۸ سبز؛ `identity-conflicts` در هر ۶ ترکیب (۳ عرض × ۲ حالت) دقیقاً «cellOverflow=25» (۲۵ = اندازه‌ی صفحه، همه از نوع ستون «زمان» — تأیید شد با فیلتر الگوی تاریخ روی تمام ۲۵ مورد).
+**بعد از رفع:** **۷۸/۷۸ سبز** (۰ اسکرول افقی، ۰ تقاطع با سایدبار، ۰ سرریز سلول، در تمام ترکیب‌ها). عدد خام: `report.json` در scratchpad.
+
+اسکرین‌شات‌ها (۷۸ فایل، scratchpad) با Read شخصاً دیده شد — نمونه‌ها: `identity-conflicts_w1280_open` (جدول تمیز، بدون همپوشانی)، `affinity_w1280_open` (ستون Lift کامل دیده می‌شود)، `segments_w1280_open` (دکمه‌ی «+ سگمنت جدید» کامل)، `dashboard_w1280_collapsed` (سایدبار جمع‌شده در سمت راست، محتوا تمام‌عرض، بدون برش). هر چهار نشانه‌ای که در گزارش کاربر آمده بود (دکمه سگمنت، دکمه‌های فیلتر، ستون Lift، کارت‌های توزیع سگمنت) معلول همان یک باگ ریشه‌ای sidebar بودند، نه باگ‌های جدا — بعد از رفع ریشه، هیچ‌کدام نیاز به پچ جداگانه نداشتند (با ۷۸/۷۸ تأیید شد، نه فرض).
+
+### بستن این فاز
+
+`npm run types:check` → تمیز. `npm run build` → موفق (۱۶.۰۱s). `vendor/bin/pint --dirty --format agent` → «passed» (هیچ فایل PHP تغییر نکرد این فاز). تست JS/Vitest در این ریپو اصلاً تعریف نشده (`package.json` بررسی شد) — تست فرانت‌اند این پروژه types:check + build + تأیید بصری است، نه واحد. هیچ migration/DB/API تغییر نکرد.
+
+**فایل‌ها:** `resources/js/components/{ui/sidebar.tsx,app-sidebar.tsx,app-sidebar-header.tsx}`، `resources/js/pages/system/identity-conflicts.tsx`.
+
+**ریسک:** صرفاً CSS/layout، بدون منطق تجاری؛ اگر یک صفحه‌ی دیگر (خارج از ۱۳ مسیر بررسی‌شده) فرض پنهانی درباره‌ی سمت سایدبار داشته باشد ممکن است نیاز به بازبینی داشته باشد — تاکنون دیده نشده. **Rollback:** `git revert` این commit؛ بدون DB/migration، rollback بدون‌خطر.

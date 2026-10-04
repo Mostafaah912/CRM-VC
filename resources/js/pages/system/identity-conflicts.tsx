@@ -42,12 +42,12 @@ export default function IdentityConflicts({ conflicts }: Props) {
                     <Table className="table-fixed">
                         <TableHeader>
                             <TableRow>
-                                <TableHead className="w-28">زمان</TableHead>
-                                <TableHead className="w-28">وضعیت</TableHead>
+                                <TableHead className="w-36">زمان</TableHead>
+                                <TableHead className="w-36">وضعیت</TableHead>
                                 <TableHead className="w-28">
                                     سفارش ووکامرس
                                 </TableHead>
-                                <TableHead className="w-28">دلیل</TableHead>
+                                <TableHead className="w-40">دلیل</TableHead>
                                 <TableHead className="w-24">مشتری</TableHead>
                                 <TableHead>نام ثبت‌شده</TableHead>
                                 <TableHead>نام سفارش جدید</TableHead>
@@ -77,6 +77,7 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                         <StatusBadge
                                             status={conflict.status}
                                             labels={conflictStatuses}
+                                            className="whitespace-normal break-words text-center"
                                         />
                                     </TableCell>
                                     <TableCell className="text-sm">
@@ -88,7 +89,7 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                             </span>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-sm">
+                                    <TableCell className="text-sm whitespace-normal break-words">
                                         <Tooltip>
                                             <TooltipTrigger asChild>
                                                 <span className="cursor-default">
