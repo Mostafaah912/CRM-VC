@@ -19,12 +19,12 @@ use Carbon\CarbonImmutable;
  *
  * @phpstan-type OrderItemShape array{name: string, sku: string|null, qty: int, unit_price: int, line_total: int}
  * @phpstan-type OrderCustomerShape array{id: int, display_name: string|null, phone_masked: string, profile_url: string}
- * @phpstan-type OrderShowShape array{id: int, woo_order_id: int, status: string, total: int, subtotal: int, discount_total: int, shipping_total: int, tax_total: int, refunded_total: int, is_realized: bool, is_fully_refunded: bool, needs_phone_review: bool, ordered_at_jalali: string, ordered_at_iso: string, items: list<OrderItemShape>, customer: OrderCustomerShape|null}
+ * @phpstan-type OrderShowShape array{id: int, woo_order_id: int, status: string, total: int, subtotal: int, discount_total: int, shipping_total: int, tax_total: int, refunded_total: int, net_revenue: int, is_realized: bool, is_fully_refunded: bool, needs_phone_review: bool, ordered_at_jalali: string, ordered_at_iso: string, items: list<OrderItemShape>, customer: OrderCustomerShape|null}
  */
 final readonly class OrderShowData
 {
     /**
-     * @param  array<string, mixed>  $order  the orders row: id, woo_order_id, status, total, subtotal, discount_total, shipping_total, tax_total, refunded_total, is_realized, is_fully_refunded, needs_phone_review, ordered_at, customer_id
+     * @param  array<string, mixed>  $order  the orders row: id, woo_order_id, status, total, subtotal, discount_total, shipping_total, tax_total, refunded_total, net_revenue, is_realized, is_fully_refunded, needs_phone_review, ordered_at, customer_id
      * @param  list<array<string, mixed>>  $items  each: name_snapshot, sku, qty, unit_price, line_total
      * @param  array<string, mixed>|null  $customer  id, display_name, phone_normalized — null when the order has none
      */
@@ -50,6 +50,7 @@ final readonly class OrderShowData
             'shipping_total' => (int) $o['shipping_total'],
             'tax_total' => (int) $o['tax_total'],
             'refunded_total' => (int) $o['refunded_total'],
+            'net_revenue' => (int) $o['net_revenue'],
             'is_realized' => (bool) $o['is_realized'],
             'is_fully_refunded' => (bool) $o['is_fully_refunded'],
             'needs_phone_review' => (bool) $o['needs_phone_review'],

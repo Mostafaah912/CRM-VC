@@ -23,7 +23,7 @@ function dm(string $date, array $overrides = []): void
 {
     DB::table('daily_metrics')->insert(array_merge([
         'date' => $date, 'jalali_date' => '1403-01-01',
-        'orders_count' => 0, 'revenue' => 0, 'refunds' => 0, 'net_revenue' => 0, 'aov' => 0,
+        'orders_count' => 0, 'revenue' => 0, 'refunds' => 0, 'net_revenue' => 0, 'product_revenue' => 0, 'shipping_revenue' => 0, 'aov' => 0,
         'customers_total' => 0, 'customers_new' => 0, 'customers_repeat' => 0, 'revenue_new' => 0, 'revenue_repeat' => 0,
     ], $overrides));
 }
@@ -49,6 +49,19 @@ it('sums orders/revenue/aov over the requested period only, not the whole table'
     expect($data['current']['orders_count'])->toBe(5)
         ->and($data['current']['net_revenue'])->toBe(450_000)
         ->and($data['current']['aov'])->toBe(90_000);
+});
+
+/* P6-14 phase 3: product_revenue/shipping_revenue sum over the period the same way net_revenue does. */
+it('sums product_revenue/shipping_revenue over the requested period only', function () {
+    dm('2026-06-01', ['product_revenue' => 150_000, 'shipping_revenue' => 20_000]);
+    dm('2026-06-02', ['product_revenue' => 250_000, 'shipping_revenue' => 30_000]);
+    dm('2026-05-31', ['product_revenue' => 9_000_000, 'shipping_revenue' => 900_000]); // outside the period
+
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+    $data = app(AnalyticsService::class)->dashboard($period);
+
+    expect($data['current']['product_revenue'])->toBe(400_000)
+        ->and($data['current']['shipping_revenue'])->toBe(50_000);
 });
 
 it('includes the Jalali equivalent of the period boundaries, for the drill-down links', function () {

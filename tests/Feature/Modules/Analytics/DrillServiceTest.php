@@ -43,6 +43,25 @@ it('lists orders realized within the period, none outside it', function () {
     expect($result)->not->toBeNull()->and($result->rows)->toHaveCount(2)->and($result->truncated)->toBeFalse();
 });
 
+/* P6-14 phase 3: the orders widget's revenue breakdown, same convention as the order detail page
+ * (RevenueBreakdown): product_revenue = subtotal - discount_total, shipping_revenue = shipping_total. */
+it('includes product_revenue/shipping_revenue/refunded_total alongside total/net_revenue', function () {
+    $customer = Customer::factory()->create();
+    realizedOrder($customer, '2026-06-01 10:00:00', [
+        'total' => 500_000, 'subtotal' => 480_000, 'discount_total' => 30_000, 'shipping_total' => 50_000, 'refunded_total' => 20_000,
+    ]);
+
+    $result = app(DrillService::class)->rows('orders', drillPeriod('2026-06-01', '2026-06-02'), []);
+
+    expect($result->columns)->toBe(['order_id', 'customer_id', 'ordered_at', 'product_revenue', 'shipping_revenue', 'total', 'refunded_total', 'net_revenue']);
+    $row = $result->rows[0];
+    expect($row['product_revenue'])->toBe(450_000) // 480,000 - 30,000
+        ->and($row['shipping_revenue'])->toBe(50_000)
+        ->and($row['total'])->toBe(500_000)
+        ->and($row['refunded_total'])->toBe(20_000)
+        ->and($row['net_revenue'])->toBe(480_000); // 500,000 - 20,000 (generated column)
+});
+
 it('excludes a non-realized or fully-refunded order from the orders widget', function () {
     $customer = Customer::factory()->create();
     realizedOrder($customer, '2026-06-01 10:00:00', ['is_realized' => false]);

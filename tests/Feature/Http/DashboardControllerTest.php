@@ -22,7 +22,7 @@ it('refuses a signed-in user without dashboard.view', function () {
 it('renders the page for a holder of dashboard.view, with the composed dashboard data', function () {
     DB::table('daily_metrics')->insert([
         'date' => now()->toDateString(), 'jalali_date' => '1403-01-01',
-        'orders_count' => 3, 'revenue' => 300_000, 'refunds' => 0, 'net_revenue' => 300_000, 'aov' => 100_000,
+        'orders_count' => 3, 'revenue' => 300_000, 'refunds' => 0, 'net_revenue' => 300_000, 'product_revenue' => 300_000, 'shipping_revenue' => 0, 'aov' => 100_000,
         'customers_total' => 3, 'customers_new' => 1, 'customers_repeat' => 2, 'revenue_new' => 100_000, 'revenue_repeat' => 200_000,
     ]);
 

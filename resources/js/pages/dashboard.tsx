@@ -213,7 +213,7 @@ export default function Dashboard({ data, filters }: Props) {
                             )
                         </CardDescription>
                     </CardHeader>
-                    <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+                    <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
                         <KpiCard
                             title="سفارش‌ها"
                             value={formatNumber(data.current.orders_count)}
@@ -230,6 +230,26 @@ export default function Dashboard({ data, filters }: Props) {
                             compare={delta(
                                 data.current.net_revenue,
                                 data.previous.net_revenue,
+                            )}
+                            widget="orders"
+                            period={data.period}
+                        />
+                        <KpiCard
+                            title="مبلغ کالا (پس از تخفیف)"
+                            value={formatToman(data.current.product_revenue)}
+                            compare={delta(
+                                data.current.product_revenue,
+                                data.previous.product_revenue,
+                            )}
+                            widget="orders"
+                            period={data.period}
+                        />
+                        <KpiCard
+                            title="پست"
+                            value={formatToman(data.current.shipping_revenue)}
+                            compare={delta(
+                                data.current.shipping_revenue,
+                                data.previous.shipping_revenue,
                             )}
                             widget="orders"
                             period={data.period}

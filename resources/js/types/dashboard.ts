@@ -3,6 +3,8 @@
 export type DashboardPeriodTotals = {
     orders_count: number;
     net_revenue: number;
+    product_revenue: number;
+    shipping_revenue: number;
     aov: number;
     customers_new: number;
     customers_repeat: number;

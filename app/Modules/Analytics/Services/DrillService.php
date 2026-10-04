@@ -64,6 +64,10 @@ final class DrillService
         'ordered_at' => 'تاریخ سفارش',
         'total' => 'مبلغ کل (تومان)',
         'net_revenue' => 'درآمد خالص (تومان)',
+        'product_revenue' => 'مبلغ کالا پس از تخفیف (تومان)',
+        'shipping_revenue' => 'پست (تومان)',
+        'tax_total' => 'مالیات (تومان)',
+        'refunded_total' => 'عودتی کل (تومان)',
         'first_order_at' => 'تاریخ اولین سفارش',
         'total_revenue' => 'مجموع درآمد (تومان)',
         'rfm_score' => 'امتیاز RFM',
@@ -105,17 +109,20 @@ final class DrillService
             ->whereBetween(DB::raw("(ordered_at AT TIME ZONE 'Asia/Tehran')::date"), [$period->from, $period->to])
             ->orderByDesc('ordered_at')
             ->limit(self::JSON_LIMIT + 1)
-            ->get(['woo_order_id', 'customer_id', 'ordered_at', 'total', 'net_revenue'])
+            ->get(['woo_order_id', 'customer_id', 'ordered_at', 'subtotal', 'discount_total', 'shipping_total', 'total', 'refunded_total', 'net_revenue'])
             ->map(fn (object $row): array => [
                 'order_id' => (int) $row->woo_order_id,
                 'customer_id' => $row->customer_id === null ? null : (int) $row->customer_id,
                 'ordered_at' => $this->jalali($row->ordered_at),
+                'product_revenue' => (int) $row->subtotal - (int) $row->discount_total,
+                'shipping_revenue' => (int) $row->shipping_total,
                 'total' => (int) $row->total,
+                'refunded_total' => (int) $row->refunded_total,
                 'net_revenue' => (int) $row->net_revenue,
             ])
             ->all();
 
-        return $this->result(['order_id', 'customer_id', 'ordered_at', 'total', 'net_revenue'], array_values($rows));
+        return $this->result(['order_id', 'customer_id', 'ordered_at', 'product_revenue', 'shipping_revenue', 'total', 'refunded_total', 'net_revenue'], array_values($rows));
     }
 
     private function customersNew(DashboardPeriod $period): DrillResult
@@ -335,7 +342,7 @@ final class DrillService
     {
         return match ($widget) {
             'orders' => [
-                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'order_id', 'ordered_at', 'total', 'net_revenue']),
+                'headers' => $this->labels(['customer_id', 'phone', 'display_name', 'order_id', 'ordered_at', 'product_revenue', 'shipping_revenue', 'tax_total', 'total', 'refunded_total', 'net_revenue']),
                 'query' => DB::table('orders as o')
                     ->leftJoin('customers as c', 'c.id', '=', 'o.customer_id')
                     ->where('o.is_realized', true)
@@ -343,10 +350,14 @@ final class DrillService
                     ->whereNull('o.deleted_at')
                     ->whereBetween(DB::raw("(o.ordered_at AT TIME ZONE 'Asia/Tehran')::date"), [$period->from, $period->to])
                     ->orderByDesc('o.ordered_at')
-                    ->select(['o.customer_id', 'c.phone_normalized', 'c.display_name', 'o.woo_order_id as order_id', 'o.ordered_at', 'o.total', 'o.net_revenue']),
+                    ->select([
+                        'o.customer_id', 'c.phone_normalized', 'c.display_name', 'o.woo_order_id as order_id', 'o.ordered_at',
+                        'o.subtotal', 'o.discount_total', 'o.shipping_total', 'o.tax_total', 'o.total', 'o.refunded_total', 'o.net_revenue',
+                    ]),
                 'row' => fn (\stdClass $r, bool $full): array => [
                     $r->customer_id, $this->phone($r->phone_normalized, $full), $r->display_name,
-                    $r->order_id, $this->jalali($r->ordered_at), $r->total, $r->net_revenue,
+                    $r->order_id, $this->jalali($r->ordered_at),
+                    (int) $r->subtotal - (int) $r->discount_total, $r->shipping_total, $r->tax_total, $r->total, $r->refunded_total, $r->net_revenue,
                 ],
             ],
             'customers_new' => [

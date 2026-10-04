@@ -64,6 +64,8 @@ final class DailyMetricsService
                     o.total,
                     o.refunded_total,
                     o.net_revenue,
+                    (o.subtotal - o.discount_total) AS product_revenue,
+                    o.shipping_total AS shipping_revenue,
                     (o.ordered_at AT TIME ZONE 'Asia/Tehran')::date AS order_day,
                     (cm.first_order_at AT TIME ZONE 'Asia/Tehran')::date AS first_order_day
                 FROM orders o
@@ -74,7 +76,7 @@ final class DailyMetricsService
                   AND (o.ordered_at AT TIME ZONE 'Asia/Tehran')::date BETWEEN ? AND ?
             )
             INSERT INTO daily_metrics (
-                date, jalali_date, orders_count, revenue, refunds, net_revenue, aov,
+                date, jalali_date, orders_count, revenue, refunds, net_revenue, product_revenue, shipping_revenue, aov,
                 customers_total, customers_new, customers_repeat, revenue_new, revenue_repeat, computed_at
             )
             SELECT
@@ -84,6 +86,8 @@ final class DailyMetricsService
                 COALESCE(SUM(day_orders.total), 0)::bigint,
                 COALESCE(SUM(day_orders.refunded_total), 0)::bigint,
                 COALESCE(SUM(day_orders.net_revenue), 0)::bigint,
+                COALESCE(SUM(day_orders.product_revenue), 0)::bigint,
+                COALESCE(SUM(day_orders.shipping_revenue), 0)::bigint,
                 COALESCE(SUM(day_orders.net_revenue) / NULLIF(COUNT(day_orders.order_id), 0), 0)::bigint,
                 COALESCE(COUNT(DISTINCT day_orders.customer_id), 0)::integer,
                 COALESCE(COUNT(DISTINCT CASE WHEN day_orders.first_order_day = days.d THEN day_orders.customer_id END), 0)::integer,
@@ -102,6 +106,8 @@ final class DailyMetricsService
                 revenue          = EXCLUDED.revenue,
                 refunds          = EXCLUDED.refunds,
                 net_revenue      = EXCLUDED.net_revenue,
+                product_revenue  = EXCLUDED.product_revenue,
+                shipping_revenue = EXCLUDED.shipping_revenue,
                 aov              = EXCLUDED.aov,
                 customers_total  = EXCLUDED.customers_total,
                 customers_new    = EXCLUDED.customers_new,

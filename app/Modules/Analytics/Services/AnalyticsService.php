@@ -53,8 +53,8 @@ final class AnalyticsService
      *
      * @return array{
      *     period: array{from: string, to: string, previous_from: string, previous_to: string, from_jalali: string, to_jalali: string, previous_from_jalali: string, previous_to_jalali: string},
-     *     current: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
-     *     previous: array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int},
+     *     current: array{orders_count: int, net_revenue: int, product_revenue: int, shipping_revenue: int, aov: int, customers_new: int, customers_repeat: int},
+     *     previous: array{orders_count: int, net_revenue: int, product_revenue: int, shipping_revenue: int, aov: int, customers_new: int, customers_repeat: int},
      *     trend: list<array{date: string, jalali_date: string, orders_count: int, net_revenue: int, aov: int}>,
      *     repeat_purchase_rate: array{eligible_customers: int, repeat_customers: int, rate: float|null, insufficient_data: bool},
      *     returning_revenue_share: array{total_revenue: int, returning_revenue: int, share: float|null, insufficient_data: bool},
@@ -110,7 +110,7 @@ final class AnalyticsService
         ];
     }
 
-    /** @return array{orders_count: int, net_revenue: int, aov: int, customers_new: int, customers_repeat: int} */
+    /** @return array{orders_count: int, net_revenue: int, product_revenue: int, shipping_revenue: int, aov: int, customers_new: int, customers_repeat: int} */
     private function periodTotals(string $from, string $to): array
     {
         $row = DB::table('daily_metrics')
@@ -118,6 +118,8 @@ final class AnalyticsService
             ->selectRaw('
                 COALESCE(SUM(orders_count), 0)::integer AS orders_count,
                 COALESCE(SUM(net_revenue), 0)::bigint AS net_revenue,
+                COALESCE(SUM(product_revenue), 0)::bigint AS product_revenue,
+                COALESCE(SUM(shipping_revenue), 0)::bigint AS shipping_revenue,
                 COALESCE(SUM(customers_new), 0)::integer AS customers_new,
                 COALESCE(SUM(customers_repeat), 0)::integer AS customers_repeat
             ')
@@ -129,6 +131,8 @@ final class AnalyticsService
         return [
             'orders_count' => $ordersCount,
             'net_revenue' => $netRevenue,
+            'product_revenue' => (int) $row->product_revenue,
+            'shipping_revenue' => (int) $row->shipping_revenue,
             'aov' => $ordersCount > 0 ? intdiv($netRevenue, $ordersCount) : 0,
             'customers_new' => (int) $row->customers_new,
             'customers_repeat' => (int) $row->customers_repeat,

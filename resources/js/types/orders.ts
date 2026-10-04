@@ -6,6 +6,8 @@ export type OrderListRow = {
     status: string;
     /** int Toman, exactly as stored. */
     total: number;
+    refunded_total: number;
+    net_revenue: number;
     is_realized: boolean;
     needs_phone_review: boolean;
     ordered_at_jalali: string;
@@ -54,6 +56,7 @@ export type OrderDetail = {
     shipping_total: number;
     tax_total: number;
     refunded_total: number;
+    net_revenue: number;
     is_realized: boolean;
     is_fully_refunded: boolean;
     needs_phone_review: boolean;

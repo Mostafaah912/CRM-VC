@@ -41,6 +41,27 @@ it('streams a CSV of the drilled orders, masked by default, and audits it', func
     expect($audit)->not->toBeNull()->and(json_decode((string) $audit->after, true))->toMatchArray(['widget' => 'orders']);
 });
 
+/* P6-14 phase 3: the CSV's revenue breakdown columns, same values as the order detail page. */
+it('includes the revenue breakdown columns in the orders CSV', function () {
+    $customer = Customer::factory()->create(['display_name' => 'Ann']);
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => now(),
+        'total' => 500_000, 'subtotal' => 480_000, 'discount_total' => 30_000, 'shipping_total' => 50_000,
+        'tax_total' => 0, 'refunded_total' => 20_000,
+    ]);
+    $user = Fx::userWith('dashboard.view', 'customers.export');
+
+    $body = $this->actingAs($user)->get('/internal/drill/orders/export')->streamedContent();
+    $lines = array_map('str_getcsv', explode("\n", trim($body)));
+
+    expect($lines[0])->toContain('مبلغ کالا پس از تخفیف (تومان)', 'پست (تومان)', 'عودتی کل (تومان)');
+    $dataRow = array_combine($lines[0], $lines[1]);
+    expect($dataRow['مبلغ کالا پس از تخفیف (تومان)'])->toBe('450000')
+        ->and($dataRow['پست (تومان)'])->toBe('50000')
+        ->and($dataRow['عودتی کل (تومان)'])->toBe('20000')
+        ->and($dataRow['درآمد خالص (تومان)'])->toBe('480000');
+});
+
 it('reveals the full phone only with customers.view_full_phone on top of customers.export', function () {
     $customer = Customer::factory()->create(['phone_normalized' => '989121234567']);
     Order::factory()->for($customer)->create(['is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => now(), 'total' => 250_000]);

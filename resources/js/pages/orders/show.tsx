@@ -1,6 +1,7 @@
 import { Head, Link } from '@inertiajs/react';
 import { AlertTriangle } from 'lucide-react';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
+import { RevenueBreakdown } from '@/components/orders/revenue-breakdown';
 import { StatusBadge } from '@/components/status-badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -123,6 +124,23 @@ export default function OrderShow({ order }: Props) {
                                 ))}
                             </TableBody>
                         </Table>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>تفکیک مبلغ</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <RevenueBreakdown
+                            subtotal={order.subtotal}
+                            discount_total={order.discount_total}
+                            shipping_total={order.shipping_total}
+                            tax_total={order.tax_total}
+                            total={order.total}
+                            refunded_total={order.refunded_total}
+                            net_revenue={order.net_revenue}
+                        />
                     </CardContent>
                 </Card>
 

@@ -303,6 +303,14 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         {formatToman(order.total)}
+                                        {order.refunded_total > 0 && (
+                                            <span className="text-muted-foreground block text-xs">
+                                                خالص:{' '}
+                                                {formatToman(
+                                                    order.net_revenue,
+                                                )}
+                                            </span>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         {order.customer_id === null ? (

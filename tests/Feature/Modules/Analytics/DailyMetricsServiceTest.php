@@ -86,6 +86,39 @@ it('computes exact revenue/refunds/net_revenue/aov for a mixed day', function ()
         ->and($row->aov)->toBe(350_000);
 });
 
+/* P6-14 phase 3: product_revenue = Σ(subtotal - discount_total), shipping_revenue = Σ(shipping_total)
+ * — the same "realized, not fully refunded" order set as revenue/net_revenue above, not a second
+ * definition of "counted order". */
+it('computes product_revenue (subtotal minus discount) and shipping_revenue for a mixed day', function () {
+    $a = Customer::factory()->create();
+    $b = Customer::factory()->create();
+    dmOrder($a, '2026-06-15 10:00:00', [
+        'total' => 500_000, 'subtotal' => 450_000, 'discount_total' => 50_000, 'shipping_total' => 100_000,
+    ]);
+    dmOrder($b, '2026-06-15 11:00:00', [
+        'total' => 300_000, 'subtotal' => 300_000, 'discount_total' => 0, 'shipping_total' => 0,
+    ]);
+
+    app(DailyMetricsService::class)->rebuild(days: 1, asOf: CarbonImmutable::parse('2026-06-15 20:00:00', 'Asia/Tehran'));
+
+    $row = dmRow('2026-06-15');
+    // (450,000 - 50,000) + 300,000 = 700,000
+    expect($row->product_revenue)->toBe(700_000)
+        ->and($row->shipping_revenue)->toBe(100_000);
+});
+
+it('excludes a non-realized order\'s subtotal/shipping from product_revenue/shipping_revenue', function () {
+    $customer = Customer::factory()->create();
+    dmOrder($customer, '2026-06-15 10:00:00', [
+        'is_realized' => false, 'subtotal' => 999_000, 'shipping_total' => 50_000,
+    ]);
+
+    app(DailyMetricsService::class)->rebuild(days: 1, asOf: CarbonImmutable::parse('2026-06-15 20:00:00', 'Asia/Tehran'));
+
+    $row = dmRow('2026-06-15');
+    expect($row->product_revenue)->toBe(0)->and($row->shipping_revenue)->toBe(0);
+});
+
 it('excludes a fully refunded order, matching Base Aggregates\' definition of a counted order', function () {
     $customer = Customer::factory()->create();
     dmOrder($customer, '2026-06-15 10:00:00', ['total' => 500_000, 'refunded_total' => 500_000, 'is_fully_refunded' => true]);
@@ -158,7 +191,7 @@ it('is idempotent: rebuilding the same window twice does not duplicate or change
 it('does not touch a historical day outside the rebuild window', function () {
     DB::table('daily_metrics')->insert([
         'date' => '2026-01-01', 'jalali_date' => '1404-10-11', 'orders_count' => 7,
-        'revenue' => 111, 'refunds' => 0, 'net_revenue' => 111, 'aov' => 15,
+        'revenue' => 111, 'refunds' => 0, 'net_revenue' => 111, 'product_revenue' => 90, 'shipping_revenue' => 21, 'aov' => 15,
         'customers_total' => 3, 'customers_new' => 1, 'customers_repeat' => 2,
         'revenue_new' => 50, 'revenue_repeat' => 61,
     ]);
