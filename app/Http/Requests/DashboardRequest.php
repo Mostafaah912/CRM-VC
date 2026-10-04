@@ -5,11 +5,12 @@ declare(strict_types=1);
 namespace App\Http\Requests;
 
 use App\Modules\Analytics\Support\DashboardPeriod;
-use App\Modules\Customers\Support\JalaliDay;
+use App\Support\JalaliDateRangeValidation;
+use App\Support\JalaliDay;
+use App\Support\Rules\JalaliDayRule;
 use Carbon\CarbonImmutable;
-use Closure;
-use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Validator;
 
 /**
  * The dashboard's optional period filter (PRD §18: "فیلتر بازه"): `from`/`to` are Jalali days
@@ -31,35 +32,14 @@ final class DashboardRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'from' => ['nullable', 'string', 'required_with:to', $this->jalaliDay()],
-            'to' => ['nullable', 'string', 'required_with:from', $this->jalaliDay()],
+            'from' => ['nullable', 'string', 'required_with:to', new JalaliDayRule],
+            'to' => ['nullable', 'string', 'required_with:from', new JalaliDayRule],
         ];
     }
 
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator): void {
-            if ($validator->errors()->any() || ! $this->filled('from') || ! $this->filled('to')) {
-                return;
-            }
-
-            $from = JalaliDay::start((string) $this->input('from'));
-            $to = JalaliDay::start((string) $this->input('to'));
-
-            if ($from === null || $to === null) {
-                return;
-            }
-
-            if ($from->greaterThan($to)) {
-                $validator->errors()->add('to', 'انتهای بازه نباید قبل از ابتدای آن باشد.');
-
-                return;
-            }
-
-            if ($from->diffInDays($to) + 1 > self::MAX_DAYS) {
-                $validator->errors()->add('to', 'بازه انتخابی بیش از حد بزرگ است.');
-            }
-        });
+        $validator->after(fn (Validator $validator) => JalaliDateRangeValidation::assertOrder($validator, 'from', 'to', self::MAX_DAYS));
     }
 
     public function period(): DashboardPeriod
@@ -88,14 +68,5 @@ final class DashboardRequest extends FormRequest
             'from' => $this->filled('from') ? (string) $this->input('from') : null,
             'to' => $this->filled('to') ? (string) $this->input('to') : null,
         ];
-    }
-
-    private function jalaliDay(): Closure
-    {
-        return function (string $attribute, mixed $value, Closure $fail): void {
-            if (JalaliDay::start((string) $value) === null) {
-                $fail("مقدار {$attribute} باید یک تاریخ شمسی معتبر (YYYY/MM/DD) باشد.");
-            }
-        };
     }
 }

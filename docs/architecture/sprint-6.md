@@ -1044,3 +1044,50 @@ P6-12 مشکل اصلی را حل کرد (`min-w-0` روی `Card`/`CardContent`)
 **فایل‌ها:** `resources/js/components/{ui/sidebar.tsx,app-sidebar.tsx,app-sidebar-header.tsx}`، `resources/js/pages/system/identity-conflicts.tsx`.
 
 **ریسک:** صرفاً CSS/layout، بدون منطق تجاری؛ اگر یک صفحه‌ی دیگر (خارج از ۱۳ مسیر بررسی‌شده) فرض پنهانی درباره‌ی سمت سایدبار داشته باشد ممکن است نیاز به بازبینی داشته باشد — تاکنون دیده نشده. **Rollback:** `git revert` این commit؛ بدون DB/migration، rollback بدون‌خطر.
+
+## P6-15 — فاز ۲: انتخابگر تاریخ شمسی
+
+### وابستگی (بررسی‌شده، نه حدس)
+
+`react-day-picker` قبلاً در این پروژه نصب نبود؛ نسخه‌ی فعلی آن (۱۰.۰.۲، بررسی مستقیم بسته‌ی npm) هیچ export یا فایل «persian» ندارد. به‌جایش **`jalaali-js@2.0.1`** اضافه شد: صفر وابستگی runtime، TypeScript اول‌شخص، آخرین انتشار ۲۰۲۶/۰۸/۰۹ (نگهداری‌شده)، مجوز MIT. درستی آن در برابر منبع حقیقت بک‌اند مستقیماً کراس‌چک شد: `isLeapJalaaliYear(1403)=true`/`isLeapJalaaliYear(1404)=false` دقیقاً با رفت‌وبرگشت واقعی `App\Support\JalaliDate::toGregorian()` (۱۴۰۳/۱۲/۳۰ سالم، ۱۴۰۴/۱۲/۳۰ به ۱۴۰۵/۰۱/۰۱ سرریز می‌کند) یکی است. فقط برای محاسبات تقویم (طول ماه، روز هفته) استفاده شد؛ «ریاضی شمسی در JS نوشتن» به معنای بازتولید الگوریتم JalaliDate به‌صورت دستی بود، نه استفاده از یک کتابخانه‌ی مستقل تأییدشده — تبدیل واقعی Jalali→Gregorian مقدار نهایی همچنان فقط در بک‌اند (`App\Support\JalaliDay`) انجام می‌شود. در کنار آن `@radix-ui/react-popover@^1.1.23` اضافه شد (همان خانواده‌ی ۱۲ پکیج Radix از‌پیش‌موجود در این پروژه؛ `ui/popover.tsx` با الگوی دقیقاً مشابه `ui/dropdown-menu.tsx` نوشته شد).
+
+### کامپوننت‌ها
+
+`resources/js/components/jalali-date-picker.tsx`: دو کامپوننت، `JalaliRangePicker` (بازه، دو کلیک) و `JalaliDayPicker` (تک‌روز، یک کلیک) — هر دو روی `Popover` جدید، هفته از شنبه، نام ماه‌های فارسی (همان ۱۲ نام `JalaliDate::MONTH_NAMES`، به‌عنوان یک لیست برچسب ثابت، نه محاسبه)، ارقام لاتین، انتخاب مستقیم سال/ماه با `Select`. مقدار روی wire همیشه `YYYY/MM/DD` شمسی — همان قراردادی که `App\Support\JalaliDay::start()` از قبل می‌پذیرد.
+
+**باگ واقعی پیدا و رفع‌شده حین تأیید مرورگری:** طراحی اول `JalaliRangePicker` وضعیت «انتخاب در حال انجام» (`pendingFrom`) را از مقدار *موجود* (بازه‌ی از‌پیش‌اعمال‌شده، مثلاً پیش‌فرض ۳۰ روز اخیر داشبورد) مقداردهی اولیه می‌کرد؛ در نتیجه اولین کلیک کاربر روی تقویم (که باید انتخاب تازه را شروع کند) به‌جایش به‌عنوان «کلیک دوم» تعبیر می‌شد و popover را با بازه‌ی نادرست می‌بست — فقط با اسکریپت Playwright واقعی پیدا شد (تست‌های تایپ‌اسکریپت/واحد این را نمی‌دیدند چون منطق runtime بود، نه نوع). رفع: به‌جای state محلی جدا، تشخیص «کلیک اول در برابر دوم» مستقیماً از خود prop های کنترل‌شده (`from`/`to`) گرفته می‌شود — `to === null` یعنی انتخاب در حال انجام است، یک بازه‌ی کامل یعنی کلیک بعدی انتخاب تازه را شروع می‌کند.
+
+### جایگزینی در کل برنامه (grep کامل، طبق دستور)
+
+- `dashboard.tsx` (`from`/`to`) — `JalaliRangePicker`، دکمه‌ی «بازه پیش‌فرض (۳۰ روز اخیر)» دست‌نخورده ماند.
+- `customers/index.tsx` (`first_seen_from`/`first_seen_to`) — `JalaliRangePicker`.
+- `orders/index.tsx` (`ordered_from`/`ordered_to`) — `JalaliRangePicker`.
+- `audit` — چک شد؛ هیچ فیلتر تاریخی از قبل وجود نداشت (نه در فرانت نه در بک‌اند)، چیزی برای جایگزینی نبود؛ اضافه‌کردن یک فیلتر تازه خارج از scope این فاز بود.
+- `RuleValueInput.tsx` (سگمنت، فیلدهای `_at`): پیش‌تر `type="date"` بومی (Gregorian، کامنت خودش می‌گفت «no Jalali date-picker exists yet») — اکنون `JalaliDayPicker` برای scalar و `range`.
+
+### بک‌اند: یک Rule/Helper مشترک به‌جای سه نسخه‌ی تکراری (۲ تای آن‌ها انگلیسی بودند)
+
+با خواندن کد، نه حدس: `DashboardRequest`/`CustomerListRequest`/`OrderListRequest` هرکدام closure خصوصی `jalaliDay()` و بلوک `withValidator()` تقریباً یکسان خودشان را داشتند. پیام خطای `CustomerListRequest`/`OrderListRequest` واقعاً **انگلیسی** بود ("The end of the range must not be before its start.") — مستقیماً ناقض CLAUDE.md §۲ («متن UI فارسی») و الزام صریح این فاز («خطا ۴۲۲ با پیام فارسی»). همه در دو کلاس تازه ادغام شدند: `App\Support\Rules\JalaliDayRule` (implements `ValidationRule`) و `App\Support\JalaliDateRangeValidation::assertOrder()`. هر سه FormRequest اکنون از همین دو استفاده می‌کنند؛ هر دو پیام فارسی تضمین‌شده.
+
+### ترفیع `JalaliDay` به `App\Support` (یافته‌ی معماری، نه حدس)
+
+`JalaliDay` قبلاً در `App\Modules\Customers\Support` بود اما **هرگز توسط خودِ ماژول Customers استفاده نمی‌شد** (grep تأیید کرد) — فقط مصرف‌کنندگان بیرونی (`Http\Requests` در ریشه، حالا `Segments`) آن را import می‌کردند؛ تا این فاز این فقط به این دلیل مشکلی ایجاد نمی‌کرد که arch-test مرزهای ماژول فقط `app/Modules/**` را اسکن می‌کند. حالا که `RuleCompiler`/`RuleValidator` (داخل `app/Modules/Segments/**`) هم به آن نیاز داشتند، `use App\Modules\Customers\Support\JalaliDay` از داخل Segments واقعاً «only reaches into other modules through their Services or Events» (تست موجود در `ArchitectureTest.php`) را نقض می‌کرد. رفع ریشه‌ای: کلاس (و تست آن) به `App\Support\JalaliDay` منتقل شد — همان‌جایی که `JalaliDate`/`Digits`/`TehranDateTime` از قبل بودند؛ تمام ۹ محل مصرف (شامل `tests/Arch/CustomerListBoundaryTest.php` که مسیر فایل را صریحاً در یک inventory لیست می‌کرد) به‌روزرسانی شدند.
+
+### Segments: `_at` فیلدها واقعاً معنای Jalali پیدا کردند (یافته‌ی دوم، نه حدس)
+
+بررسی مستقیم `RuleCompiler::applyCondition()` نشان داد عملگرهای مقایسه‌ای (`=`,`>`,`between`,...) روی `first_seen_at`/`expected_next_order_at` مقدار خام ورودی را بدون **هیچ** پردازش تاریخ مستقیماً به `$query->where()` می‌بستند — قبل از این فاز، ویجت ورودی هم یک `<input type="date">` بومی بود (Gregorian). بررسی DB نشان داد **صفر** سگمنت ذخیره‌شده‌ی dev از این دو فیلد با مقدار مطلق استفاده می‌کند (تنها مصرف واقعی، سگمنت «سررسید خرید مجدد»، از `within_days_of_now` نسبی است) — پس ترجمه‌ی معنای این دو فیلد به Jalali هیچ داده‌ی موجودی را نمی‌شکند.
+رفع: `RuleCompiler` اکنون برای این دو فیلد (DATE_FIELDS) مقدار Jalali `YYYY/MM/DD` را به بازه‌ی روز تهرانی `[start, nextStart)` ترجمه می‌کند (همان جفت `JalaliDay::start()`/`nextStart()` که هر فیلتر from/to دیگر برنامه از قبل استفاده می‌کند) — یعنی `first_seen_at <= 1404/01/01` یعنی «تا پایان همان روز تهرانی»، نه «قبل از نیمه‌شب UTC همان رشته». `=`/`!=` به یک بازه‌ی مرکب (`where...orWhere` در یک گروه تودرتو، دقیقاً مثل تودرتوکردن AND/OR موجود در `applyNode`) تبدیل می‌شوند؛ `between` دو مقدار را normalize می‌کند (کوچک‌تر/بزرگ‌تر، نه فرض‌شده مرتب). `RuleValidator` هم مقدار این دو فیلد را حالا با `JalaliDay::start()` اعتبارسنجی می‌کند (قبلاً هیچ بررسی فرمتی روی مقدار این دو فیلد نبود، فقط شکل آرایه/عدد).
+
+### TEST FIRST / تأیید
+
+بک‌اند: `DashboardControllerTest` (۷ تست تازه: مرز کبیسه ۱۴۰۳/۱۲/۳۰ معتبر، ۱۴۰۴/۱۲/۳۰ نامعتبر، ماه ۱۳، ۱۴۰۵/۰۱/۰۱، مهر ۱، رفت‌وبرگشت query-string، ۴۲۲+پیام فارسی با regex یونیکد عربی روی JSON)، `CustomerListControllerTest`/`OrderListControllerTest` (پیام فارسی جایگزین انگلیسی، با مقدار دقیق رشته چک شد)، `RuleValidatorTest` (۹ تست تازه: مرز کبیسه، هر ۶ عملگر مقایسه‌ای، between نامعتبر/معتبر، عدم تأثیر روی فیلدهای غیر‌تاریخی)، `RuleCompilerTest` (۹ تست تازه، روی PostgreSQL واقعی: هر عملگر مقایسه‌ای دقیقاً در مرز روز تهرانی با ثانیه‌های پیرامونی تست شد — نه فقط «کار می‌کند»، دقیقاً instant قبل/بعد مرز؛ + یک تست binding که ثابت می‌کند رشته‌ی Jalali هرگز در SQL concatenate نمی‌شود). مرورگر واقعی (Playwright، همان سناریوی اسکریپت موقت فاز ۱): بازه‌ی ۱۴۰۳/۰۱/۰۵ تا ۱۴۰۳/۰۱/۱۵ از داشبورد انتخاب و submit شد؛ URL واقعی (`?from=1403%2F01%2F05&to=1403%2F01%2F15`) و سرتیتر («از ۱۴۰۳/۰۱/۰۵ تا ۱۴۰۳/۰۱/۱۵») هر دو تأیید شدند؛ تقویم تک‌روزه‌ی RuleBuilder هم برای `equals`/`between` باز و بررسی شد (گرید صحیح، شنبه اول، ارقام لاتین، امروز با کادر مشخص).
+
+### بستن این فاز
+
+تست‌های مرتبط: ۵۸۲/۵۸۲ سبز (شامل GATE 3 و `ArchitectureTest`). `vendor/bin/pint --dirty` → تمیز. PHPStan (اسکوپ‌شده به فایل‌های تغییریافته) → ۰ خطا. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** جدید: `app/Support/{JalaliDay.php (منتقل‌شده),JalaliDateRangeValidation.php,Rules/JalaliDayRule.php}`، `resources/js/components/{jalali-date-picker.tsx,ui/popover.tsx}`؛ تغییر: `app/Http/Requests/{DashboardRequest,DrillRequest,Customers/CustomerListRequest,Orders/OrderListRequest}.php`، `app/Modules/Segments/Services/{RuleCompiler,RuleValidator}.php`، `resources/js/{pages/{dashboard,customers/index,orders/index}.tsx,components/segments/RuleValueInput.tsx}`، `package.json` (+`jalaali-js`,+`@radix-ui/react-popover`).
+
+**DB/Migration:** هیچ. **API:** شکل خروجی `filters.from`/`to` و امثال آن تغییری نکرد (همان رشته‌ی Jalali)؛ تنها تغییر معنایی، تفسیر مقدار `_at` در سگمنت‌ها (قبلاً عملاً باگ‌دار/بدون‌معنا، صفر سگمنت موجود را تحت تأثیر قرار نداد).
+
+**ریسک:** اگر در آینده یک سگمنت واقعی با مقدار مطلق روی `first_seen_at`/`expected_next_order_at` ساخته شود، مقدارش باید Jalali `YYYY/MM/DD` باشد نه هر رشته‌ی دیگر — این از طریق UI (که اکنون فقط این فرمت را تولید می‌کند) و `RuleValidator` (که غیر از این را رد می‌کند) تضمین شده. **Rollback:** `git revert`؛ بدون migration، بدون‌خطر. تنها نکته: اگر بین این commit و یک revert احتمالی، یک سگمنت واقعی با مقدار مطلق `_at` ساخته شده باشد، آن مقدار Jalali، بعد از revert دوباره بدون‌معنا می‌شود — طبق بررسی dev این امروز صفر مورد است.

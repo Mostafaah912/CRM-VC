@@ -9,6 +9,7 @@ use App\Modules\Segments\Enums\RuleFieldGroup;
 use App\Modules\Segments\Enums\RuleOperator;
 use App\Modules\Segments\Exceptions\RuleWhitelistException;
 use App\Modules\Segments\Support\RuleFieldWhitelist;
+use App\Support\JalaliDay;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -123,6 +124,12 @@ final class RuleCompiler
 
         $column = self::COLUMN_MAP[$field] ?? throw RuleWhitelistException::invalidField($field);
 
+        if (in_array($field, RuleFieldWhitelist::DATE_FIELDS, true) && self::isAbsoluteDateOperator($operator)) {
+            self::applyDateCondition($query, $column, $operator, $value, $boolean);
+
+            return;
+        }
+
         match ($operator) {
             RuleOperator::Equals => $query->where($column, '=', $value, $boolean),
             RuleOperator::NotEquals => $query->where($column, '!=', $value, $boolean),
@@ -158,6 +165,91 @@ final class RuleCompiler
         $now = CarbonImmutable::now();
 
         $query->whereBetween($column, [$now->subDays($days), $now->addDays($days)], $boolean);
+    }
+
+    private static function isAbsoluteDateOperator(RuleOperator $operator): bool
+    {
+        return in_array($operator, [
+            RuleOperator::Equals, RuleOperator::NotEquals,
+            RuleOperator::GreaterThan, RuleOperator::GreaterThanOrEqual,
+            RuleOperator::LessThan, RuleOperator::LessThanOrEqual,
+            RuleOperator::Between,
+        ], true);
+    }
+
+    /**
+     * A DATE_FIELDS condition's `value` is always a Jalali day string `YYYY/MM/DD` (RuleValidator
+     * already rejected anything else) — never bound to SQL as-is. Every operator here is translated to
+     * a Tehran day-boundary comparison via `JalaliDay::start()`/`nextStart()` (the same pair every
+     * other from/to filter in the app uses), so "`first_seen_at <= 1404/01/01`" means "any time up to
+     * and including that whole Tehran day", not "before Jalali-day-string midnight UTC".
+     *
+     * @param  Builder<Customer>  $query
+     */
+    private static function applyDateCondition(Builder $query, string $column, RuleOperator $operator, mixed $value, string $boolean): void
+    {
+        match ($operator) {
+            RuleOperator::Equals => self::whereJalaliInterval($query, $column, self::jalaliStart((string) $value), self::jalaliNextStart((string) $value), $boolean, not: false),
+            RuleOperator::NotEquals => self::whereJalaliInterval($query, $column, self::jalaliStart((string) $value), self::jalaliNextStart((string) $value), $boolean, not: true),
+            RuleOperator::GreaterThan => $query->where($column, '>=', self::jalaliNextStart((string) $value), $boolean),
+            RuleOperator::GreaterThanOrEqual => $query->where($column, '>=', self::jalaliStart((string) $value), $boolean),
+            RuleOperator::LessThan => $query->where($column, '<', self::jalaliStart((string) $value), $boolean),
+            RuleOperator::LessThanOrEqual => $query->where($column, '<', self::jalaliNextStart((string) $value), $boolean),
+            RuleOperator::Between => self::applyDateBetween($query, $column, $value, $boolean),
+            default => throw RuleWhitelistException::invalidOperator($operator->value),
+        };
+    }
+
+    /** @param Builder<Customer> $query */
+    private static function applyDateBetween(Builder $query, string $column, mixed $value, string $boolean): void
+    {
+        if (! is_array($value) || count($value) !== 2) {
+            throw RuleWhitelistException::invalidOperator(RuleOperator::Between->value);
+        }
+
+        $starts = [self::jalaliStart((string) $value[0]), self::jalaliStart((string) $value[1])];
+        $ends = [self::jalaliNextStart((string) $value[0]), self::jalaliNextStart((string) $value[1])];
+
+        // The two picked days are not assumed ordered (a user can drag a range picker either
+        // direction), so the interval is the min start .. max end of the two, not value[0]..value[1].
+        $start = $starts[0]->lessThanOrEqualTo($starts[1]) ? $starts[0] : $starts[1];
+        $end = $ends[0]->greaterThanOrEqualTo($ends[1]) ? $ends[0] : $ends[1];
+
+        self::whereJalaliInterval($query, $column, $start, $end, $boolean, not: false);
+    }
+
+    /**
+     * `[$start, $end)` is a Tehran day-boundary interval — never a raw SQL fragment, two ordinary
+     * `where`/`orWhere` parameter bindings nested in one group so `$boolean` (and/or) still applies
+     * to the condition as a whole, the same way `applyNode()`'s own group nesting does above.
+     *
+     * @param  Builder<Customer>  $query
+     */
+    private static function whereJalaliInterval(Builder $query, string $column, CarbonImmutable $start, CarbonImmutable $end, string $boolean, bool $not): void
+    {
+        $query->where(
+            /** @param Builder<Customer> $nested */
+            function (Builder $nested) use ($column, $start, $end, $not): void {
+                if ($not) {
+                    $nested->where($column, '<', $start)->orWhere($column, '>=', $end);
+                } else {
+                    $nested->where($column, '>=', $start)->where($column, '<', $end);
+                }
+            },
+            null, null, $boolean,
+        );
+    }
+
+    /** `$value` is already whitelist-validated Jalali `YYYY/MM/DD` by `RuleValidator`; re-checked
+     * here too (defense in depth, same promise as every other resolution in this class — GATE 3). */
+    private static function jalaliStart(string $value): CarbonImmutable
+    {
+        return JalaliDay::start($value) ?? throw RuleWhitelistException::invalidOperator($value);
+    }
+
+    private static function jalaliNextStart(string $value): CarbonImmutable
+    {
+        return JalaliDay::nextStart($value) ?? throw RuleWhitelistException::invalidOperator($value);
     }
 
     /** @param Builder<Customer> $query */

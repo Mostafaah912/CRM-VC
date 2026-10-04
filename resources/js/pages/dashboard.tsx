@@ -15,11 +15,10 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { DrillDialog } from '@/components/dashboard/drill-dialog';
 import { DateRange } from '@/components/date-range';
+import { JalaliRangePicker } from '@/components/jalali-date-picker';
 import { EntityId } from '@/components/entity-id';
 import {
     formatCohortMonth,
@@ -154,6 +153,8 @@ export default function Dashboard({ data, filters }: Props) {
         );
     };
 
+    const range = { from: from.trim() === '' ? null : from, to: to.trim() === '' ? null : to };
+
     return (
         <>
             <Head title="داشبورد" />
@@ -182,25 +183,16 @@ export default function Dashboard({ data, filters }: Props) {
                     className="border-sidebar-border/70 dark:border-sidebar-border flex flex-wrap items-end gap-4 rounded-xl border p-4"
                 >
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="period-from">از (شمسی)</Label>
-                        <Input
-                            id="period-from"
-                            dir="ltr"
-                            className="w-40"
-                            placeholder="1405/01/01"
-                            value={from}
-                            onChange={(event) => setFrom(event.target.value)}
-                        />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                        <Label htmlFor="period-to">تا (شمسی)</Label>
-                        <Input
-                            id="period-to"
-                            dir="ltr"
-                            className="w-40"
-                            placeholder="1405/06/29"
-                            value={to}
-                            onChange={(event) => setTo(event.target.value)}
+                        <span className="text-muted-foreground text-sm">
+                            بازه
+                        </span>
+                        <JalaliRangePicker
+                            from={range.from}
+                            to={range.to}
+                            onChange={(next) => {
+                                setFrom(next.from ?? '');
+                                setTo(next.to ?? '');
+                            }}
                         />
                     </div>
                     <Button type="submit">اعمال بازه</Button>

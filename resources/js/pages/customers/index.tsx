@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { JalaliRangePicker } from '@/components/jalali-date-picker';
 import {
     Select,
     SelectContent,
@@ -249,33 +250,14 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
 
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="first-seen-from">
-                                اولین مشاهده از (شمسی)
-                            </Label>
-                            <Input
-                                id="first-seen-from"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/01/01"
-                                value={state.first_seen_from}
-                                onChange={(event) =>
-                                    set('first_seen_from', event.target.value)
-                                }
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="first-seen-to">
-                                اولین مشاهده تا (شمسی)
-                            </Label>
-                            <Input
-                                id="first-seen-to"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/06/29"
-                                value={state.first_seen_to}
-                                onChange={(event) =>
-                                    set('first_seen_to', event.target.value)
-                                }
+                            <Label>اولین مشاهده</Label>
+                            <JalaliRangePicker
+                                from={state.first_seen_from || null}
+                                to={state.first_seen_to || null}
+                                onChange={(next) => {
+                                    set('first_seen_from', next.from ?? '');
+                                    set('first_seen_to', next.to ?? '');
+                                }}
                             />
                         </div>
                         <div className="flex items-center gap-2 pb-2">

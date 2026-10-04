@@ -25,7 +25,7 @@ function clBackendFiles(): array
         'app/Modules/Customers/Services/CustomerListService.php',
         'app/Modules/Customers/Support/CustomerListFilters.php',
         'app/Modules/Customers/Support/CustomerListRow.php',
-        'app/Modules/Customers/Support/JalaliDay.php',
+        'app/Support/JalaliDay.php',
         'app/Support/PhoneMask.php',
         'app/Support/Digits.php',
     ]);
@@ -116,7 +116,7 @@ it('masks in the row, unconditionally — the list has no path that can carry a 
 it('formats every date through JalaliDate and never builds one from a raw string', function () {
     expect(Scanner::violations([clFile('app/Modules/Customers/Support/CustomerListRow.php')], ['/->format\s*\(/', '/\bdate\s*\(/']))->toBe([])
         ->and(Scanner::phpCode(clFile('app/Modules/Customers/Support/CustomerListRow.php')))->toContain('JalaliDate::format(')
-        ->and(Scanner::phpCode(clFile('app/Modules/Customers/Support/JalaliDay.php')))->toContain('JalaliDate::');
+        ->and(Scanner::phpCode(clFile('app/Support/JalaliDay.php')))->toContain('JalaliDate::');
 });
 
 it('writes the page in strict TypeScript, with the one shared badge, no any, no raw HTML, no console, no fetch of its own', function () {

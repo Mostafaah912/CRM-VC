@@ -9,6 +9,7 @@ use App\Modules\Segments\Enums\RuleOperator;
 use App\Modules\Segments\Exceptions\RuleValidationException;
 use App\Modules\Segments\Exceptions\RuleWhitelistException;
 use App\Modules\Segments\Support\RuleFieldWhitelist;
+use App\Support\JalaliDay;
 
 /**
  * Validates a PRD §17 JSON Rule Schema (Group|Condition) before RuleCompiler (P5-03) ever turns it
@@ -189,6 +190,11 @@ final class RuleValidator
                 throw RuleValidationException::invalidValueShape($field, $operator->value);
             }
 
+            if (in_array($field, RuleFieldWhitelist::DATE_FIELDS, true)) {
+                self::assertJalaliDay($value[0] ?? null, $field, $operator);
+                self::assertJalaliDay($value[1] ?? null, $field, $operator);
+            }
+
             return;
         }
 
@@ -205,6 +211,22 @@ final class RuleValidator
         }
 
         if (is_array($value)) {
+            throw RuleValidationException::invalidValueShape($field, $operator->value);
+        }
+
+        if (in_array($field, RuleFieldWhitelist::DATE_FIELDS, true)) {
+            self::assertJalaliDay($value, $field, $operator);
+        }
+    }
+
+    /**
+     * `$field`/`$operator` are already-whitelisted values from `validateCondition()`, never
+     * request input — safe to interpolate into the Persian message the same way every other
+     * `RuleValidationException` factory here does.
+     */
+    private static function assertJalaliDay(mixed $value, string $field, RuleOperator $operator): void
+    {
+        if (! is_string($value) || JalaliDay::start($value) === null) {
             throw RuleValidationException::invalidValueShape($field, $operator->value);
         }
     }

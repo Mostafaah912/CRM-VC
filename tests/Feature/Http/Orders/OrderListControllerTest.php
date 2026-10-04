@@ -167,6 +167,17 @@ it('rejects a Jalali date that is not a real day, and one written the wrong way 
     olGet($this, '?ordered_from=1405/06/10&ordered_to=1405/06/01')->assertRedirect()->assertSessionHasErrors(['ordered_to']);
 });
 
+/* P6-14 phase 2: both messages were in English before the shared JalaliDayRule/JalaliDateRangeValidation. */
+it('rejects an out-of-order range with a Persian message, not English', function () {
+    olOrder();
+
+    $resp = olGet($this, '?ordered_from=1405/06/10&ordered_to=1405/06/01');
+    $resp->assertSessionHasErrors(['ordered_to']);
+
+    expect(session('errors')->get('ordered_to')[0])
+        ->toBe('انتهای بازه نباید قبل از ابتدای آن باشد.');
+});
+
 it('combines every filter with AND', function () {
     olOrder(['woo_order_id' => 1, 'status' => 'completed', 'is_realized' => true, 'needs_phone_review' => false]);
     olOrder(['woo_order_id' => 2, 'status' => 'completed', 'is_realized' => false, 'needs_phone_review' => false]);

@@ -6,9 +6,9 @@ namespace App\Http\Requests;
 
 use App\Models\User;
 use App\Modules\Analytics\Support\DashboardPeriod;
-use App\Modules\Customers\Support\JalaliDay;
 use App\Modules\Metrics\Enums\ChurnRiskLevel;
 use App\Modules\Metrics\Enums\RfmSegment;
+use App\Support\JalaliDay;
 use Carbon\CarbonImmutable;
 use Closure;
 use Illuminate\Auth\AuthenticationException;

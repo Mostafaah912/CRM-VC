@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { JalaliRangePicker } from '@/components/jalali-date-picker';
 import {
     Select,
     SelectContent,
@@ -220,33 +221,14 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
 
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="ordered-from">
-                                تاریخ ثبت از (شمسی)
-                            </Label>
-                            <Input
-                                id="ordered-from"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/01/01"
-                                value={state.ordered_from}
-                                onChange={(event) =>
-                                    set('ordered_from', event.target.value)
-                                }
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="ordered-to">
-                                تاریخ ثبت تا (شمسی)
-                            </Label>
-                            <Input
-                                id="ordered-to"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/06/29"
-                                value={state.ordered_to}
-                                onChange={(event) =>
-                                    set('ordered_to', event.target.value)
-                                }
+                            <Label>تاریخ ثبت</Label>
+                            <JalaliRangePicker
+                                from={state.ordered_from || null}
+                                to={state.ordered_to || null}
+                                onChange={(next) => {
+                                    set('ordered_from', next.from ?? '');
+                                    set('ordered_to', next.to ?? '');
+                                }}
                             />
                         </div>
                         <div className="ms-auto flex gap-2">
