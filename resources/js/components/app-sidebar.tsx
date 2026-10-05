@@ -12,6 +12,7 @@ import {
     ShoppingCart,
     Target,
     Users,
+    HelpCircle,
 } from 'lucide-react';
 import AppLogo from '@/components/app-logo';
 import { NavFooter } from '@/components/nav-footer';
@@ -29,7 +30,7 @@ import {
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
 import { index as customersIndex } from '@/routes/customers';
-import { rfm as metricsRfm } from '@/routes/metrics';
+import { rfm as metricsRfm, guide as metricsGuide } from '@/routes/metrics';
 import { index as ordersIndex } from '@/routes/orders';
 import { index as productsIndex } from '@/routes/products';
 import { index as segmentsIndex } from '@/routes/segments';
@@ -92,6 +93,15 @@ export function AppSidebar() {
                       title: 'تحلیل RFM',
                       href: metricsRfm(),
                       icon: Target,
+                  },
+              ]
+            : []),
+        ...(can('analytics', 'view')
+            ? [
+                  {
+                      title: 'راهنمای شاخص‌ها',
+                      href: metricsGuide(),
+                      icon: HelpCircle,
                   },
               ]
             : []),

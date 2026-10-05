@@ -36,6 +36,20 @@ use Illuminate\Support\Facades\DB;
  */
 final class AffinityService
 {
+    /**
+     * PRD §16's minimum co-purchase per level — the single source `MetricsGuideService` (P6-14 phase
+     * 5) reads too, so the guide page's numbers can never drift from what this class actually
+     * enforces. Interpolated into the heredocs below as literal integers (never user input), the
+     * same safety property the inline numbers they replace already had.
+     */
+    public const MIN_CO_CUSTOMERS_CATEGORY = 20;
+
+    public const MIN_CO_CUSTOMERS_PRODUCT = 10;
+
+    public const MIN_CO_CUSTOMERS_VARIATION = 5;
+
+    public const MIN_CO_CUSTOMERS_BASKET = 10;
+
     public function __construct(private readonly CatalogLookupService $catalog) {}
 
     public function rebuild(): AffinitySummary
@@ -131,10 +145,12 @@ final class AffinityService
         return $levels;
     }
 
-    /** PRD §16: category level, source customer_category_purchases, min co-purchase 20. */
+    /** PRD §16: category level, source customer_category_purchases, min co-purchase self::MIN_CO_CUSTOMERS_CATEGORY. */
     private function rebuildCategoryLevel(): int
     {
-        return DB::affectingStatement(<<<'SQL'
+        $min = self::MIN_CO_CUSTOMERS_CATEGORY;
+
+        return DB::affectingStatement(<<<SQL
             WITH pairs AS (
                 SELECT customer_id, category_id FROM customer_category_purchases
             ),
@@ -149,7 +165,7 @@ final class AffinityService
                 FROM pairs p1
                 JOIN pairs p2 ON p2.customer_id = p1.customer_id AND p2.category_id > p1.category_id
                 GROUP BY p1.category_id, p2.category_id
-                HAVING COUNT(DISTINCT p1.customer_id) >= 20
+                HAVING COUNT(DISTINCT p1.customer_id) >= {$min}
             )
             INSERT INTO product_affinities (level, entity_a_id, entity_b_id, co_customers, a_customers, b_customers, support, confidence, lift, computed_at)
             SELECT
@@ -166,10 +182,12 @@ final class AffinityService
             SQL);
     }
 
-    /** PRD §16: product level, source customer_product_purchases, min co-purchase 10. */
+    /** PRD §16: product level, source customer_product_purchases, min co-purchase self::MIN_CO_CUSTOMERS_PRODUCT. */
     private function rebuildProductLevel(): int
     {
-        return DB::affectingStatement(<<<'SQL'
+        $min = self::MIN_CO_CUSTOMERS_PRODUCT;
+
+        return DB::affectingStatement(<<<SQL
             WITH pairs AS (
                 SELECT customer_id, product_id FROM customer_product_purchases
             ),
@@ -184,7 +202,7 @@ final class AffinityService
                 FROM pairs p1
                 JOIN pairs p2 ON p2.customer_id = p1.customer_id AND p2.product_id > p1.product_id
                 GROUP BY p1.product_id, p2.product_id
-                HAVING COUNT(DISTINCT p1.customer_id) >= 10
+                HAVING COUNT(DISTINCT p1.customer_id) >= {$min}
             )
             INSERT INTO product_affinities (level, entity_a_id, entity_b_id, co_customers, a_customers, b_customers, support, confidence, lift, computed_at)
             SELECT
@@ -201,10 +219,12 @@ final class AffinityService
             SQL);
     }
 
-    /** PRD §16: variation level, source order_items directly (no aggregate table exists), min co-purchase 5. */
+    /** PRD §16: variation level, source order_items directly (no aggregate table exists), min co-purchase self::MIN_CO_CUSTOMERS_VARIATION. */
     private function rebuildVariationLevel(): int
     {
-        return DB::affectingStatement(<<<'SQL'
+        $min = self::MIN_CO_CUSTOMERS_VARIATION;
+
+        return DB::affectingStatement(<<<SQL
             WITH pairs AS (
                 SELECT DISTINCT o.customer_id, oi.variation_id
                 FROM orders o
@@ -222,7 +242,7 @@ final class AffinityService
                 FROM pairs p1
                 JOIN pairs p2 ON p2.customer_id = p1.customer_id AND p2.variation_id > p1.variation_id
                 GROUP BY p1.variation_id, p2.variation_id
-                HAVING COUNT(DISTINCT p1.customer_id) >= 5
+                HAVING COUNT(DISTINCT p1.customer_id) >= {$min}
             )
             INSERT INTO product_affinities (level, entity_a_id, entity_b_id, co_customers, a_customers, b_customers, support, confidence, lift, computed_at)
             SELECT
@@ -245,7 +265,9 @@ final class AffinityService
      */
     private function rebuildBasketLevel(): int
     {
-        return DB::affectingStatement(<<<'SQL'
+        $min = self::MIN_CO_CUSTOMERS_BASKET;
+
+        return DB::affectingStatement(<<<SQL
             WITH pairs AS (
                 SELECT DISTINCT oi.order_id, oi.product_id
                 FROM orders o
@@ -263,7 +285,7 @@ final class AffinityService
                 FROM pairs p1
                 JOIN pairs p2 ON p2.order_id = p1.order_id AND p2.product_id > p1.product_id
                 GROUP BY p1.product_id, p2.product_id
-                HAVING COUNT(DISTINCT p1.order_id) >= 10
+                HAVING COUNT(DISTINCT p1.order_id) >= {$min}
             )
             INSERT INTO product_affinities (level, entity_a_id, entity_b_id, co_customers, a_customers, b_customers, support, confidence, lift, computed_at)
             SELECT

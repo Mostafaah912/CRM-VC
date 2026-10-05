@@ -1,4 +1,5 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
+import { HelpCircle } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import {
     Card,
@@ -30,6 +31,7 @@ import {
 import { churnLevels, rfmSegments } from '@/lib/customer-labels';
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
+import { guide as metricsGuide } from '@/routes/metrics';
 import { index as segmentsIndex } from '@/routes/segments';
 import { health as systemHealth } from '@/routes/system';
 import type { DashboardData, DashboardFilters } from '@/types/dashboard';
@@ -153,7 +155,10 @@ export default function Dashboard({ data, filters }: Props) {
         );
     };
 
-    const range = { from: from.trim() === '' ? null : from, to: to.trim() === '' ? null : to };
+    const range = {
+        from: from.trim() === '' ? null : from,
+        to: to.trim() === '' ? null : to,
+    };
 
     return (
         <>
@@ -161,7 +166,18 @@ export default function Dashboard({ data, filters }: Props) {
 
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <div className="flex items-baseline justify-between gap-4">
-                    <h1 className="text-xl font-medium">داشبورد</h1>
+                    <div className="flex items-center gap-2">
+                        <h1 className="text-xl font-medium">داشبورد</h1>
+                        {can('analytics', 'view') && (
+                            <Link
+                                href={`${metricsGuide().url}#dashboard`}
+                                title="راهنمای شاخص‌ها"
+                                className="text-muted-foreground hover:text-foreground"
+                            >
+                                <HelpCircle className="size-4" />
+                            </Link>
+                        )}
+                    </div>
                     <span className="text-muted-foreground text-sm">
                         <DateRange
                             from={data.period.from_jalali}

@@ -15,10 +15,12 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { HelpCircle } from 'lucide-react';
+import { useCan } from '@/hooks/use-can';
 import { formatNumber, formatPercent, formatToman } from '@/lib/format';
 import { dashboard } from '@/routes';
 import { show as customerShow } from '@/routes/customers';
-import { rfm as metricsRfm } from '@/routes/metrics';
+import { guide as metricsGuide, rfm as metricsRfm } from '@/routes/metrics';
 import type { RfmPageData } from '@/types/metrics';
 
 type Props = {
@@ -48,6 +50,7 @@ function percentage(count: number, total: number): string {
 }
 
 export default function RfmPage({ data }: Props) {
+    const can = useCan();
     const {
         segments,
         scores,
@@ -62,7 +65,18 @@ export default function RfmPage({ data }: Props) {
 
             <div className="flex h-full flex-1 flex-col gap-4 p-4">
                 <header className="border-sidebar-border/70 dark:border-sidebar-border flex flex-col gap-1 rounded-xl border p-4">
-                    <h1 className="text-2xl font-semibold">تحلیل RFM</h1>
+                    <div className="flex items-center gap-2">
+                        <h1 className="text-2xl font-semibold">تحلیل RFM</h1>
+                        {can('analytics', 'view') && (
+                            <Link
+                                href={`${metricsGuide().url}#rfm`}
+                                title="راهنمای این شاخص"
+                                className="text-muted-foreground hover:text-foreground"
+                            >
+                                <HelpCircle className="size-4" />
+                            </Link>
+                        )}
+                    </div>
                     <p className="text-muted-foreground text-sm">
                         {latestRun === null ? (
                             'هنوز هیچ بازمحاسبه‌ای انجام نشده است.'

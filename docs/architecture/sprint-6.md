@@ -1212,4 +1212,50 @@ Migration جدید و قابل‌بازگشت (`2026_10_01_120000`)، `DailyMetr
 
 **ریسک:** کم برای کد خودِ این فاز (پوشش تست کامل). ریسک عملیاتی واقعی که پیدا و رفع شد: `SyncPageJob` timeout (۸۰→۳۰۰) و یادآوری `queue:restart` بعد از تغییر کد — هر دو مستند شدند تا در sprint های بعد تکرار نشوند. **Rollback:** کد با `git revert` بی‌خطر؛ داده‌های نوشته‌شده (province/city/first_seen_at/needs_review/customer_addresses) با revert پاک نمی‌شوند چون از طریق migration نیامدند — یک revert کد، دوباره این ستون‌ها را در sync های بعدی خالی نمی‌کند (فقط دیگر به‌روزرسانی نمی‌شوند)، داده‌ی فعلی دست‌نخورده می‌ماند.
 
+## P6-18 — فاز ۵: صفحه «راهنمای شاخص‌ها»
+
+### چه ساخته شد
+
+مسیر تازه‌ی `/metrics/guide` (پشت همان `analytics.view` که صفحات Cohort/Retention/Affinity استفاده می‌کنند — این صفحه هم ترکیبی از Metrics+Segments+Analytics است، پس اختراع یک Permission تازه توجیه نداشت). زنجیره: `MetricsGuideController` (Controller نازک، یک فراخوان Service، یک Inertia Response) ← `app/Support/MetricsGuideService.php` (Orchestrator، نه یک ماژول خاص — دقیقاً همان دلیل `HealthCheckService`، P6-10) ← `resources/js/pages/metrics/guide.tsx` (۸ کارت: RFM، CLV، ریسک ریزش، چرخه‌عمر، کوهورت/بازگشت، هم‌خرید، اشاره‌گر داشبورد، کیفیت داده).
+
+**منبع واحد حقیقت، نه کپی دوم:** هیچ آستانه/عدد در این صفحه از نو تایپ نشده — همه از همان Config/Const/جدولی خوانده می‌شود که Calculator واقعی می‌خواند: `config('metrics.*')` (margin_rate, horizon_years, آستانه‌های CLV)، `AffinityService::MIN_CO_CUSTOMERS_*` (۴ ثابت تازه‌ی public، جایگزین ۴ عدد قبلاً inline در SQL heredoc آن سرویس — همان عدد، فقط یک‌جا تعریف شد)، `ChurnThresholdService::percentiles()` یا آخرین `metric_runs.thresholds` ذخیره‌شده، `customer_metrics`/`cohort_snapshots`/`segments` مستقیماً.
+
+**سگمنت‌های سیستمی به‌صورت جمله‌ی فارسی، نه JSON خام:** `app/Modules/Segments/Support/RuleSentenceRenderer.php` (تازه) قانون هر سگمنت (`Group`/`Condition`، عملگرهای رفتاری `bought_*`/`in_segment` و غیره) را به یک جمله‌ی فارسی ساده تبدیل می‌کند — برچسب فیلد/عملگر از `RuleWhitelistPresenter` (موجود، Segments module) خوانده می‌شود، برچسب مقادیر enum (rfm_segment، churn_risk_level، status، lifecycle_stage) از یک نگاشت محلی تازه در خودِ Renderer.
+
+### ابهام PRD حل‌شده (طبق دستور، پیش از کد ثبت شد)
+
+**محدودیت SQL خام در `app/Support/`:** تلاش اول `MetricsGuideService` از `selectRaw()`/`DB::table()->selectRaw()` برای تجمیع‌های گروهی (بازه‌ی هر امتیاز RFM، توزیع confidence، سطوح churn/lifecycle) استفاده می‌کرد. اجرای `ArchitectureTest` نشان داد معافیت قاعده‌ی ۷ (SQL خام ممنوع) فقط `app/Modules/Metrics/`، `app/Modules/Analytics/` و یک فایل نام‌برده‌ی Catalog را پوشش می‌دهد — `app/Support/` در آن فهرست نیست. هر تجمیع گروهی بازنویسی شد به چند کوئری ساده‌ی غیر-raw (یک `count()`/`min()`/`max()` جدا به ازای هر enum case/امتیاز ۱..۵، با `clone` روی یک Query Builder پایه) — این صفحه یک مسیر عملیاتی کم‌تواتر است (نه hot path درخواست)، پس رفت‌وبرگشت‌های اضافه یک تصمیم آگاهانه است، نه غفلت.
+
+### باگ کوچک پیدا و رفع‌شده حین پیاده‌سازی: مقیاس درصد
+
+`orderItemsResolvedPercent()` ابتدا خروجی را از پیش در ۱۰۰ ضرب می‌کرد (مثلاً ۶۸.۲۹)، درحالی‌که قرارداد یکتای این کدبیس برای هر عدد نسبت (`RetentionService`، `formatPercent()` فرانت) یک نسبت ۰..۱ خام است و ضرب در ۱۰۰ فقط در یک‌جا (`formatPercent`) اتفاق می‌افتد. رفع شد تا نسبت خام (۰..۱، گرد‌شده به ۴ رقم اعشار) برگرداند؛ تست تازه این دقیقاً همین قرارداد را با یک سفارش دو-آیتمی (یکی resolve‌شده، یکی نه) تأیید می‌کند (`0.5`، نه `50`).
+
+### باگ دیداری پیدا و رفع‌شده حین تأیید مرورگر واقعی: ترتیب Bidi
+
+بازه‌ی هر امتیاز RFM («۴۸۴ تا ۷۴۸») ابتدا با یک پوشش ساده‌ی `dir="ltr"` روی کل رشته نوشته شد — تأیید Playwright/اسکرین‌شات نشان داد در بافت صفحه‌ی RTL، کلمه‌ی فارسی «تا» بین دو عدد انگلیسی جابه‌جا نمایش داده می‌شود (الگوریتم Bidi یکنواخت کل رشته را به‌عنوان یک بلوک LTR جابه‌جا می‌کند). رفع با همان الگوی از‌پیش‌تثبیت‌شده‌ی `date-range.tsx` (P6-11): `<span dir="rtl">` بیرونی + هر عدد داخل `<bdi dir="ltr">` جدا — کلمه‌ی فارسی در جای طبیعی خودش می‌ماند، عددها مستقل ایزوله می‌شوند. کامپوننت تازه‌ی `RangeText` در `guide.tsx`.
+
+### "؟" های کمکی از داشبورد/RFM — فقط چون ساده بود
+
+طبق قید صریح متن دستور («فقط اگر ساده بود»)، یک لینک کوچک `HelpCircle` کنار عنوان داشبورد (`#dashboard`) و عنوان صفحه‌ی RFM (`#rfm`) اضافه شد، هر دو پشت `can('analytics','view')` (پرمیشن خودِ صفحه‌ی راهنما، نه `dashboard.view`/`metrics.view` صفحه‌ی میزبان). به هر ۸ کارت `id` اضافه شد تا این لینک‌ها (و لینک‌های مشابه‌ی آینده) بتوانند مستقیم به بخش مربوطه اسکرول کنند — تلاش بیشتری (مثلاً "؟" کنار هر KPI تک‌تک در داشبورد بزرگ) عمداً انجام نشد، چون خارج از «ساده» بود.
+
+### TEST FIRST
+
+۱۲ تست تازه در `tests/Feature/Support/MetricsGuideServiceTest.php`: بازه‌ی واقعی هر امتیاز RFM (۱..۵)، ۸ سگمنت RFM با شرط و شمار زنده، هر ۱۲ سگمنت سیستمی به‌صورت جمله‌ی فارسی غیرخالی (regex `\p{Arabic}`)، `margin_rate` از Config خوانده می‌شود — با تغییر Config دوبار و سنجش خروجی هر دو بار (نه فقط یک تطابق ایستا)، توزیع `clv_confidence`، اولویت `metric_runs.thresholds` ذخیره‌شده بر محاسبه‌ی تازه، fallback زیر نمونه‌ی ۲۰۰ با `is_fallback=true`، توزیع `churn_risk_level`/`lifecycle_stage` برای همه‌ی Caseها، ثابت‌های `MIN_CO_CUSTOMERS_*` از خودِ `AffinityService` (نه کپی دوم)، شمار تعارض هویت pending، و نسبت `order_items_resolved_percent` به‌صورت ۰..۱. ۱۸ تست تازه در `tests/Unit/Modules/Segments/RuleSentenceRendererTest.php` روی هر ۱۲ تعریف واقعی `DefaultSegmentSeeder` + حالت‌های لبه (تساوی، لیست، گروه AND، `within_days_of_now`، بدون نشت JSON/کلید انگلیسی).
+
+### تأیید مرورگر واقعی (Playwright، خارج از مخزن طبق دستور فاز ۱)
+
+اسکریپت `phase5-verify.mjs` (کاربر seed شده‌ی `test@example.com`): هر ۸ بخش روی صفحه یافت شد، دقیقاً ۱۲ سگمنت سیستمی رندر شد، هیچ نشت کلید خام JSON (`"op"`, `"field"`, …) یافت نشد، هیچ رقم فارسی/عربی روی صفحه نبود، بدون اسکرول افقی، لینک سایدبار و هر دو لینک "؟" (داشبورد، RFM) هم دیده شدند هم ناوبری واقعی‌شان تأیید شد (کلیک روی لینک RFM → `/metrics/guide#rfm`). اسکرین‌شات کامل صفحه با Read شخصاً دیده شد؛ یک اسکرین‌شات مجزای جدول بازه‌ی امتیاز RFM قبل/بعد از رفع باگ Bidi هم گرفته و مقایسه شد.
+
+### بستن این فاز
+
+تست‌های مرتبط (`MetricsGuideServiceTest`+`RuleSentenceRendererTest`+`AffinityServiceTest`+`CustomerListBoundaryTest`): ۶۱/۶۱ سبز. Arch کامل (۲۱۶ تست، همه‌ی ماژول‌ها): ۲۱۶/۲۱۶ سبز. PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز. `npm run types:check`/`build` → تمیز.
+
+**یادداشت ابزاری (نه کد محصول):** `npx vp check --fix` بدون آرگومان مسیر، کل مخزن را فرمت می‌کند، نه فقط فایل‌های تغییریافته — یک اجرای اول بدون‌مسیر، به‌اشتباه PRD.md/ARCHITECTURE.md/فیکسچرهای JSON/چند فایل فرانت نامرتبط را هم بازفرمت کرد (فقط فرمت/whitespace، بدون تغییر داده). همه‌ی آن تغییرات ناخواسته با `git checkout --` قبل از کامیت برگردانده شدند؛ اجراهای بعدی با فهرست دقیق مسیرها (`vp check --fix <files>`) محدود به همین فاز ماندند. ثبت شد تا در فازهای بعد تکرار نشود.
+
+**فایل‌ها:** جدید: `app/Support/MetricsGuideService.php`، `app/Http/Controllers/Metrics/MetricsGuideController.php`، `app/Modules/Segments/Support/RuleSentenceRenderer.php`، `resources/js/pages/metrics/guide.tsx`، `resources/js/types/metrics-guide.ts`، `tests/Feature/Support/MetricsGuideServiceTest.php`، `tests/Unit/Modules/Segments/RuleSentenceRendererTest.php`؛ تغییر: `app/Modules/Analytics/Services/AffinityService.php` (۴ ثابت public تازه)، `routes/internal.php`، `resources/js/components/app-sidebar.tsx`، `resources/js/pages/{metrics/rfm,dashboard}.tsx`، `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۲۱ به ۲۲).
+
+**DB:** هیچ migration، هیچ جدول/ستون تازه — فقط خواندن از جداول موجود. **API:** یک مسیر GET تازه (`metrics/guide`)، بدون تغییر در شکل خروجی مسیرهای موجود.
+
+**ریسک:** کم — صفحه‌ی فقط‌خواندن تازه، بدون تغییر منطق محاسباتی موجود؛ تنها تغییر رفتاری واقعی، تغییر مقیاس `order_items_resolved_percent` از ۰..۱۰۰ به ۰..۱ بود که هیچ مصرف‌کننده‌ی دیگری (خارج از همین فایل تازه) نداشت، پس بی‌خطر بود. **Rollback:** `git revert` کامل و بی‌خطر؛ بدون داده‌ی نوشته‌شده‌ای که نیاز به پاک‌سازی جدا داشته باشد.
+
 **کدام تصمیم از طرف پروژه‌مالک لازم است:** هیچ — این فاز کاملاً بدون ابهام باز بسته شد (فرض اصلی متن تسک درباره‌ی کد استان با داده‌ی زنده رد و جایگزین شد، نه این‌که منتظر تصمیم بماند).

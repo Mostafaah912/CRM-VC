@@ -16,6 +16,7 @@ use App\Http\Controllers\Customers\PhoneRevealController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DrillController;
 use App\Http\Controllers\DrillExportController;
+use App\Http\Controllers\Metrics\MetricsGuideController;
 use App\Http\Controllers\Metrics\RfmPageController;
 use App\Http\Controllers\Orders\OrderListController;
 use App\Http\Controllers\Orders\OrderShowController;
@@ -60,6 +61,10 @@ Route::middleware(['auth', 'permission:analytics,view'])->group(function () {
     Route::get('analytics/cohort', CohortPageController::class)->name('analytics.cohort');
     Route::get('analytics/retention', RetentionPageController::class)->name('analytics.retention');
     Route::get('analytics/affinity', AffinityPageController::class)->name('analytics.affinity');
+    // P6-18 phase 5: راهنمای شاخص‌ها — same permission, not a new one; the page composes Metrics +
+    // Segments + Analytics data, so analytics.view (already the gate for the other composed pages
+    // above) was reused rather than inventing a metrics-guide-specific permission.
+    Route::get('metrics/guide', MetricsGuideController::class)->name('metrics.guide');
 });
 
 // PRD D15: internal routes — Inertia pages (and, later, internal JSON), never a public API. Every one needs a signed-in user
