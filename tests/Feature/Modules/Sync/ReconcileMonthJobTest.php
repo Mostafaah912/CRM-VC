@@ -59,6 +59,14 @@ it('gives a month up to 300 seconds: the largest live month (3,169 orders) took 
     expect((new ReconcileMonthJob('1405-05'))->timeout)->toBe(300);
 });
 
+/* P6-14 phase 4: the exact same failure shape as the test above, found live — a full `hm:sync --full`
+ * run (513 pages) hit SyncPageJob's old 80s timeout on page 361 specifically (not the first, not a
+ * fluke — a page whose refund-order reads happened to queue up against the rate limiter), failing the
+ * whole run with tries=1 and stranding 18,199 already-synced records behind a cursor that never moved. */
+it('gives a page up to 300 seconds: the old 80 s limit killed a live full sync on page 361 of 513', function () {
+    expect((new SyncPageJob(1, 1))->timeout)->toBe(300);
+});
+
 it('keeps the queue\'s retry_after at least 30 seconds above every sync job\'s timeout, so a running month is never re-reserved and run twice', function () {
     $longest = max(
         (new ReconcileMonthJob('1405-05'))->timeout,

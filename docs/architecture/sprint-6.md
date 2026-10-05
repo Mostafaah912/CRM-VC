@@ -1140,3 +1140,76 @@ Migration جدید و قابل‌بازگشت (`2026_10_01_120000`)، `DailyMetr
 **DB:** ۲ ستون تازه روی `daily_metrics` (`product_revenue`,`shipping_revenue`، هر دو NOT NULL بدون default نهایی). **API:** `dashboard`/order show/order list/drill JSON هرکدام فیلدهای تازه اضافه کردند (شکل قبلی دست‌نخورده، additive). **ریسک:** کم — صرفاً افزودن ستون/فیلد نمایشی، بدون تغییر منطق محاسباتی موجود؛ تنها نکته، migration باید قبل از دیپلوی کد جدید اجرا شود (ترتیب معمول). **Rollback:** `git revert` + `php artisan migrate:rollback` برای این یک migration (down() پاک، ستون‌ها حذف می‌شوند).
 
 **کدام تصمیم از طرف پروژه‌مالک لازم است:** (۱) آیا کارمزد Woo (`fee_lines`) باید ستون رسمی جدیدی در `orders` بگیرد؟ فقط ۲ سفارش امروز، ولی سفارش‌های آینده می‌توانند بیشتر داشته باشند. (۲) اختلاف ۳۷۰,۰۱۰ تومانی در داشبورد Woo خودش حل‌نشده ماند — تعریف دقیق «مجموع دریافتی» در Woo را فقط کسی با دسترسی ادمین Woo (نه REST API) می‌تواند تعیین کند.
+
+## P6-17 — فاز ۴: ستون‌های خالی لیست مشتریان
+
+### بخش الف — تشخیص با عدد (قبل از هر تغییر)
+
+کوئری مستقیم روی dev، نه حدس: از ۲۰,۱۵۰ مشتری، **۰ تا province، ۰ تا city، فقط ۲ تا first_seen_at، ۰ تا needs_review=true** — دقیقاً همان رقم‌هایی که ARCHITECTURE.md (P3-01) از قبل گزارش کرده بود، حالا با عدد تازه تأیید شد. جدول `customer_addresses` (از P1-01 موجود) نیز **۰ ردیف** داشت.
+
+### یافته‌ی اصلی بخش ب — فرض «کد استان Woo» رد شد، با داده‌ی زنده
+
+فرض متن تسک این بود که `billing.state` یک کد نیاز به نگاشت دارد. خواندن مستقیم payload زنده (نمونه‌ی ۱۵۰۰ سفارش واقعی) نشان داد **این فرض درست نیست**: `billing.state`/`city` از قبل نام فارسی کامل استان/شهر هستند (۳۱ از ۳۲ مقدار متمایز، نام واقعی استان ایران؛ تنها استثنا یک مقدار زباله `'2007'` در یک سفارش، که خام نگه داشته شد، نه حدس زده). پس **هیچ جدول نگاشتی ساخته نشد** — فقط trim + تبدیل حرف عربی/فارسی (ي→ی، ك→ک، با کلاس تازه‌ی `App\Support\PersianText`، همان دو حرفی که `PersonNameNormalizer` از قبل تایپوگرافی می‌داند، نه هویت).
+
+### رفع ورود داده (going forward)
+
+زنجیره‌ی کامل گسترش یافت تا آدرس Woo تا `customers.province`/`city` و `customer_addresses` برسد:
+- `OrderDto`/`OrderMapper`: ۸ فیلد تازه (billing+shipping × province/city/address/postcode) از `billing.state`/`city`/`address_1`+`address_2`/`postcode` (و همان‌ها زیر `shipping`). یافته‌ی جانبی: فیکسچرهای تست هیچ‌کدام `shipping` نداشتند و `PayloadReader::object()` این را خطای «فیلد الزامی گمشده» می‌گرفت؛ متد تازه‌ی `nullableObject()` اضافه شد (مثل الگوی موجود `objectsOrEmpty()`) — `shipping` واقعاً اختیاری است، نه یک فیلد فراموش‌شده.
+- `OrderInput`/`OrderSyncService`: همان ۸ فیلد تا Orders module منتقل شدند.
+- `CustomerIdentityService::resolve()`/`resolveForWooOrder()`: ۳ پارامتر تازه (`province`, `city`, `orderedAt`، همه optional با پیش‌فرض null، هیچ فراخوان موجودی نشکست). روی مشتری تازه مستقیم ست می‌شود؛ روی مشتری موجود «آخرین مقدار غیرخالی» (دقیقاً همان قاعده‌ی `adoptNames()` برای نام — بدون مقایسه‌ی timestamp، چون pipeline sync از قبل به ترتیب `modified` صعودی پردازش می‌کند).
+- `CustomerAddressService` (تازه، در Customers): یک ردیف در `customer_addresses` به ازای هر (customer, type) — نه یک تاریخچه‌ی append-only (PRD هیچ قید یکتایی روی این جدول ندارد؛ تصمیم مستدل، چون رشد نامحدود یک ردیف به ازای هر سفارش بدون دلیل مستند بود).
+- `OrderService::upsert()`: هر دو سرویس بالا را صدا می‌زند (فقط وقتی مشتری resolve شد).
+
+### first_seen_at — قاعده‌ی «کمینه، نه آخرین»
+
+برخلاف province/city («آخرین مقدار غیرخالی»)، `first_seen_at` باید **قدیمی‌ترین** سفارش را نشان دهد؛ با تست صریح ثابت شد که با همان قاعده‌ی «آخرین فراخوان» کار نمی‌کند (یک resync می‌تواند سفارش‌های قدیمی را بعد از جدید پردازش کند) — پس به‌جای اعتماد به ترتیب فراخوان، مقدار موجود مستقیماً با مقدار ورودی مقایسه می‌شود: `first_seen_at = min(موجود, ordered_at سفارش جاری)`، هرگز دیرتر نمی‌رود.
+
+### ستون «بازبینی» (needs_review) — باگ واقعی: هرگز نوشته نمی‌شد
+
+بررسی کد (نه فرض) ثابت کرد `needs_review` در کل کدبیس **هیچ‌جا نوشته نمی‌شد** — فقط خوانده می‌شد (فیلتر + نمایش). دقیقاً همان باگی که متن تسک حدس زده بود. رفع:
+- `CustomerIdentityService::recordConflict()` اکنون `needs_review=true` می‌نویسد (هر بار که یک تعارض نام واقعاً تشخیص داده شود، چه ردیف تازه باشد چه تکراری).
+- `IdentityConflictReresolveService::closeAsSame()` بعد از بستن یک تعارض، اگر دیگر هیچ تعارض pending برای آن مشتری نمانده باشد، `needs_review=false` می‌کند.
+- بج «نیازمند بازبینی» در لیست مشتریان اکنون (وقتی کاربر `identity.review` دارد) لینک به `/system/identity-conflicts` است.
+
+### TEST FIRST
+
+۴ حوزه‌ی صریح خواسته‌شده در متن تسک، هرکدام با تست واقعی پیش از/همراه پیاده‌سازی: **Mapper** (`OrderMapperTest`: فیلدهای آدرس، letter-shape، نبود shipping/آدرس، کد ناشناخته خام می‌ماند)، **upsert آدرس** (`CustomerAddressServiceTest`: insert، دو نوع جدا، آپدیت نه insert دوم، خالی=no-op، cut به عرض ستون)، **منطق کمینه‌ی first_seen_at** (`CustomerIdentityForWooOrderTest`: ترتیب معکوس resync، هرگز دیرتر نمی‌رود)، **پرچم needs_review** (`CustomerIdentityServiceTest` + `IdentityConflictReresolveTest`: ست و clear). + تست end-to-end در `OrderServiceTest` (کل زنجیره از `OrderInput` تا هر دو جدول).
+
+### یک باگ واقعی دوم، پیدا‌شده حین اجرای زنده: `SyncPageJob` timeout
+
+اولین اجرای کامل (`hm:sync --full`) دقیقاً روی صفحه‌ی ۳۶۱ از ۵۱۳ با `TimeoutExceededException` شکست خورد — نه یک‌مرتبه‌ی تصادفی، دقیقاً ۸۰ ثانیه بعد از صفحه‌ی قبل. با `tries=1`، کل اجرا (۳۶۰ صفحه، ۱۸,۱۹۹ رکورد) شکست خورد، گرچه داده‌های محلی سالم ماندند (هر سفارش تراکنش خودش را دارد)، فقط cursor جلو نرفت. **ریشه:** کامنت قدیمی فایل می‌گفت «باید زیر retry_after (۹۰) بماند» — ولی `retry_after` واقعی از P6-09 به ۹۳۰ رسیده بود و این فایل هرگز به‌روزرسانی نشده بود؛ کامنت و مقدار هر دو کهنه. یک صفحه با چند سفارش دارای عودت (هرکدام نیازمند یک GET زنده‌ی جدا، با احتمال retry ۴۲۹ تا ۱۲۰ ثانیه) به‌راحتی از ۸۰ ثانیه عبور می‌کند. دقیقاً همان الگوی قبلاً مستند‌شده برای `ReconcileMonthJob` (۸۰→۳۰۰، به‌خاطر یک ماه ۳,۱۶۹-سفارشی که Worker را کشت). رفع: `SyncPageJob::$timeout` از ۸۰ به ۳۰۰ (همان عدد `ReconcileMonthJob`، هنوز با فاصله‌ی زیاد زیر ۹۳۰)؛ تست رگرسیون تازه در `ReconcileMonthJobTest.php` کنار تست مشابه موجود.
+
+### یافته‌ی جانبی سوم: Worker های Horizon کد قدیمی را اجرا می‌کردند
+
+اولین اجرای زنده (قبل از کشف باگ timeout) **هیچ ردیف province/city/customer_addresses ننوشت**، با وجود ۳۶۰ صفحه و ۱۸,۱۹۹ رکورد پردازش‌شده. ریشه‌یابی مستقیم (فراخوانی دستی همان Mapper/Service روی همان سفارش واقعی) ثابت کرد **کد درست کار می‌کند** — مشکل این بود که پردازه‌های Horizon (`horizon:work`) از قبل این جلسه (از «Wed06PM») در حافظه بالا بودند و کد PHP تغییریافته را نخوانده بودند (مشکل شناخته‌شده‌ی Laravel: worker های طولانی‌مدت نیاز به `queue:restart` بعد از هر تغییر کد دارند). `php artisan queue:restart` اجرا شد، PIDهای Worker عوض شدند، و اجرای بعدی بلافاصله درست کار کرد (۴۹ مشتری فقط در صفحه‌ی اول). **این یک یافته‌ی عملیاتی است، نه یک باگ کد** — ثبت شد چون می‌تواند دوباره در deploy های آینده رخ دهد.
+
+### اجرای زنده (فقط‌خواندن از Woo، نوشتن فقط محلی)
+
+اعداد اعلام‌شده پیش از اجرا: ۲۵,۶۳۴ سفارش زنده (X-WP-Total) ÷ per_page=۵۰ ≈ ۵۱۳ صفحه، با rate limit ۹۰/دقیقه ≈ ۶-۷ دقیقه برای صفحات + زمان اضافه برای lookup عودتی‌ها. اجرای واقعی (بعد از رفع هر دو باگ بالا): ۳ اجرای `hm:sync`: اول (full) ۵۰۰/۵۰۰ صفحه، ۲۵,۳۳۲ رکورد، ۰ شکست (۱h۱۲m، به‌دلیل backoff/retry واقعی، نه تخمین خوش‌بینانه)؛ دوم (incremental، خودکار از همان cursor) ۱۳ صفحه‌ی باقی‌مانده، ۶۶۱ رکورد. جمعاً هیچ نوشتن به Woo، فقط GET.
+
+**نتیجه روی dev (قبل → بعد):**
+| ستون | قبل | بعد | پوشش |
+|---|---|---|---|
+| province غیرخالی | ۰ | ۲۰,۳۷۸ از ۲۰,۳۹۰ | ۹۹.۹۴٪ |
+| city غیرخالی | ۰ | ۲۰,۳۸۱ از ۲۰,۳۹۰ | ۹۹.۹۵٪ |
+| first_seen_at غیرخالی | ۲ | ۲۰,۳۹۰ از ۲۰,۳۹۰ | ۱۰۰٪ |
+| needs_review=true | ۰ | ۹۶ | — |
+| customer_addresses | ۰ ردیف | ۲۸,۸۲۸ ردیف (۲۰,۳۸۸ billing + ۸,۴۴۰ shipping) | — |
+
+(تعداد مشتری از ۲۰,۱۵۰ به ۲۰,۳۹۰ رشد کرد — ۲۴۰ مشتری/سفارش واقعی تازه، بین شروع این فاز و پایان sync.) ۱۲ مشتری باقی‌مانده بدون province (۹ بدون city) بررسی شدند: هرکدام دقیقاً ۱ سفارش محلی دارند که مقدار `billing.state`/`city`‌اش در Woo واقعاً خالی بوده — نه باگ، داده‌ی مبدأ ناقص.
+
+### تأیید مرورگر واقعی
+
+لیست مشتریان (بدون فیلتر): province/city/اولین‌مشاهده همه‌جا واقعی. فیلتر «فقط نیازمند بازبینی»: دقیقاً ۹۶ مشتری، هرکدام بج «نیازمند بازبینی» — منطبق با عدد DB. هر دو با Read شخصاً دیده شد.
+
+### بستن این فاز
+
+تست‌های مرتبط: ۱۷۴۱/۱۷۴۱ سبز (شامل Arch، از‌جمله `SyncCommandBoundaryTest` که با افزودن Command تازه عمداً به‌روزرسانی شد). PHPStan → ۰ خطا. Pint → تمیز. Backfill محلی (`hm:customers-backfill`) idempotent تأیید شد (اجرای دوم: ۰/۰).
+
+**فایل‌ها:** جدید: `app/Support/PersianText.php`، `app/Modules/Customers/Services/{CustomerAddressService,CustomerBackfillService}.php`، `app/Console/Commands/CustomerBackfillCommand.php`؛ تغییر: `app/Modules/Sync/{DTOs/OrderDto,Mappers/OrderMapper,Mappers/PayloadReader,Services/OrderSyncService,Jobs/SyncPageJob}.php`، `app/Modules/Orders/Services/{OrderInput,OrderService}.php`، `app/Modules/Customers/Services/{CustomerIdentityService,IdentityConflictReresolveService}.php`، `resources/js/pages/customers/index.tsx`.
+
+**DB:** هیچ migration (جدول `customer_addresses` از قبل موجود بود، فقط خالی). داده: ۲۸,۸۲۸ ردیف تازه در `customer_addresses`؛ ۲۰,۳۷۸/۲۰,۳۸۱ مشتری province/city گرفتند؛ ۲۰,۳۹۰ مشتری first_seen_at؛ ۹۶ مشتری needs_review. **API:** بدون تغییر در شکل خروجی لیست/۳۶۰ مشتری (فیلدها از قبل در props بودند، فقط همیشه خالی).
+
+**ریسک:** کم برای کد خودِ این فاز (پوشش تست کامل). ریسک عملیاتی واقعی که پیدا و رفع شد: `SyncPageJob` timeout (۸۰→۳۰۰) و یادآوری `queue:restart` بعد از تغییر کد — هر دو مستند شدند تا در sprint های بعد تکرار نشوند. **Rollback:** کد با `git revert` بی‌خطر؛ داده‌های نوشته‌شده (province/city/first_seen_at/needs_review/customer_addresses) با revert پاک نمی‌شوند چون از طریق migration نیامدند — یک revert کد، دوباره این ستون‌ها را در sync های بعدی خالی نمی‌کند (فقط دیگر به‌روزرسانی نمی‌شوند)، داده‌ی فعلی دست‌نخورده می‌ماند.
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** هیچ — این فاز کاملاً بدون ابهام باز بسته شد (فرض اصلی متن تسک درباره‌ی کد استان با داده‌ی زنده رد و جایگزین شد، نه این‌که منتظر تصمیم بماند).

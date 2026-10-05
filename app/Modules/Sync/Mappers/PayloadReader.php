@@ -191,6 +191,14 @@ final readonly class PayloadReader
         return new self($value, $this->entity, $this->field($key));
     }
 
+    /** Like object(), but an absent or null object reads as empty (Woo's order `shipping` is optional) — a present but malformed value still fails. */
+    public function nullableObject(string $key): self
+    {
+        return ($this->data[$key] ?? null) === null
+            ? new self([], $this->entity, $this->field($key))
+            : $this->object($key);
+    }
+
     /**
      * @return list<self>
      */

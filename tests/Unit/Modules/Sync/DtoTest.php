@@ -32,7 +32,7 @@ function dtoInstances(): array
         'product' => new ProductDto(101, 'تی‌شرت', 'tee', 'simple', 'publish', 'SYN-TEE-001', 403880, $at, [31]),
         'variation' => new VariationDto(1031, 103, 'SYN-S', 250000, 'publish', ['سایز' => 'S']),
         'order item' => $item,
-        'order' => new OrderDto(5001, '5001', 'completed', 'IRT', 11, 'الف', 'ب', '09000000001', 403880, 0, 0, 0, ['synth10'], 'cod', $at, $at, null, $at, [$item]),
+        'order' => new OrderDto(5001, '5001', 'completed', 'IRT', 11, 'الف', 'ب', '09000000001', 'تهران', 'تهران', 'خیابان آزادی', '1234567890', 'تهران', 'تهران', 'خیابان آزادی', '1234567890', 403880, 0, 0, 0, ['synth10'], 'cod', $at, $at, null, $at, [$item]),
         'refund item' => $refundItem,
         'refund' => new RefundDto(7001, 5001, 100000, null, $at, [$refundItem]),
     ];

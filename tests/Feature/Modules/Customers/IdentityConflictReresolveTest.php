@@ -52,6 +52,34 @@ it('closes a conflict whose incoming name now normalizes to the same last name, 
         ->and($conflict->fresh()->resolved_at)->not->toBeNull();
 });
 
+// ------------------------------------------------------- P6-14 phase 4: needs_review clearing
+
+it('clears needs_review once the customer\'s last pending conflict closes', function () {
+    $conflict = seedPendingMismatch('رضایی', 'علی رضایی');
+    $conflict->customer->update(['needs_review' => true]);
+
+    app(IdentityConflictReresolveService::class)->reresolvePendingByCurrentRules();
+
+    expect($conflict->customer->fresh()->needs_review)->toBeFalse();
+});
+
+it('keeps needs_review true when another pending conflict remains for the same customer', function () {
+    $customer = Customer::factory()->create(['last_name' => 'رضایی', 'needs_review' => true]);
+    $closable = IdentityConflict::create([
+        'customer_id' => $customer->id, 'existing_name' => 'ایکس رضایی', 'incoming_name' => 'علی رضایی',
+        'woo_order_id' => 9001, 'reason' => 'last_name_mismatch', 'status' => 'pending',
+    ]);
+    IdentityConflict::create([
+        'customer_id' => $customer->id, 'existing_name' => 'ایکس رضایی', 'incoming_name' => 'علی کریمی',
+        'woo_order_id' => 9002, 'reason' => 'last_name_mismatch', 'status' => 'pending',
+    ]);
+
+    app(IdentityConflictReresolveService::class)->reresolvePendingByCurrentRules();
+
+    expect($closable->fresh()->status->value)->toBe('confirmed_same')
+        ->and($customer->fresh()->needs_review)->toBeTrue();
+});
+
 it('leaves a genuinely different last name pending — never loosens the match', function () {
     $conflict = seedPendingMismatch('رضایی', 'علی کریمی');
 

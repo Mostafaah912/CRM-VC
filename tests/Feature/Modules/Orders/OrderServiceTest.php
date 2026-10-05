@@ -59,6 +59,8 @@ function orderInput(array $overrides = []): OrderInput
     return new OrderInput(...array_merge([
         'wooOrderId' => 5001, 'number' => '5001', 'status' => 'completed', 'wooCustomerId' => 11,
         'billingFirstName' => 'مشتری', 'billingLastName' => 'نمونه', 'billingPhone' => '09000000101',
+        'billingProvince' => null, 'billingCity' => null, 'billingAddress' => null, 'billingPostcode' => null,
+        'shippingProvince' => null, 'shippingCity' => null, 'shippingAddress' => null, 'shippingPostcode' => null,
         'total' => 403880, 'discountTotal' => 0, 'shippingTotal' => 0, 'taxTotal' => 0,
         'couponCodes' => ['synth10'], 'paymentMethod' => 'synthetic_gateway',
         'orderedAt' => $at('2026-05-10 08:30:00'), 'paidAt' => $at('2026-05-10 08:35:00'),
@@ -565,3 +567,38 @@ it('tries the steps strictly in order and stops at the first hit', function (arr
     'variation id only, unknown: just step 1' => [['wooVariationId' => 999999, 'wooProductId' => null, 'sku' => null], [1]],
     'no ids, no SKU: no lookup at all' => [['wooVariationId' => null, 'wooProductId' => null, 'sku' => null], []],
 ]);
+
+// ============================================================= P6-14 phase 4: address end-to-end
+
+it('upserts both billing and shipping customer_addresses rows when the order carries them', function () {
+    orders()->upsert(orderInput([
+        'billingProvince' => 'تهران', 'billingCity' => 'تهران', 'billingAddress' => 'خیابان آزادی', 'billingPostcode' => '1111111111',
+        'shippingProvince' => 'اصفهان', 'shippingCity' => 'اصفهان', 'shippingAddress' => 'میدان نقش جهان', 'shippingPostcode' => '2222222222',
+    ]));
+
+    $customerId = Order::sole()->customer_id;
+    $rows = DB::table('customer_addresses')->where('customer_id', $customerId)->get()->keyBy('type');
+
+    expect($rows)->toHaveCount(2)
+        ->and($rows['billing']->city)->toBe('تهران')
+        ->and($rows['shipping']->city)->toBe('اصفهان');
+});
+
+it('sets the customer\'s province/city and first_seen_at from the order\'s billing address', function () {
+    orders()->upsert(orderInput([
+        'billingProvince' => 'تهران', 'billingCity' => 'تهران', 'orderedAt' => CarbonImmutable::parse('2026-01-05', 'UTC'),
+    ]));
+
+    $customer = Customer::sole();
+    expect($customer->province)->toBe('تهران')
+        ->and($customer->city)->toBe('تهران')
+        ->and($customer->first_seen_at?->equalTo(CarbonImmutable::parse('2026-01-05', 'UTC')))->toBeTrue();
+});
+
+it('writes no customer_addresses row for an order with no resolvable customer', function () {
+    orders()->upsert(orderInput([
+        'billingPhone' => null, 'billingProvince' => 'تهران', 'billingCity' => 'تهران',
+    ]));
+
+    expect(DB::table('customer_addresses')->count())->toBe(0);
+});

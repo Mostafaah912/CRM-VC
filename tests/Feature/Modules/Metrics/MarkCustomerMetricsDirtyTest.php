@@ -76,6 +76,8 @@ it('marks a real customer dirty and queues a dirty job when OrderService actuall
     $orderId = app(OrderService::class)->upsert(new OrderInput(
         wooOrderId: 5001, number: '5001', status: 'completed', wooCustomerId: 11,
         billingFirstName: 'مشتری', billingLastName: 'نمونه', billingPhone: '09000000101',
+        billingProvince: null, billingCity: null, billingAddress: null, billingPostcode: null,
+        shippingProvince: null, shippingCity: null, shippingAddress: null, shippingPostcode: null,
         total: 100_000, discountTotal: 0, shippingTotal: 0, taxTotal: 0,
         couponCodes: [], paymentMethod: 'synthetic_gateway',
         orderedAt: $at('2026-05-10 08:30:00'), paidAt: $at('2026-05-10 08:35:00'),

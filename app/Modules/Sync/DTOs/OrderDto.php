@@ -14,6 +14,12 @@ use Carbon\CarbonImmutable;
  * in `currency` (the caller must check it is the store's unit). Timestamps are UTC. `refundsCount` is the length of the
  * payload's `refunds` list — null when Woo did not send one (unknown, not zero); it only tells the sync which orders'
  * refunds are worth re-reading, and no refund figure is ever taken from it.
+ *
+ * `billingProvince`/`billingCity` (P6-14 phase 4) are Woo's `billing.state`/`billing.city` untouched — on this
+ * store these are already free-text Persian province/city names, not a coded value (verified against a live
+ * sample: 31 of 32 distinct `state` values in 1500 real orders are real Iranian province names; the one
+ * exception is kept as-is, never guessed into something else). Letter-shape normalization happens at the
+ * mapper, not here.
  */
 final readonly class OrderDto
 {
@@ -30,6 +36,14 @@ final readonly class OrderDto
         public string $billingFirstName,
         public string $billingLastName,
         public ?string $billingPhone,
+        public ?string $billingProvince,
+        public ?string $billingCity,
+        public ?string $billingAddress,
+        public ?string $billingPostcode,
+        public ?string $shippingProvince,
+        public ?string $shippingCity,
+        public ?string $shippingAddress,
+        public ?string $shippingPostcode,
         public int $total,
         public int $discountTotal,
         public int $shippingTotal,

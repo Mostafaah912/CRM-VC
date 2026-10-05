@@ -49,7 +49,7 @@ final class IdentityConflictReresolveService
 
         foreach ($pending as $conflict) {
             if ($this->nowMatches($lastNames[$conflict->customer_id] ?? null, $conflict->incoming_name)) {
-                $this->closeAsSame($conflict->id);
+                $this->closeAsSame($conflict->id, (int) $conflict->customer_id);
                 $closed++;
             }
         }
@@ -70,11 +70,30 @@ final class IdentityConflictReresolveService
     }
 
     /** One pending row, closed only if it is still pending (no race with a human reviewer resolving it meanwhile). */
-    private function closeAsSame(int $conflictId): void
+    private function closeAsSame(int $conflictId, int $customerId): void
     {
-        DB::table('identity_conflicts')
+        $updated = DB::table('identity_conflicts')
             ->where('id', $conflictId)
             ->where('status', IdentityConflictStatus::Pending->value)
             ->update(['status' => IdentityConflictStatus::ConfirmedSame->value, 'resolved_at' => now()]);
+
+        if ($updated === 0) {
+            return;
+        }
+
+        $this->clearNeedsReviewIfNoneLeft($customerId);
+    }
+
+    /** needs_review only comes back false once this customer has no pending conflict left at all (P6-14 phase 4). */
+    private function clearNeedsReviewIfNoneLeft(int $customerId): void
+    {
+        $stillPending = IdentityConflict::query()
+            ->where('customer_id', $customerId)
+            ->where('status', IdentityConflictStatus::Pending)
+            ->exists();
+
+        if (! $stillPending) {
+            Customer::query()->where('id', $customerId)->update(['needs_review' => false]);
+        }
     }
 }

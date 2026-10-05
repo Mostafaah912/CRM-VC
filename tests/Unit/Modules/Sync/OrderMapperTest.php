@@ -253,6 +253,74 @@ it('reads how many refunds Woo says the order has: the length of the payload\'s 
     expect(mapOrder($payload)->refundsCount)->toBe(2);
 });
 
+// ------------------------------------------------------- P6-14 phase 4: billing/shipping address
+
+it('reads billing province/city/address/postcode, with the address_1+address_2 lines joined', function () {
+    $payload = orderFixture(0);
+    $payload['billing']['state'] = 'تهران';
+    $payload['billing']['city'] = 'تهران';
+    $payload['billing']['address_1'] = 'خیابان آزادی';
+    $payload['billing']['address_2'] = 'پلاک ۱۲';
+    $payload['billing']['postcode'] = '1234567890';
+
+    $order = mapOrder($payload);
+
+    expect($order->billingProvince)->toBe('تهران')
+        ->and($order->billingCity)->toBe('تهران')
+        ->and($order->billingAddress)->toBe('خیابان آزادی پلاک ۱۲')
+        ->and($order->billingPostcode)->toBe('1234567890');
+});
+
+it('fixes Arabic letter shapes (ي/ك) in province/city, which PersonNameNormalizer already treats as typography elsewhere', function () {
+    $payload = orderFixture(0);
+    $payload['billing']['state'] = "\u{0643}رمان"; // Arabic kaf
+    $payload['billing']['city'] = "\u{064A}زد"; // Arabic yeh
+
+    $order = mapOrder($payload);
+
+    expect($order->billingProvince)->toBe("\u{06A9}رمان")
+        ->and($order->billingCity)->toBe("\u{06CC}زد");
+});
+
+it('reads shipping province/city/address/postcode independently of billing', function () {
+    $payload = orderFixture(0);
+    $payload['shipping'] = [
+        'state' => 'اصفهان', 'city' => 'اصفهان', 'address_1' => 'میدان نقش جهان', 'address_2' => '', 'postcode' => '9876543210',
+    ];
+
+    $order = mapOrder($payload);
+
+    expect($order->shippingProvince)->toBe('اصفهان')
+        ->and($order->shippingCity)->toBe('اصفهان')
+        ->and($order->shippingAddress)->toBe('میدان نقش جهان')
+        ->and($order->shippingPostcode)->toBe('9876543210');
+});
+
+it('treats a missing shipping object as all-null, not an error (the recorded fixtures have none)', function () {
+    $order = mapOrder(orderFixture(0));
+
+    expect($order->shippingProvince)->toBeNull()
+        ->and($order->shippingCity)->toBeNull()
+        ->and($order->shippingAddress)->toBeNull()
+        ->and($order->shippingPostcode)->toBeNull();
+});
+
+it('treats a missing billing address (state/city/address/postcode) as null, not an error — the fixtures have none', function () {
+    $order = mapOrder(orderFixture(0));
+
+    expect($order->billingProvince)->toBeNull()
+        ->and($order->billingCity)->toBeNull()
+        ->and($order->billingAddress)->toBeNull()
+        ->and($order->billingPostcode)->toBeNull();
+});
+
+it('keeps an unrecognized state value exactly as Woo sent it — no mapping table, never guessed', function () {
+    $payload = orderFixture(0);
+    $payload['billing']['state'] = '2007'; // a real anomaly seen live — kept raw, not invented into a province name
+
+    expect(mapOrder($payload)->billingProvince)->toBe('2007');
+});
+
 it('maps the recorded orders, which list no refunds, to 0', function () {
     expect(mapOrder(orderFixture(0))->refundsCount)->toBe(0)
         ->and(mapOrder(orderFixture(1))->refundsCount)->toBe(0);

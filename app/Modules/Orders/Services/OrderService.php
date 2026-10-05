@@ -6,6 +6,7 @@ namespace App\Modules\Orders\Services;
 
 use App\Modules\Catalog\Services\CatalogService;
 use App\Modules\Catalog\Services\ResolvedCatalogItem;
+use App\Modules\Customers\Services\CustomerAddressService;
 use App\Modules\Customers\Services\CustomerIdentityService;
 use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Orders\Models\Order;
@@ -48,6 +49,7 @@ final class OrderService
     public function __construct(
         private readonly OrderStatusMapper $statuses,
         private readonly CustomerIdentityService $identities,
+        private readonly CustomerAddressService $addresses,
         private readonly CatalogService $catalog,
     ) {}
 
@@ -79,6 +81,11 @@ final class OrderService
     {
         return DB::transaction(function () use ($input): int {
             $customerId = $this->customerId($input);
+
+            if ($customerId !== null) {
+                $this->addresses->upsert($customerId, 'billing', $input->billingProvince, $input->billingCity, $input->billingAddress, $input->billingPostcode);
+                $this->addresses->upsert($customerId, 'shipping', $input->shippingProvince, $input->shippingCity, $input->shippingAddress, $input->shippingPostcode);
+            }
 
             $order = Order::withTrashed()->where('woo_order_id', $input->wooOrderId)->lockForUpdate()->first()
                 ?? new Order(['woo_order_id' => $input->wooOrderId]);
@@ -121,6 +128,9 @@ final class OrderService
                 $input->billingLastName,
                 $input->wooCustomerId,
                 $input->wooOrderId,
+                $input->billingProvince,
+                $input->billingCity,
+                $input->orderedAt,
             )->id;
         } catch (InvalidPhoneException) {
             // Nothing was written (the phone is normalized first). The exception is not chained or logged: its text holds the number.

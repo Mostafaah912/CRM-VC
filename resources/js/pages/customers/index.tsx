@@ -1,4 +1,4 @@
-import { Head, router, usePage } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
@@ -30,6 +30,7 @@ import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
 import { statusInfo } from '@/lib/system-status';
 import { dashboard } from '@/routes';
 import { index as customersIndex } from '@/routes/customers';
+import { identityConflicts } from '@/routes/system';
 import type {
     CustomerFilters,
     CustomerOptions,
@@ -138,6 +139,7 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
     const [state, setState] = useState<FormState>(initialState(filters));
     const can = useCan();
     const canRevealPhone = can('customers', 'view_full_phone');
+    const canReviewIdentity = can('identity', 'review');
     const { errors } = usePage<{ errors: Record<string, string> }>().props;
     const messages = Object.values(errors ?? {});
 
@@ -367,17 +369,32 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                                         )}
                                     </TableCell>
                                     <TableCell>
-                                        {customer.needs_review && (
-                                            <StatusBadge
-                                                status="needs_review"
-                                                labels={{
-                                                    needs_review: {
-                                                        label: 'نیازمند بازبینی',
-                                                        tone: 'warning',
-                                                    },
-                                                }}
-                                            />
-                                        )}
+                                        {customer.needs_review &&
+                                            (canReviewIdentity ? (
+                                                <Link
+                                                    href={identityConflicts()}
+                                                >
+                                                    <StatusBadge
+                                                        status="needs_review"
+                                                        labels={{
+                                                            needs_review: {
+                                                                label: 'نیازمند بازبینی',
+                                                                tone: 'warning',
+                                                            },
+                                                        }}
+                                                    />
+                                                </Link>
+                                            ) : (
+                                                <StatusBadge
+                                                    status="needs_review"
+                                                    labels={{
+                                                        needs_review: {
+                                                            label: 'نیازمند بازبینی',
+                                                            tone: 'warning',
+                                                        },
+                                                    }}
+                                                />
+                                            ))}
                                     </TableCell>
                                 </TableRow>
                             ))}
