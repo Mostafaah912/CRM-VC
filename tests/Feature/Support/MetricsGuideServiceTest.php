@@ -67,6 +67,108 @@ it('renders all 12 real system segments as a non-empty Persian sentence with the
     }
 });
 
+// ========================================================================== P6-20: monetary window
+
+it('reports monetary_mode and window_days from config, not hardcoded', function () {
+    config(['metrics.monetary.mode' => 'recent_window', 'metrics.monetary.window_days' => 45]);
+
+    $rfm = app(MetricsGuideService::class)->guide()['rfm'];
+
+    expect($rfm['monetary_mode'])->toBe('recent_window')
+        ->and($rfm['monetary_window_days'])->toBe(45);
+});
+
+it('reports monetary_mode lifetime with a null window_days and as-of date when mode is lifetime', function () {
+    config(['metrics.monetary.mode' => 'lifetime']);
+
+    $rfm = app(MetricsGuideService::class)->guide()['rfm'];
+
+    expect($rfm['monetary_mode'])->toBe('lifetime')
+        ->and($rfm['monetary_window_days'])->toBeNull()
+        ->and($rfm['monetary_window_as_of'])->toBeNull()
+        ->and($rfm['monetary_cutpoints_available'])->toBeFalse();
+});
+
+it('builds M bands from the stored cut-points in recent_window mode, never a live re-computation', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+    guideCustomer(['m_score' => 1]);
+    guideCustomer(['m_score' => 2]);
+    guideCustomer(['m_score' => 2]);
+    DB::table('metric_runs')->insert([
+        'mode' => 'full', 'status' => 'completed', 'definition_version' => 'v1', 'customers_processed' => 0,
+        'thresholds' => json_encode([
+            'p50' => 60, 'p75' => 120, 'p90' => 210, 'sample_size' => 0,
+            'monetary_cutpoints' => ['window_days' => 60, 'sample_size' => 10, 'c1' => 1_000_000, 'c2' => 5_000_000, 'c3' => 20_000_000, 'c4' => 80_000_000],
+        ]),
+        'started_at' => now(), 'finished_at' => now(),
+    ]);
+
+    $rfm = app(MetricsGuideService::class)->guide()['rfm'];
+
+    expect($rfm['monetary_cutpoints_available'])->toBeTrue()
+        ->and($rfm['m_scores'])->toBe([
+            ['score' => 1, 'min' => 0, 'max' => 1_000_000, 'customers' => 1],
+            ['score' => 2, 'min' => 1_000_000, 'max' => 5_000_000, 'customers' => 2],
+            ['score' => 3, 'min' => 5_000_000, 'max' => 20_000_000, 'customers' => 0],
+            ['score' => 4, 'min' => 20_000_000, 'max' => 80_000_000, 'customers' => 0],
+            ['score' => 5, 'min' => 80_000_000, 'max' => null, 'customers' => 0],
+        ]);
+});
+
+it('gives no M bands when recent_window mode has no stored cut-points yet (never computed)', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+
+    $rfm = app(MetricsGuideService::class)->guide()['rfm'];
+
+    expect($rfm['monetary_cutpoints_available'])->toBeFalse()
+        ->and($rfm['m_scores'])->toBe([]);
+});
+
+it('gives no M bands when the stored cut-points are the degenerate no-spread case (c1 null)', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+    DB::table('metric_runs')->insert([
+        'mode' => 'full', 'status' => 'completed', 'definition_version' => 'v1', 'customers_processed' => 0,
+        'thresholds' => json_encode([
+            'p50' => 60, 'p75' => 120, 'p90' => 210, 'sample_size' => 0,
+            'monetary_cutpoints' => ['window_days' => 60, 'sample_size' => 1, 'c1' => null, 'c2' => null, 'c3' => null, 'c4' => null],
+        ]),
+        'started_at' => now(), 'finished_at' => now(),
+    ]);
+
+    $rfm = app(MetricsGuideService::class)->guide()['rfm'];
+
+    expect($rfm['monetary_cutpoints_available'])->toBeFalse()
+        ->and($rfm['m_scores'])->toBe([]);
+});
+
+it('keeps m_scores as live observed min/max ranges in lifetime mode, unaffected by stored monetary_cutpoints', function () {
+    config(['metrics.monetary.mode' => 'lifetime']);
+    guideCustomer(['m_score' => 5, 'monetary' => 900]);
+    DB::table('metric_runs')->insert([
+        'mode' => 'full', 'status' => 'completed', 'definition_version' => 'v1', 'customers_processed' => 0,
+        'thresholds' => json_encode([
+            'p50' => 60, 'p75' => 120, 'p90' => 210, 'sample_size' => 0,
+            'monetary_cutpoints' => ['window_days' => 60, 'sample_size' => 10, 'c1' => 1, 'c2' => 2, 'c3' => 3, 'c4' => 4],
+        ]),
+        'started_at' => now(), 'finished_at' => now(),
+    ]);
+
+    $mScores = app(MetricsGuideService::class)->guide()['rfm']['m_scores'];
+
+    expect($mScores[4])->toBe(['score' => 5, 'min' => 900, 'max' => 900, 'customers' => 1]);
+});
+
+it('computes f_score_1_share dynamically from the live F distribution, never a hardcoded ~92%', function () {
+    guideCustomer(['f_score' => 1]);
+    guideCustomer(['f_score' => 1]);
+    guideCustomer(['f_score' => 1]);
+    guideCustomer(['f_score' => 5]);
+
+    $share = app(MetricsGuideService::class)->guide()['rfm']['f_score_1_share'];
+
+    expect($share)->toBe(0.75);
+});
+
 // ========================================================================== CLV
 
 it('reads margin_rate/horizon_years from config, not a hardcoded number — proven by changing config and re-reading', function () {

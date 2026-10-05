@@ -50,9 +50,15 @@ const SCORE_DIMENSIONS: {
  * "X تا Y", in the same `<bdi dir="ltr">` isolation `date-range.tsx` already established: the ambient
  * RTL table cell reorders a plain `"484 تا 748"` string visually once it is wrapped as a single
  * LTR-dir block (the "تا" run gets pushed to the wrong end). Isolating only the numbers, inside RTL
- * flow, keeps the Persian word in its natural reading position either way.
+ * flow, keeps the Persian word in its natural reading position either way. Only ever used for an
+ * OBSERVED range (R, F, and M in 'lifetime' mode) — `max` is never null there, unlike M's
+ * cut-point bands in 'recent_window' mode (see MonetaryBandText below).
  */
-function RangeText({ score }: { score: RfmScoreRange }) {
+function RangeText({
+    score,
+}: {
+    score: { min: number; max: number; customers: number };
+}) {
     if (score.customers === 0) return <>{EMPTY}</>;
     if (score.min === score.max) {
         return <bdi dir="ltr">{formatNumber(score.min)}</bdi>;
@@ -62,6 +68,37 @@ function RangeText({ score }: { score: RfmScoreRange }) {
         <span dir="rtl">
             <bdi dir="ltr">{formatNumber(score.min)}</bdi> تا{' '}
             <bdi dir="ltr">{formatNumber(score.max)}</bdi>
+        </span>
+    );
+}
+
+/**
+ * M's cut-point BAND in 'recent_window' mode — a defined threshold, not an observed min/max, and the
+ * two end bands are deliberately open: band 1 is "تا X" (no real floor below 0), band 5 is "بیشتر از
+ * X" (no ceiling). `min === 0` never happens for a real observed value here (customer_metrics.monetary_recent
+ * is never exactly 0 for a counted purchase), so it unambiguously means "the open lower band".
+ */
+function MonetaryBandText({ band }: { band: RfmScoreRange }) {
+    if (band.min === 0 && band.max !== null) {
+        return (
+            <span dir="rtl">
+                تا <bdi dir="ltr">{formatToman(band.max)}</bdi>
+            </span>
+        );
+    }
+
+    if (band.max === null) {
+        return (
+            <span dir="rtl">
+                بیشتر از <bdi dir="ltr">{formatToman(band.min)}</bdi>
+            </span>
+        );
+    }
+
+    return (
+        <span dir="rtl">
+            از <bdi dir="ltr">{formatToman(band.min)}</bdi> تا{' '}
+            <bdi dir="ltr">{formatToman(band.max)}</bdi>
         </span>
     );
 }
@@ -101,12 +138,37 @@ export default function MetricsGuidePage({ data }: Props) {
                     <CardHeader>
                         <CardTitle>RFM — تازگی، تکرار، ارزش</CardTitle>
                         <CardDescription>
-                            هر مشتری واجد شرط در هر بُعد امتیاز 1 تا 5 می‌گیرد
-                            (NTILE)؛ سپس ترکیب سه امتیاز، سگمنت مشتری را تعیین
+                            هر مشتری در هر یک از سه بُعد امتیازی از 1 تا 5
+                            می‌گیرد؛ ترکیب این سه امتیاز، سگمنت مشتری را تعیین
                             می‌کند.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-6">
+                        {rfm.monetary_mode === 'recent_window' && (
+                            <div className="flex flex-wrap gap-4 rounded-lg border p-3 text-sm">
+                                <span className="text-muted-foreground">
+                                    محاسبه‌ی ارزش (M) تا تاریخ{' '}
+                                    <bdi dir="ltr">
+                                        {rfm.monetary_window_as_of ?? EMPTY}
+                                    </bdi>
+                                </span>
+                                <span className="text-muted-foreground">
+                                    آخرین بازمحاسبه:{' '}
+                                    <bdi dir="ltr">
+                                        {dataQuality.last_metrics_run_at ??
+                                            EMPTY}
+                                    </bdi>
+                                </span>
+                                <span className="text-muted-foreground">
+                                    پنجره:{' '}
+                                    {formatNumber(
+                                        rfm.monetary_window_days ?? 0,
+                                    )}{' '}
+                                    روز اخیر
+                                </span>
+                            </div>
+                        )}
+
                         <div>
                             <h3 className="mb-2 text-sm font-medium">
                                 بازه‌ی واقعی هر امتیاز
@@ -128,7 +190,12 @@ export default function MetricsGuidePage({ data }: Props) {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {SCORE_DIMENSIONS.map(({ key, label }) => (
+                                    {SCORE_DIMENSIONS.filter(
+                                        ({ key }) =>
+                                            key !== 'm_scores' ||
+                                            rfm.monetary_mode !==
+                                                'recent_window',
+                                    ).map(({ key, label }) => (
                                         <TableRow key={key}>
                                             <TableCell className="font-medium">
                                                 {label}
@@ -140,7 +207,12 @@ export default function MetricsGuidePage({ data }: Props) {
                                                 >
                                                     <div>
                                                         <RangeText
-                                                            score={score}
+                                                            score={{
+                                                                ...score,
+                                                                max:
+                                                                    score.max ??
+                                                                    score.min,
+                                                            }}
                                                         />
                                                     </div>
                                                     <div className="text-muted-foreground text-xs">
@@ -155,13 +227,92 @@ export default function MetricsGuidePage({ data }: Props) {
                                     ))}
                                 </TableBody>
                             </Table>
+                            {rfm.f_score_1_share !== null && (
+                                <p className="text-muted-foreground mt-2 text-xs">
+                                    حدود {formatPercent(rfm.f_score_1_share)}{' '}
+                                    مشتریان دقیقاً یک سفارش ثبت کرده‌اند و امتیاز
+                                    تکرار (F) آن‌ها 1 است — طبیعی است و نشانه‌ی
+                                    خرابی نیست.
+                                </p>
+                            )}
                         </div>
+
+                        {rfm.monetary_mode === 'recent_window' && (
+                            <div>
+                                <h3 className="mb-2 text-sm font-medium">
+                                    بازه‌های ارزش (M) —{' '}
+                                    {formatNumber(
+                                        rfm.monetary_window_days ?? 0,
+                                    )}{' '}
+                                    روز اخیر
+                                </h3>
+                                {rfm.monetary_cutpoints_available ? (
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow>
+                                                <TableHead className="text-center">
+                                                    امتیاز
+                                                </TableHead>
+                                                <TableHead>بازه</TableHead>
+                                                <TableHead className="text-center">
+                                                    تعداد مشتری
+                                                </TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {rfm.m_scores.map((band) => (
+                                                <TableRow key={band.score}>
+                                                    <TableCell className="text-center">
+                                                        {band.score}
+                                                    </TableCell>
+                                                    <TableCell dir="ltr">
+                                                        <MonetaryBandText
+                                                            band={band}
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell className="text-center">
+                                                        {formatNumber(
+                                                            band.customers,
+                                                        )}
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                ) : (
+                                    <p className="text-muted-foreground text-sm">
+                                        هنوز هیچ بازمحاسبه‌ای با این پنجره انجام
+                                        نشده — بعد از اولین اجرا، بازه‌ها اینجا
+                                        نمایش داده می‌شوند.
+                                    </p>
+                                )}
+                                <div className="text-muted-foreground mt-3 flex flex-col gap-1 text-xs">
+                                    <p>
+                                        چرا فقط{' '}
+                                        {formatNumber(
+                                            rfm.monetary_window_days ?? 0,
+                                        )}{' '}
+                                        روز اخیر؟ ارزش تومانی سفارش‌های قدیمی‌تر
+                                        به‌خاطر تورم چند سال اخیر، با ارزش امروز
+                                        قابل‌مقایسه نیست؛ مقایسه‌ی مستقیم آن‌ها
+                                        امتیاز را گمراه‌کننده می‌کرد.
+                                    </p>
+                                    <p>
+                                        چرا بازه‌ها هم‌عرض نیستند؟ بازه‌ها از روی
+                                        پراکندگی واقعی خریدهای همین دوره ساخته
+                                        می‌شوند، نه با تقسیم مساوی؛ همین باعث
+                                        می‌شود چند خریدار بزرگ، بازه‌ی بقیه را
+                                        به‌هم نریزند.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
 
                         <div>
                             <h3 className="mb-2 text-sm font-medium">
                                 8 سگمنت RFM — از{' '}
-                                {formatNumber(rfm.eligible_total)} مشتری واجد
-                                شرط
+                                {formatNumber(rfm.eligible_total)} مشتری دارای
+                                امتیاز RFM
                             </h3>
                             <Table>
                                 <TableHeader>
@@ -517,7 +668,7 @@ export default function MetricsGuidePage({ data }: Props) {
                                         cohort.retention.repeat_purchase_rate
                                             .eligible_customers,
                                     )}{' '}
-                                    مشتری واجد شرط
+                                    مشتری
                                 </span>
                                 <span className="text-lg font-medium">
                                     {formatRate(

@@ -8,6 +8,7 @@ use App\Modules\Metrics\Enums\MetricRunStatus;
 use App\Modules\Metrics\Services\BaseAggregateService;
 use App\Modules\Metrics\Services\MetricRunService;
 use App\Modules\Orders\Models\Order;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -169,6 +170,86 @@ it('recomputes only customers.metrics_dirty = true customers when run dirty-only
 
     expect(metricsRowFor($dirty)->total_orders)->toBe(1)
         ->and(metricsRowFor($clean)->total_orders)->toBe(999);
+});
+
+// ================================================================== P6-20: monetary_recent (TEST FIRST)
+
+it('sums only realized orders within the window into monetary_recent, excluding an older one', function () {
+    config(['metrics.monetary.window_days' => 60]);
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 300_000, 'ordered_at' => $asOf->subDays(10)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 200_000, 'ordered_at' => $asOf->subDays(200)]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    $row = metricsRowFor($customer);
+    expect($row->monetary)->toBe(500_000)
+        ->and($row->monetary_recent)->toBe(300_000);
+});
+
+it('leaves monetary_recent null for a customer whose only orders are all outside the window', function () {
+    config(['metrics.monetary.window_days' => 60]);
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 900_000, 'ordered_at' => $asOf->subDays(200)]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    $row = metricsRowFor($customer);
+    expect($row->monetary)->toBe(900_000)
+        ->and($row->monetary_recent)->toBeNull();
+});
+
+it('excludes shipping from monetary_recent by default, same as monetary (PRD D2)', function () {
+    config(['metrics.include_shipping' => false, 'metrics.monetary.window_days' => 60]);
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'total' => 500_000, 'shipping_total' => 50_000, 'ordered_at' => $asOf->subDay(),
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(450_000);
+});
+
+it('includes an order exactly at the Tehran-day window boundary and excludes one from the moment before (the day before)', function () {
+    config(['metrics.monetary.window_days' => 60]);
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    // The real boundary this test proves the implementation actually uses: Tehran midnight, 60 Tehran-calendar-days
+    // before asOf's own Tehran calendar day — not a naive UTC subDays(60), and not a raw 60*86400-second subtraction.
+    $windowStart = $asOf->setTimezone('Asia/Tehran')->subDays(60)->startOfDay();
+
+    // Eloquent's datetime cast formats a Carbon attribute in whatever timezone it is currently set to,
+    // without first converting it to UTC — handing it a Asia/Tehran-zoned instant directly would silently
+    // drop the +03:30 offset and store the wrong absolute instant. ->utc() first avoids that pitfall;
+    // BaseAggregateService itself never hits it, since it binds its own `?::timestamptz` with an explicit
+    // offset in the formatted string, never through an Eloquent attribute.
+    $included = Customer::factory()->create();
+    Order::factory()->for($included)->create(['is_realized' => true, 'total' => 111_000, 'ordered_at' => $windowStart->utc()]);
+
+    $excluded = Customer::factory()->create();
+    Order::factory()->for($excluded)->create(['is_realized' => true, 'total' => 222_000, 'ordered_at' => $windowStart->subSecond()->utc()]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($included)->monetary_recent)->toBe(111_000)
+        ->and(metricsRowFor($excluded)->monetary_recent)->toBeNull();
+});
+
+it('gives the same monetary_recent on a repeated full recompute (idempotent)', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 650_000, 'ordered_at' => $asOf->subDays(5)]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+    $first = metricsRowFor($customer)->monetary_recent;
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+    $second = metricsRowFor($customer)->monetary_recent;
+
+    expect($second)->toBe($first)->toBe(650_000);
 });
 
 it('returns the number of customers processed', function () {

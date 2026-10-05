@@ -74,6 +74,18 @@ final class MetricsRecomputeService
 
                 $this->purchaseCycle->compute($thresholds);
                 $this->rfm->compute();
+
+                // P6-20: the monetary cut-points this run actually scored M with (null in 'lifetime'
+                // mode) — merged into the SAME thresholds JSON churn already saved above, via the
+                // $thresholds variable already in scope (never a second read-then-write against the
+                // run), as a sibling key rather than through ChurnThresholdService::saveToRun() (whose
+                // own @param shape is specifically churn's p50/p75/p90/sample_size, not this). Read
+                // back by MetricsGuideService, never a second recomputation of its own.
+                $monetaryCutpoints = $this->rfm->monetaryCutpoints();
+                if ($monetaryCutpoints !== null) {
+                    $run->update(['thresholds' => [...$thresholds, 'monetary_cutpoints' => $monetaryCutpoints]]);
+                }
+
                 $this->clv->compute();
                 $this->churn->compute($thresholds);
                 $this->lifecycle->resolve($thresholds);

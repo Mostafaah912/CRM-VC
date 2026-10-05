@@ -47,6 +47,7 @@ it('has customer_metrics exactly as the PRD defines it', function () {
         'recency_days' => ['int', true, null],
         'frequency' => ['int', false, '0'],
         'monetary' => ['bigint', false, '0'],
+        'monetary_recent' => ['bigint', true, null],
         'r_score' => ['smallint', true, null],
         'f_score' => ['smallint', true, null],
         'm_score' => ['smallint', true, null],

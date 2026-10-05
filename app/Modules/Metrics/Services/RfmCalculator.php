@@ -24,17 +24,65 @@ use Illuminate\Support\Facades\DB;
  * Segment mapping is a fixed CASE, most specific first (PRD §12): `cant_lose` (r=1, high f, high m —
  * a churned big spender) is checked before the general `lost` (any r=1) so a customer worth winning
  * back is never silently grouped in with everyone else who stopped buying.
+ *
+ * P6-20, product-owner decision (ARCHITECTURE.md): `config('metrics.monetary.mode')` — 'lifetime'
+ * (the default, PRD §12 as written above, untouched) or 'recent_window'. R and F are NEVER affected
+ * by this; `scoreEligible()` below still always runs first and still always computes an NTILE
+ * `m_score` from lifetime `monetary` exactly as before — in `recent_window` mode, `overrideMonetaryScore()`
+ * then replaces ONLY `m_score` (and rebuilds `rfm_score`) using `monetary_recent` and a set of cut-points
+ * computed from that window's own distribution, never NTILE's equal-COUNT buckets: `log(amount)`,
+ * then a robust z-score (`(log(amount) - median_log) / (1.4826 * MAD_log)`, the standard MAD-to-stddev
+ * consistency constant under normality) cut at z = -0.84/-0.25/+0.25/+0.84 — the same four points that
+ * split a normal distribution into quintiles, so the result reads like a familiar 1..5 RFM score, but
+ * from the window's actual shape rather than from rank, and unmoved by one extreme outlier (median/MAD
+ * are robust statistics; min/max or mean/stddev are not). A customer with no realized purchase in the
+ * window gets `m_score = 1` directly, never run through the cut-points — same bucket as the lowest
+ * real purchasers in that window, by design (PRD deviation, documented in ARCHITECTURE.md "P6-20").
  */
 final class RfmCalculator
 {
+    private const MONETARY_Z_CUTS = [-0.84, -0.25, 0.25, 0.84];
+
+    private const MAD_TO_STDDEV = 1.4826;
+
+    /** @var array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}|null */
+    private ?array $lastMonetaryCutpoints = null;
+
     public function compute(): int
     {
         $scored = $this->scoreEligible();
+
+        $this->lastMonetaryCutpoints = null;
+        if ($this->monetaryMode() === 'recent_window') {
+            $cutpoints = $this->computeMonetaryCutpoints();
+            $this->overrideMonetaryScore($cutpoints);
+            $this->rebuildRfmScoreString();
+            $this->lastMonetaryCutpoints = $cutpoints;
+        }
+
         $this->nullifyIneligible();
         $this->applyFrequencyCorrection();
         $this->mapSegments();
 
         return $scored;
+    }
+
+    /**
+     * The cut-points this run actually scored M with, or null in 'lifetime' mode — the one place
+     * `MetricsRecomputeService` reads them to persist into `metric_runs.thresholds` (mirroring
+     * `ChurnThresholdService::saveToRun()`), so `MetricsGuideService` reads the SAME values that were
+     * actually used, never a second, possibly-drifted recomputation.
+     *
+     * @return array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}|null
+     */
+    public function monetaryCutpoints(): ?array
+    {
+        return $this->lastMonetaryCutpoints;
+    }
+
+    private function monetaryMode(): string
+    {
+        return (string) config('metrics.monetary.mode', 'lifetime');
     }
 
     private function scoreEligible(): int
@@ -63,6 +111,130 @@ final class RfmCalculator
                 rfm_score = s.r_score::text || s.f_score::text || s.m_score::text
             FROM scored s
             WHERE s.customer_id = cm.customer_id
+            SQL);
+    }
+
+    /**
+     * The window's own log-amount median and MAD, over eligible customers who actually have a
+     * `monetary_recent` purchase (> 0 — a customer with no window purchase has NULL there and never
+     * reaches this query at all). `percentile_cont(0.5)` for both: the median itself, then the median
+     * of absolute deviations from it — two passes in one statement via a CTE, the same shape
+     * `ChurnThresholdService::percentiles()` already uses for its own percentile_cont query. Returns
+     * null when nobody in `eligible` has a window purchase at all (the `purchasers` CTE is empty, so
+     * the final `FROM purchasers, med` cross join yields zero rows) — {@see overrideMonetaryScore()}
+     * then gives every eligible customer m_score 1, which is already correct in that case (100% of
+     * them have "no purchase in the window").
+     *
+     * @return array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}
+     */
+    private function computeMonetaryCutpoints(): array
+    {
+        $windowDays = (int) config('metrics.monetary.window_days', 60);
+
+        $stats = DB::selectOne(<<<'SQL'
+            WITH eligible AS (
+                SELECT cm.customer_id
+                FROM customer_metrics cm
+                JOIN customers c ON c.id = cm.customer_id
+                WHERE cm.total_orders >= 1
+                  AND c.deleted_at IS NULL
+                  AND c.status = 'active'
+            ),
+            purchasers AS (
+                SELECT LN(cm.monetary_recent) AS log_amount
+                FROM customer_metrics cm
+                JOIN eligible e ON e.customer_id = cm.customer_id
+                WHERE cm.monetary_recent IS NOT NULL AND cm.monetary_recent > 0
+            ),
+            med AS (
+                SELECT
+                    percentile_cont(0.5) WITHIN GROUP (ORDER BY log_amount) AS median_log,
+                    COUNT(*)::integer AS sample_size
+                FROM purchasers
+            )
+            SELECT
+                med.median_log,
+                med.sample_size,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY ABS(purchasers.log_amount - med.median_log)) AS mad_log
+            FROM purchasers, med
+            GROUP BY med.median_log, med.sample_size
+            SQL);
+
+        if ($stats === null) {
+            return ['window_days' => $windowDays, 'sample_size' => 0, 'c1' => null, 'c2' => null, 'c3' => null, 'c4' => null];
+        }
+
+        $sampleSize = (int) $stats->sample_size;
+        $madLog = (float) $stats->mad_log;
+
+        // No spread (every window purchaser logged the same amount, or there is only one): the 4
+        // cut-points would all collapse onto the same value. overrideMonetaryScore() special-cases
+        // this (c1 === null) to the one answer that respects "equal values get equal score" — every
+        // purchaser lands in the middle band, 3.
+        if ($madLog <= 0.0) {
+            return ['window_days' => $windowDays, 'sample_size' => $sampleSize, 'c1' => null, 'c2' => null, 'c3' => null, 'c4' => null];
+        }
+
+        $medianLog = (float) $stats->median_log;
+        $cutoffs = array_map(
+            fn (float $z): int => (int) round(exp($medianLog + $z * self::MAD_TO_STDDEV * $madLog)),
+            self::MONETARY_Z_CUTS,
+        );
+
+        return [
+            'window_days' => $windowDays,
+            'sample_size' => $sampleSize,
+            'c1' => $cutoffs[0], 'c2' => $cutoffs[1], 'c3' => $cutoffs[2], 'c4' => $cutoffs[3],
+        ];
+    }
+
+    /**
+     * Replaces ONLY `m_score` (never r_score/f_score) with the cut-point-based band: below c1 (or no
+     * window purchase at all, or amount <= 0) is 1, [c1,c2) is 2, [c2,c3) is 3, [c3,c4) is 4, c4-and-up
+     * is 5 — four half-open bands, no overlap, no gap. `c1 === null` signals the degenerate case from
+     * {@see computeMonetaryCutpoints()} (no spread, or no window purchasers at all): every actual
+     * purchaser gets 3 (the single band left, once there is no distribution to cut), everyone else
+     * (no purchase in the window) still gets 1.
+     *
+     * @param  array{c1: int|null, c2: int|null, c3: int|null, c4: int|null}  $cutpoints
+     */
+    private function overrideMonetaryScore(array $cutpoints): void
+    {
+        if ($cutpoints['c1'] === null) {
+            DB::statement(<<<'SQL'
+                UPDATE customer_metrics cm SET
+                    m_score = CASE WHEN monetary_recent > 0 THEN 3 ELSE 1 END
+                FROM customers c
+                WHERE c.id = cm.customer_id
+                  AND cm.total_orders >= 1 AND c.deleted_at IS NULL AND c.status = 'active'
+                SQL);
+
+            return;
+        }
+
+        DB::statement(<<<'SQL'
+            UPDATE customer_metrics cm SET
+                m_score = CASE
+                    WHEN monetary_recent IS NULL OR monetary_recent <= 0 THEN 1
+                    WHEN monetary_recent < ? THEN 1
+                    WHEN monetary_recent < ? THEN 2
+                    WHEN monetary_recent < ? THEN 3
+                    WHEN monetary_recent < ? THEN 4
+                    ELSE 5
+                END
+            FROM customers c
+            WHERE c.id = cm.customer_id
+              AND cm.total_orders >= 1 AND c.deleted_at IS NULL AND c.status = 'active'
+            SQL, [$cutpoints['c1'], $cutpoints['c2'], $cutpoints['c3'], $cutpoints['c4']]);
+    }
+
+    /** Re-concatenates `rfm_score` from the three CURRENT score columns — used after {@see overrideMonetaryScore()} replaces m_score, so the string reflects it (frequency correction, next, rebuilds it again for frequency <= 4 anyway). */
+    private function rebuildRfmScoreString(): void
+    {
+        DB::statement(<<<'SQL'
+            UPDATE customer_metrics
+            SET rfm_score = r_score::text || f_score::text || m_score::text
+            WHERE r_score IS NOT NULL
             SQL);
     }
 

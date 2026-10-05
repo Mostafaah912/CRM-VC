@@ -7,7 +7,8 @@ import type { RetentionPageData } from '@/types/analytics';
 export type RfmScoreRange = {
     score: number;
     min: number;
-    max: number;
+    /** null only ever appears on m_scores' band 5 in 'recent_window' mode: "no upper bound". */
+    max: number | null;
     customers: number;
 };
 
@@ -23,10 +24,21 @@ export type SystemSegmentGuide = {
     members: number;
 };
 
+export type MonetaryMode = 'lifetime' | 'recent_window';
+
 export type RfmGuide = {
     r_scores: RfmScoreRange[];
     f_scores: RfmScoreRange[];
+    /** Empty in 'recent_window' mode before the first run with cut-points completes — see monetary_cutpoints_available. */
     m_scores: RfmScoreRange[];
+    monetary_mode: MonetaryMode;
+    /** Only set in 'recent_window' mode. */
+    monetary_window_days: number | null;
+    /** Jalali date (no time), only set in 'recent_window' mode — the window's upper boundary. */
+    monetary_window_as_of: string | null;
+    monetary_cutpoints_available: boolean;
+    /** A 0..1 ratio — pass to formatRate()/formatPercent(), never pre-multiplied. */
+    f_score_1_share: number | null;
     segments: RfmSegmentGuide[];
     not_eligible_customers: number;
     eligible_total: number;

@@ -13,9 +13,12 @@ use App\Modules\Metrics\Enums\MetricRunStatus;
 use App\Modules\Metrics\Enums\RfmSegment;
 use App\Modules\Metrics\Models\MetricRun;
 use App\Modules\Metrics\Services\ChurnThresholdService;
+use App\Modules\Metrics\Services\RfmCalculator;
 use App\Modules\Metrics\Services\RfmPageService;
 use App\Modules\Segments\Models\Segment;
 use App\Modules\Segments\Support\RuleSentenceRenderer;
+use Carbon\CarbonImmutable;
+use DateTimeInterface;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -62,18 +65,20 @@ final class MetricsGuideService
     /** @return array<string, mixed> */
     public function guide(): array
     {
-        $thresholds = $this->storedThresholds();
+        $lastFullRun = $this->lastCompletedFullRun();
+        $thresholds = $this->churnThresholdsFrom($lastFullRun);
+        $monetaryCutpoints = $this->monetaryCutpointsFrom($lastFullRun);
         $orderItemsResolvedPercent = $this->orderItemsResolvedPercent();
 
         return [
-            'rfm' => $this->rfm(),
+            'rfm' => $this->rfm($monetaryCutpoints, $lastFullRun),
             'clv' => $this->clv(),
             'churn' => $this->churn($thresholds),
             'lifecycle' => $this->lifecycle($thresholds),
             'cohort' => $this->cohort(),
             'affinity' => $this->affinityGuide($orderItemsResolvedPercent),
             'dashboard' => $this->dashboardPointer(),
-            'data_quality' => $this->dataQuality($thresholds, $orderItemsResolvedPercent),
+            'data_quality' => $this->dataQuality($thresholds, $orderItemsResolvedPercent, $lastFullRun),
         ];
     }
 
@@ -103,16 +108,39 @@ final class MetricsGuideService
      * boundary of their own, so this reads it live from customer_metrics the same way the NTILE
      * itself was computed).
      *
+     * P6-20: in `recent_window` mode, M's bands come from the SAME cut-points
+     * `RfmCalculator::monetaryCutpoints()` actually scored with (persisted to `metric_runs.thresholds`
+     * by `MetricsRecomputeService`, read here via `$monetaryCutpoints`) — never a second, possibly-
+     * drifted recomputation of the distribution. `monetary_cutpoints_available` is false before the
+     * first `recent_window` run ever completes, or in the degenerate "no spread" case (c1 is null) —
+     * the frontend shows "not yet computed" instead of a band table in both.
+     *
+     * @param  array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}|null  $monetaryCutpoints
      * @return array<string, mixed>
      */
-    private function rfm(): array
+    private function rfm(?array $monetaryCutpoints, ?MetricRun $lastFullRun): array
     {
         $existing = $this->rfmPage->getData();
+        $mode = $this->monetaryMode();
+        $fScores = $this->scoreRanges('f_score', 'frequency');
+        $eligibleTotal = array_sum($existing['segments']);
+        $cutpointsAvailable = $mode === 'recent_window'
+            && $monetaryCutpoints !== null
+            && $monetaryCutpoints['c1'] !== null;
 
         return [
             'r_scores' => $this->scoreRanges('r_score', 'recency_days'),
-            'f_scores' => $this->scoreRanges('f_score', 'frequency'),
-            'm_scores' => $this->scoreRanges('m_score', 'monetary'),
+            'f_scores' => $fScores,
+            'm_scores' => match (true) {
+                $mode !== 'recent_window' => $this->scoreRanges('m_score', 'monetary'),
+                $cutpointsAvailable => $this->monetaryBandsFromCutpoints($monetaryCutpoints),
+                default => [],
+            },
+            'monetary_mode' => $mode,
+            'monetary_window_days' => $mode === 'recent_window' ? (int) config('metrics.monetary.window_days', 60) : null,
+            'monetary_window_as_of' => $mode === 'recent_window' ? $this->jalaliDateOrNull($lastFullRun?->finished_at) : null,
+            'monetary_cutpoints_available' => $cutpointsAvailable,
+            'f_score_1_share' => $eligibleTotal > 0 ? round(($fScores[0]['customers'] ?? 0) / $eligibleTotal, 4) : null,
             'segments' => array_map(
                 fn (RfmSegment $segment): array => [
                     'segment' => $segment->value,
@@ -122,9 +150,51 @@ final class MetricsGuideService
                 RfmSegment::cases(),
             ),
             'not_eligible_customers' => $existing['segments']['none'] ?? 0,
-            'eligible_total' => array_sum($existing['segments']),
+            'eligible_total' => $eligibleTotal,
             'system_segments' => $this->systemSegments(),
         ];
+    }
+
+    private function monetaryMode(): string
+    {
+        return (string) config('metrics.monetary.mode', 'lifetime');
+    }
+
+    private function jalaliDateOrNull(?DateTimeInterface $at): ?string
+    {
+        return $at === null ? null : JalaliDate::format(CarbonImmutable::instance($at)->setTimezone('Asia/Tehran'));
+    }
+
+    /**
+     * Four cut-points partition the window-purchaser population into five half-open bands — the same
+     * [0,c1), [c1,c2), [c2,c3), [c3,c4), [c4,∞) shape {@see RfmCalculator::overrideMonetaryScore()}
+     * scores with. `max: null` on band 5 means "no upper bound" (shown as "بیشتر از" on the page), not
+     * a missing value — the one place this DTO's `max` differs from `scoreRanges()`'s (always a real
+     * observed number there).
+     *
+     * @param  array{c1: int|null, c2: int|null, c3: int|null, c4: int|null}  $cutpoints
+     * @return list<array{score: int, min: int, max: int|null, customers: int}>
+     */
+    private function monetaryBandsFromCutpoints(array $cutpoints): array
+    {
+        $edges = [
+            1 => [0, $cutpoints['c1']],
+            2 => [$cutpoints['c1'], $cutpoints['c2']],
+            3 => [$cutpoints['c2'], $cutpoints['c3']],
+            4 => [$cutpoints['c3'], $cutpoints['c4']],
+            5 => [$cutpoints['c4'], null],
+        ];
+
+        return array_map(function (int $score) use ($edges): array {
+            [$min, $max] = $edges[$score];
+
+            return [
+                'score' => $score,
+                'min' => $min ?? 0,
+                'max' => $max,
+                'customers' => (int) DB::table('customer_metrics')->where('m_score', $score)->count(),
+            ];
+        }, range(1, 5));
     }
 
     /**
@@ -272,14 +342,8 @@ final class MetricsGuideService
      * @param  array{p50: int, p75: int, p90: int, sample_size: int, is_fallback: bool}  $thresholds
      * @return array<string, mixed>
      */
-    private function dataQuality(array $thresholds, ?float $orderItemsResolvedPercent): array
+    private function dataQuality(array $thresholds, ?float $orderItemsResolvedPercent, ?MetricRun $lastFullRun): array
     {
-        $lastFullRun = MetricRun::query()
-            ->where('mode', MetricRunMode::Full)
-            ->where('status', MetricRunStatus::Completed)
-            ->orderByDesc('finished_at')
-            ->first(['finished_at']);
-
         return [
             'order_items_resolved_percent' => $orderItemsResolvedPercent,
             'open_identity_conflicts' => (int) DB::table('identity_conflicts')->where('status', 'pending')->count(),
@@ -290,21 +354,44 @@ final class MetricsGuideService
         ];
     }
 
-    /** @return array{p50: int, p75: int, p90: int, sample_size: int, is_fallback: bool} */
-    private function storedThresholds(): array
+    /**
+     * The latest completed full run — fetched once in {@see guide()} and threaded through, rather than
+     * re-queried separately by churn thresholds, monetary cut-points and "last computed" the way three
+     * near-identical queries used to (pre-P6-20).
+     */
+    private function lastCompletedFullRun(): ?MetricRun
     {
-        $lastFullRun = MetricRun::query()
+        return MetricRun::query()
             ->where('mode', MetricRunMode::Full)
             ->where('status', MetricRunStatus::Completed)
-            ->whereNotNull('thresholds')
             ->orderByDesc('finished_at')
-            ->first(['thresholds']);
+            ->first(['thresholds', 'finished_at']);
+    }
 
+    /** @return array{p50: int, p75: int, p90: int, sample_size: int, is_fallback: bool} */
+    private function churnThresholdsFrom(?MetricRun $lastFullRun): array
+    {
         /** @var array{p50: int, p75: int, p90: int, sample_size: int}|null $stored */
         $stored = $lastFullRun?->thresholds;
 
         $fresh = $stored ?? $this->churnThresholds->percentiles();
 
         return [...$fresh, 'is_fallback' => $fresh['sample_size'] < 200];
+    }
+
+    /**
+     * P6-20: no fresh-compute fallback here, unlike churn's own thresholds above — recomputing the
+     * window's cut-points live would duplicate `RfmCalculator`'s own statistics query, exactly the
+     * "second, possibly-drifted calculation" this page is built to avoid. Null (never computed yet, or
+     * mode is 'lifetime') is a real, displayed state ("not yet computed"), not an error.
+     *
+     * @return array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}|null
+     */
+    private function monetaryCutpointsFrom(?MetricRun $lastFullRun): ?array
+    {
+        /** @var array{window_days: int, sample_size: int, c1: int|null, c2: int|null, c3: int|null, c4: int|null}|null $cutpoints */
+        $cutpoints = $lastFullRun?->thresholds['monetary_cutpoints'] ?? null;
+
+        return $cutpoints;
     }
 }

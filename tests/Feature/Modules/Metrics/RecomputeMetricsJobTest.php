@@ -53,6 +53,29 @@ it('saves the store thresholds onto the metric run', function () {
     expect(json_decode((string) $run->thresholds, true))->toHaveKeys(['p50', 'p75', 'p90']);
 });
 
+it('P6-20: merges monetary_cutpoints into the same thresholds JSON in recent_window mode, never clobbering churn\'s own keys', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 500_000]);
+
+    RecomputeMetricsJob::dispatchSync('full');
+
+    $run = DB::table('metric_runs')->latest('id')->first();
+    $thresholds = json_decode((string) $run->thresholds, true);
+
+    expect($thresholds)->toHaveKeys(['p50', 'p75', 'p90', 'sample_size', 'monetary_cutpoints'])
+        ->and($thresholds['monetary_cutpoints'])->toHaveKeys(['window_days', 'sample_size', 'c1', 'c2', 'c3', 'c4']);
+});
+
+it('leaves thresholds without a monetary_cutpoints key in lifetime mode', function () {
+    config(['metrics.monetary.mode' => 'lifetime']);
+
+    RecomputeMetricsJob::dispatchSync('full');
+
+    $run = DB::table('metric_runs')->latest('id')->first();
+    expect(json_decode((string) $run->thresholds, true))->not->toHaveKey('monetary_cutpoints');
+});
+
 it('records the dirty run type', function () {
     RecomputeMetricsJob::dispatchSync('dirty');
 

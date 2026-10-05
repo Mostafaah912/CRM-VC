@@ -17,6 +17,17 @@ use Illuminate\Support\Facades\DB;
  * to count days since. `monetary` is `net_revenue` minus shipping unless `metrics.include_shipping`
  * says otherwise (PRD D2); the choice is a fixed, config-selected SQL literal, never request input.
  *
+ * `monetary_recent` (P6-20, product-owner decision): the same sum, filtered to realized orders
+ * within `metrics.monetary.window_days` of `$asOf` — always computed, regardless of
+ * `metrics.monetary.mode`, so RfmCalculator can score it the moment an operator flips the mode, with
+ * no separate backfill step. NULL (via `FILTER`, never `COALESCE`d to 0) means "no realized purchase
+ * in the window" — a real signal RfmCalculator reads directly (not the same thing as "spent 0"). The
+ * window boundary is a Tehran CALENDAR day, not a raw `$asOf - N*86400s` subtraction: `$asOf` is
+ * converted to Asia/Tehran, walked back `window_days` days, then floored to that day's own midnight —
+ * the same "Tehran local day" `DailyMetricsService` (P6-02) already established for calendar-day
+ * grouping, picked here over `JalaliDay::start()` because the input is an already-known instant, not
+ * a Jalali date string to parse.
+ *
  * This step only ever writes the columns it owns (identity + raw aggregates). RFM/CLV/churn/lifecycle
  * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. `upsert()` itself
  * never touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not
@@ -65,18 +76,26 @@ final class BaseAggregateService
         );
     }
 
+    private function monetaryWindowStart(CarbonImmutable $asOf): CarbonImmutable
+    {
+        $windowDays = (int) config('metrics.monetary.window_days', 60);
+
+        return $asOf->setTimezone('Asia/Tehran')->subDays($windowDays)->startOfDay();
+    }
+
     private function upsert(int $metricRunId, bool $dirtyOnly, CarbonImmutable $asOf): int
     {
         // A fixed choice between two literals from config — never a value built from request input.
         $monetaryShippingTerm = config('metrics.include_shipping', false) ? '0' : 'o.shipping_total';
         $dirtyFilter = $dirtyOnly ? 'AND c.metrics_dirty = true' : '';
+        $windowStart = $this->monetaryWindowStart($asOf)->format('Y-m-d H:i:sP');
 
         return DB::affectingStatement(
             <<<SQL
                 INSERT INTO customer_metrics AS cm (
                     customer_id, first_order_at, last_order_at, total_orders, frequency,
-                    total_revenue, total_refunded, monetary, aov, recency_days, cohort_month,
-                    metric_run_id, computed_at
+                    total_revenue, total_refunded, monetary, monetary_recent, aov, recency_days,
+                    cohort_month, metric_run_id, computed_at
                 )
                 SELECT
                     c.id,
@@ -87,6 +106,7 @@ final class BaseAggregateService
                     COALESCE(agg.total_revenue, 0),
                     COALESCE(agg.total_refunded, 0),
                     COALESCE(agg.monetary, 0),
+                    agg.monetary_recent,
                     CASE
                         WHEN COALESCE(agg.total_orders, 0) = 0 THEN 0
                         ELSE (agg.total_revenue / agg.total_orders)
@@ -106,7 +126,8 @@ final class BaseAggregateService
                         COUNT(*)::integer AS total_orders,
                         SUM(o.net_revenue)::bigint AS total_revenue,
                         SUM(o.refunded_total)::bigint AS total_refunded,
-                        SUM(o.net_revenue - {$monetaryShippingTerm})::bigint AS monetary
+                        SUM(o.net_revenue - {$monetaryShippingTerm})::bigint AS monetary,
+                        SUM(o.net_revenue - {$monetaryShippingTerm}) FILTER (WHERE o.ordered_at >= ?::timestamptz)::bigint AS monetary_recent
                     FROM orders o
                     WHERE o.customer_id = c.id
                       AND o.is_realized = true
@@ -122,13 +143,14 @@ final class BaseAggregateService
                     total_revenue   = EXCLUDED.total_revenue,
                     total_refunded  = EXCLUDED.total_refunded,
                     monetary        = EXCLUDED.monetary,
+                    monetary_recent = EXCLUDED.monetary_recent,
                     aov             = EXCLUDED.aov,
                     recency_days    = EXCLUDED.recency_days,
                     cohort_month    = EXCLUDED.cohort_month,
                     metric_run_id   = EXCLUDED.metric_run_id,
                     computed_at     = EXCLUDED.computed_at
                 SQL,
-            [$asOf->format('Y-m-d H:i:sP'), $metricRunId],
+            [$asOf->format('Y-m-d H:i:sP'), $metricRunId, $windowStart],
         );
     }
 }

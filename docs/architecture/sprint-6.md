@@ -1296,3 +1296,79 @@ Migration جدید و قابل‌بازگشت (`2026_10_01_120000`)، `DailyMetr
 **ریسک:** ندارد — فاز ۶ فقط تأیید/مستندسازی است، بدون تغییر کد محصول.
 
 **کدام تصمیم از طرف پروژه‌مالک لازم است:** جدول کامل در گزارش پایانی چت (فرمت §۷ CLAUDE.md) آمده — خلاصه: (۱) کارمزد `fee_lines` Woo نیاز به ستون رسمی دارد یا نه (P6-16)، (۲) اختلاف ۳۷۰,۰۱۰ تومانی تعریف «مجموع دریافتی» Woo فقط با دسترسی ادمین Woo قابل‌حل است (P6-16).
+
+## P6-20 — اصلاح محاسبه M (Monetary) در RFM + بازنویسی متن /metrics/guide
+
+### تصمیم مالک محصول (انحراف صریح از PRD §۱۲)
+
+PRD §۱۲ فرمول M را `NTILE(5) OVER (ORDER BY monetary ASC, customer_id)` تعریف می‌کند — `monetary` یعنی مجموع net_revenue **کل طول عمر** مشتری. تصمیم مالک محصول: به‌خاطر تورم چندسالهٔ تومان، مقایسه‌ی مستقیم یک سفارش ۱۴۰۳ با یک سفارش ۱۴۰۵ گمراه‌کننده است. راه‌حل: حالت تازه‌ی `recent_window` — M فقط از ۶۰ روز اخیر محاسبه می‌شود، و بازه‌های امتیاز ۱ تا ۵ از پراکندگی واقعی همان ۶۰ روز ساخته می‌شوند (نه NTILE با طول مساوی). طبق دستور صریح، **پیش‌فرض قدیمی (`lifetime`) دست‌نخورده ماند** — فقط با `config('metrics.monetary.mode')`/`METRICS_MONETARY_MODE` روشن می‌شود؛ GATE 2 (`expected_metrics.json`، منجمد در `DemoDataSeeder::AS_OF` با فرمول قدیمی) هیچ تغییری نکرد چون مسیر کد `lifetime` عیناً دست‌نخورده ماند (حتی یک کاراکتر SQL هم عوض نشد — `scoreEligible()` کاملاً همان متد قبلی است).
+
+### چه ساخته شد
+
+- **`config('metrics.monetary.mode')`** (`lifetime`|`recent_window`, پیش‌فرض `lifetime`) و **`config('metrics.monetary.window_days')`** (پیش‌فرض ۶۰) — `.env.example` به‌روزرسانی شد (`METRICS_MONETARY_MODE=recent_window` به‌عنوان مقدار توصیه‌شده‌ی dev/prod مستند شد؛ **خودِ فایل‌های `.env`/`.env.testing` به‌خاطر محدودیت sandbox این نشست قابل‌خواندن/نوشتن نبودند** — بخش «تصمیم لازم» پایین را ببینید).
+- **Migration برگشت‌پذیر** (`2026_10_06_100000_add_monetary_recent_to_customer_metrics_table.php`): ستون تازه‌ی `customer_metrics.monetary_recent` (bigint، nullable). `monetary` (کل عمر) دست‌نخورد. `tests/Integration/MetricsSchemaTest.php` آگاهانه به‌روزرسانی شد (طبق دستور).
+- **`BaseAggregateService::upsert()`**: `monetary_recent` همیشه محاسبه می‌شود (مستقل از mode، تا وقتی اپراتور mode را عوض کرد نیازی به backfill جدا نباشد) — همان SUM(net_revenue − shipping طبق `include_shipping`) موجود، با `FILTER (WHERE ordered_at >= ?)` روی مرز **روز تقویمی تهران** (نه تفریق خام ۶۰×۸۶۴۰۰ ثانیه): `asOf` به Asia/Tehran تبدیل، ۶۰ روز عقب، `startOfDay()`. NULL (نه COALESCE به صفر) یعنی «بدون خرید در پنجره» — یک سیگنال واقعی که RfmCalculator مستقیم می‌خواند، نه «صفر خرج کرده».
+- **`RfmCalculator`**: در حالت `recent_window`، بعد از همان `scoreEligible()` قدیمی (که همچنان r_score/f_score/m_score-lifetime را NTILE می‌کند، دست‌نخورده)، `overrideMonetaryScore()` فقط m_score را جایگزین می‌کند: `log(monetary_recent)`، میانه و MAD (هر دو با `percentile_cont`، همان الگوی `ChurnThresholdService`)، z-score مقاوم با برش‌های z = −۰.۸۴/−۰.۲۵/+۰.۲۵/+۰.۸۴ (دقیقاً همان ۴ نقطه‌ای که توزیع نرمال را به ۵ پنجک تقسیم می‌کند) تبدیل به cut-point تومانی. مشتری بدون خرید در پنجره (یا amount ≤ 0) مستقیم m_score=1 می‌گیرد، هرگز وارد محاسبه‌ی cut-point نمی‌شود. حالت تباهیده (MAD=0، بدون پراکندگی): همه‌ی خریداران واقعی امتیاز میانه (۳) می‌گیرند — «مقدار برابر، امتیاز برابر» را برآورده می‌کند. R و F کاملاً دست‌نخورده‌اند (کد مشترک، تست مجزا هم این را اثبات می‌کند).
+- **`MetricsRecomputeService`**: cut-pointهای هر اجرا (`RfmCalculator::monetaryCutpoints()`) در همان ستون JSON `metric_runs.thresholds` کنار آستانه‌های churn ذخیره می‌شوند (کلید تازه‌ی `monetary_cutpoints`) — دقیقاً همان الگوی `ChurnThresholdService::saveToRun()`، یک منبع واحد که هم RfmCalculator امتیازدهی کرده هم `MetricsGuideService` می‌خواند، نه محاسبه‌ی دوم.
+- **`MetricsGuideService`**: در حالت `recent_window`، بازه‌های نمایشی M از همان cut-pointهای ذخیره‌شده می‌آیند (نه بازه‌ی واقعی min/max مثل R/F) — ۵ بازه‌ی نیمه‌باز `[۰,c1) [c1,c2) [c2,c3) [c3,c4) [c4,∞)`. اگر هنوز هیچ اجرایی با این حالت کامل نشده، `monetary_cutpoints_available=false` و صفحه «هنوز محاسبه نشده» نشان می‌دهد — هرگز محاسبه‌ی زنده‌ی دوم. سهم F=1 (`f_score_1_share`) هم اضافه شد، پویا از همان توزیع F.
+
+### صفحه‌ی /metrics/guide — بازنویسی متن
+
+واژه‌های «NTILE» و «واجد شرط» از سراسر صفحه حذف شدند (جای‌گزین: «مشتری دارای امتیاز RFM»). در حالت `recent_window`: نوار بالای کارت RFM («محاسبه‌ی ارزش (M) تا تاریخ …» شمسی، «آخرین بازمحاسبه»، «پنجره: N روز اخیر»)؛ جدول بازه‌های M با برچسب نیمه‌باز واضح («تا X»، «از X تا Y»، «بیشتر از X»، با `formatToman`)؛ دو پاراگراف توضیح کوتاه (چرا فقط ۶۰ روز اخیر — تورم؛ چرا بازه‌ها هم‌عرض نیستند — از پراکندگی واقعی، نه تقسیم مساوی)؛ یادداشت سهم F=1 پویا (نه عدد ثابت). در حالت `lifetime`، صفحه دقیقاً مثل قبل است (M در همان جدول R/F، بدون نوار/بازه‌های جدا).
+
+### TEST FIRST
+
+۱۹ تست تازه، پیش از پیاده‌سازی نوشته شدند، قرمز اجرا شدند، سپس سبز:
+- `tests/Feature/Modules/Metrics/BaseAggregateServiceTest.php` (+۶): مجموع دقیق در پنجره، null وقتی هیچ سفارشی در پنجره نیست، حذف shipping مثل monetary، **مرز روز تهران** (سفارش درست روی مرز = داخل؛ یک ثانیه قبل = بیرون — با `->utc()` صریح قبل از نسبت‌دادن به ستون Eloquent؛ یک باگ واقعی real در خودِ این تست پیدا و رفع شد: دادن یک شیء Carbon با timezone آسیا/تهران مستقیم به attribute یک مدل Eloquent، offset را خاموش گم می‌کند — چون format سازی بدون تبدیل قبلی به UTC انجام می‌شود؛ خودِ `BaseAggregateService` این مشکل را ندارد چون صریحاً `?::timestamptz` با offset را bind می‌کند، نه از طریق attribute مدل)، idempotent بودن.
+- `tests/Feature/Modules/Metrics/RfmMonetaryWindowTest.php` (تازه، ۱۲ تست): مقادیر دقیق روی فیکسچر ۹نفره‌ی لگاریتمی (۱M..۲۵۶M تومان، دوبرابرشونده — median/MAD با دست قابل‌محاسبه، هیچ مشتری نزدیک مرز نیست)، تساوی⇒امتیاز مساوی، یک outlier فوق‌العاده بزرگ بازه‌ی بقیه را له نمی‌کند، بدون‌خرید-در-پنجره⇒۱ (حتی با monetary تاریخی عظیم)، همه بدون‌خرید⇒همه ۱، MAD=۰⇒همه ۳، R/F دست‌نخورده، rfm_score از m_score تازه بازسازی می‌شود، idempotent، حالت `lifetime` کاملاً نادیده می‌گیرد monetary_recent را، cut-pointهای صعودی برای Orchestrator در دسترس‌اند.
+- `tests/Feature/Modules/Metrics/RecomputeMetricsJobTest.php` (+۲): ادغام `monetary_cutpoints` در همان JSON بدون پاک‌کردن کلیدهای churn؛ در حالت `lifetime` اصلاً این کلید نوشته نمی‌شود.
+- `tests/Feature/Support/MetricsGuideServiceTest.php` (+۷): mode/window_days از config (نه hardcode)، بازه‌های M از cut-point ذخیره‌شده (نه بازسنجی زنده)، «هنوز محاسبه نشده» وقتی cut-point نیست یا حالت تباهیده است، حالت `lifetime` دست‌نخورده، سهم F=1 پویا.
+
+### تأیید مرورگر واقعی (موقتاً، بدون تغییر دائمی داده)
+
+چون `.env` در این نشست قابل‌ویرایش نبود، `config/metrics.php`'s default **موقتاً** به `recent_window` تغییر کرد، یک ردیف `metric_runs` با cut-point ساختگی درج شد (بدون لمس `customer_metrics`)، صفحه با Playwright واقعی باز و اسکرین‌شات گرفته شد (نوار پنجره، جدول بازه‌ها، توضیحات، یادداشت F=1 — همه درست، بدون رقم فارسی، بدون NTILE/واجد‌شرط)، سپس ردیف ساختگی حذف و `config/metrics.php` دقیقاً به حالت اولیه (`git diff` خالی) برگردانده شد. حالت `lifetime` هم جداگانه با Playwright بررسی شد (نوار/بازه‌ها غایب، M در جدول مشترک R/F — دقیقاً رفتار قدیم).
+
+### گزارش اثر (فقط‌خواندن — چیزی تغییر داده نشد)
+
+داده‌ی dev، `asOf` ≈ اکنون (۱۴۰۵/۰۷/۱۴)، پنجره ۶۰ روزه، بدون shipping (پیش‌فرض `include_shipping=false`):
+
+**قبل / بعد توزیع سگمنت (۱۴٬۲۹۰ مشتری واجد امتیاز RFM):**
+
+| سگمنت | قبل (lifetime) | بعد (recent_window، شبیه‌سازی فقط‌خواندن) | تغییر |
+|---|---|---|---|
+| champion | ۶۶ | ۶۶ | — |
+| loyal | ۱۴۳ | ۱۴۳ | — |
+| promising | ۵٬۸۹۱ | ۵٬۸۹۱ | — |
+| new_customer | ۲٬۴۷۴ | ۲٬۴۷۴ | — |
+| at_risk | ۴۵ | ۴۵ | — |
+| **cant_lose** | **۵** | **۰** | **−۵** |
+| hibernating | ۵٬۶۵۲ | ۵٬۶۵۲ | — |
+| **lost** | **۱۴** | **۱۹** | **+۵** |
+
+(شبیه‌سازی با کوئری فقط‌خواندن، عیناً همان SQL که `RfmCalculator`/`computeMonetaryCutpoints` واقعاً اجرا می‌کنند — بدون نوشتن در `customer_metrics`. علت ریاضی ساده است: در CASE نگاشت سگمنت PRD §۱۲، `m_score` فقط در شرط `cant_lose` حاضر است؛ هر سگمنت دیگر فقط به r_score/f_score/frequency وابسته است که اصلاً تغییر نکرده‌اند — پس شعاع اثر این تغییر، ساختاری محدود به همین یک جفت سگمنت است، نه گسترده.)
+
+- **مشتری با سفارش ولی بدون خرید در ۶۰ روز اخیر:** ۱۱٬۸۴۱ از ۱۴٬۲۹۰ (٪۸۲.۹) — این‌ها مستقیم m_score=1 می‌گیرند.
+- **لبه‌های بازه‌ی M (بدون shipping):** c1=۲۶۰٬۵۳۴ · c2=۴۷۷٬۸۷۶ · c3=۷۹۹٬۰۵۷ · c4=۱٬۴۶۵٬۶۴۲ تومان (از ۲٬۴۴۹ خریدار واقعی پنجره).
+- **شبیه‌سازی M با احتساب shipping** (`include_shipping=true` به‌جای پیش‌فرض): c1=۴۰۶٬۲۱۶ · c2=۶۵۵٬۳۸۴ · c3=۹۸۲٬۹۸۲ · c4=۱٬۵۸۵٬۹۳۲ — محسوس بالاتر (پست هزینه‌ی تقریباً ثابتی به هر سفارش اضافه می‌کند)؛ پیش‌فرض فعلی (بدون shipping) برای این فاز تغییر نکرد، چون پست بازتاب ارزش خرید نیست.
+- **میانه‌ی ماهانه‌ی مبلغ سفارش، ۱۲ ماه اخیر** (سیگنال واقعی تورم، نه فرض): ۱۴۰۴/۰۷≈۳۳۷٬۷۰۰ → ۱۴۰۵/۰۷≈۸۵۷٬۷۷۰ تومان — نزدیک ۲.۵ برابر در یک سال (بخشی از این رشد می‌تواند تغییر ترکیب محصول باشد نه فقط تورم خالص؛ عدد دقیق تفکیک نشد).
+
+**پیشنهاد (اعمال‌نشده) برای cant_lose:** علت ریشه‌ای ناپدیدشدنش ساختاری است — مشتری با r_score=1 (مدت‌هاست خرید نکرده) تقریباً هرگز در ۶۰ روز اخیر هم خرید ندارد، پس m_score همیشه ۱ می‌شود و شرط `m_score≥4` هرگز برقرار نیست. دو گزینه (هیچ‌کدام اعمال نشد): **(الف)** شرط cant_lose را به یک معیار غیرپنجره‌ای ارجاع دهد (مثلاً `clv_historical` یا M محاسبه‌شده با `lifetime` حتی وقتی mode کلی `recent_window` است — یعنی دو ستون M موازی)، یا **(ب)** یک سگمنت تازه («بازگشت‌طلب با ارزش بالا») مستقل از m_score اضافه شود. هر دو یک تصمیم PRD/محصول است، نه چیزی که این تسک باید ساکت اعمال کند.
+
+### پیشنهاد Patch متن PRD §۱۲ (فقط اینجا نوشته شد؛ PRD.md ویرایش نشد)
+
+> «M (Monetary) پیش‌فرض از `monetary` (کل عمر مشتری) با NTILE(5) محاسبه می‌شود. **افزوده (P6-20):** یک حالت جایگزین، `metrics.monetary.mode=recent_window`، به‌جای آن از `monetary_recent` (مجموع خرید `window_days` روز اخیر، پیش‌فرض ۶۰) استفاده می‌کند؛ امتیاز ۱ تا ۵ نه از NTILE بلکه از چارک‌های z-score مقاوم (میانه/MAD لگاریتم مبلغ، برش در z=∓۰.۸۴/∓۰.۲۵) به‌دست می‌آید — مشتری بدون خرید در پنجره مستقیم امتیاز ۱ می‌گیرد. **هشدار:** در این حالت، شرط `cant_lose` (`r=1 ∧ f≥4 ∧ m≥4`) عملاً هرگز برقرار نمی‌شود چون r=1 و «خرید اخیر» تقریباً ناسازگارند؛ هر پیاده‌سازی این حالت باید یکی از دو راه‌حل را برای cant_lose انتخاب کند (معیار M غیرپنجره‌ای جدا، یا تعریف سگمنت تازه).»
+
+### بستن این تسک
+
+تست‌های مرتبط (۳۸ تست جدید/تغییریافته — BaseAggregateService+۶، RfmMonetaryWindow ۱۲، RecomputeMetricsJob+۲، MetricsGuideService+۷، MetricsSchema+۱ ستون): همه سبز، در کنار GATE 2 (۲/۲، ۱۱۶۹ Assertion، دست‌نخورده) و کل `RfmCalculatorTest`/`MetricsBoundaryTest` قدیمی بدون تغییر. **تست کامل یک‌بار: ۳۲۸۸/۳۲۸۸ سبز (۱۴٬۶۴۳ Assertion).** یک یافته‌ی جانبی محیطی حین این اجرا: ۹۶ تست `FakeWooClientParityTest`/`HttpWooClientTest` با «Redis: Connection refused» شکست خوردند — نه ربطی به این تسک، سرویس Redis محلی (نه از طریق Herd، دستی) از قبل این نشست پایین بود؛ با `redis-server --daemonize yes` بالا آورده شد (همان روشی که ظاهراً قبلاً راه‌اندازی شده بود)، و با آن، همان ۹۶ تست و کل مجموعه سبز شدند — ثبت شد چون ممکن است در جلسه‌ی بعدی دوباره پیش بیاید (سرویس با ری‌استارت ماشین/نشست پایین می‌ماند، باید دستی بالا بیاید). PHPStan (کل app، `--memory-limit=1G`) → ۰ خطا. Pint (`--test`، کل مخزن) → تمیز. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** Migration جدید: `database/migrations/2026_10_06_100000_add_monetary_recent_to_customer_metrics_table.php`؛ تست جدید: `tests/Feature/Modules/Metrics/RfmMonetaryWindowTest.php`؛ تغییر: `config/metrics.php`، `.env.example`، `app/Modules/Metrics/Services/{BaseAggregateService,RfmCalculator,MetricsRecomputeService}.php`، `app/Support/MetricsGuideService.php`، `resources/js/{pages/metrics/guide.tsx,types/metrics-guide.ts}`، `tests/{Feature/Modules/Metrics/{BaseAggregateServiceTest,RecomputeMetricsJobTest}.php,Feature/Support/MetricsGuideServiceTest.php,Integration/MetricsSchemaTest.php}`.
+
+**DB:** یک ستون تازه (`customer_metrics.monetary_recent`، nullable، بدون داده‌ی موجود دست‌کاری‌شده). **API:** `/metrics/guide`'s پاسخ JSON فیلدهای تازه گرفت (`monetary_mode`, `monetary_window_days`, `monetary_window_as_of`, `monetary_cutpoints_available`, `f_score_1_share`) — افزایشی، شکل قبلی دست‌نخورده.
+
+**ریسک:** کم در حالت پیش‌فرض (`lifetime` دقیقاً دست‌نخورده، GATE 2 اثبات می‌کند). ریسک واقعی مربوط به **روشن‌کردن** `recent_window` در dev/prod است: cant_lose صفر می‌شود (مستند شده بالا، نیاز به تصمیم). **Rollback:** `git revert` بی‌خطر؛ اگر `recent_window` در prod روشن شده بود، برگرداندن env به `lifetime` فوراً رفتار قدیم را برمی‌گرداند (ستون `monetary_recent` می‌ماند ولی بلااستفاده).
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:**
+۱. آیا `.env` (dev) و `.env` (prod) باید `METRICS_MONETARY_MODE=recent_window` بگیرند؟ این نشست نتوانست این فایل‌ها را بخواند/بنویسد (محدودیت sandbox) — باید دستی اضافه شود.
+۲. راه‌حل cant_lose (گزینه‌ی الف یا ب بالا، یا نگه‌داشتن همین‌طور که هست و پذیرفتن که این سگمنت در حالت تازه عملاً خالی می‌ماند) — بدون این تصمیم، روشن‌کردن `recent_window` یعنی سگمنت cant_lose را عملاً حذف کردن.
+۳. آیا shipping باید در M لحاظ شود؟ گزارش بالا هر دو گزینه را با عدد نشان داد؛ پیش‌فرض فعلی (`include_shipping=false`) بدون تغییر ماند.
