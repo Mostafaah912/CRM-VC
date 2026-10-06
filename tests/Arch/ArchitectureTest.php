@@ -137,10 +137,19 @@ it('bans raw SQL in the Segments module outright', function () {
  * no bound-parameter form). That version was replaced with `set_config('statement_timeout', ?, true)` — an
  * ordinary parameterized function call — which needs no `DB::statement`/`DB::raw`/`DB::select`/`DB::unprepared`
  * at all, so the exception was removed; only the original P3-07 one remains.
+ *
+ * P7-01 note (ARCHITECTURE.md, "P7-01"): a third exception, app/Modules/Ai/Services/AiReadonlyRoleService.php
+ * — CREATE ROLE/GRANT/REVOKE/ALTER ROLE (the `hm_ai_readonly` role, GATE 4) have no Schema:: or query-builder
+ * form at all; the file is invoked only from `hm:ai-setup-readonly` (an explicit command, admin connection),
+ * never at request time, and takes no user input (the password is config-sourced, the table list a fixed
+ * whitelist constant).
  */
 it('confines raw SQL to migrations, the Metrics/Analytics modules, and Catalog\'s one product-sales aggregate', function () {
     $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/'];
-    $allowedFiles = ['app/Modules/Catalog/Services/ProductListService.php'];
+    $allowedFiles = [
+        'app/Modules/Catalog/Services/ProductListService.php',
+        'app/Modules/Ai/Services/AiReadonlyRoleService.php',
+    ];
     $files = array_filter(
         Scanner::phpFiles(['app', 'routes', 'config', 'bootstrap/app.php']),
         function (string $file) use ($allowedPrefixes, $allowedFiles): bool {

@@ -24,12 +24,15 @@ function syncCommandFile(): string
 | NightlyChainCommand for living here rather than inside either module. P6-14 phase 4 added
 | CustomerBackfillCommand (`hm:customers-backfill`) — the two local-only customer-list backfills
 | (first_seen_at, needs_review), same "composes a module's own public Service, lives at the top
-| level" pattern as the others on this list.
+| level" pattern as the others on this list. P7-01 added AiSetupReadonlyRoleCommand
+| (`hm:ai-setup-readonly`) — resolves AiReadonlyRoleService (app/Modules/Ai/Services), same
+| "command holds no logic, resolves one Service" pattern as every other file on this list.
 */
-it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute, P6-09\'s hm:nightly-chain, P6-13\'s hm:identity-reresolve and P6-14\'s hm:customers-backfill, nothing else under app/Console', function () {
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute, P6-09\'s hm:nightly-chain, P6-13\'s hm:identity-reresolve, P6-14\'s hm:customers-backfill and P7-01\'s hm:ai-setup-readonly, nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
+        'app/Console/Commands/AiSetupReadonlyRoleCommand.php',
         'app/Console/Commands/CatalogDryRunCommand.php',
         'app/Console/Commands/CustomerBackfillCommand.php',
         'app/Console/Commands/IdentityReresolveCommand.php',

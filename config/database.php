@@ -104,6 +104,46 @@ return [
             'timezone' => 'UTC',
         ],
 
+        // P7-01: the connection AiReadonlyRoleService uses to run CREATE ROLE/GRANT/REVOKE/ALTER
+        // ROLE for `hm_ai_readonly` — deliberately separate from `pgsql` (CREATEROLE is a privilege
+        // escalation the app's everyday runtime credential has no reason to carry permanently).
+        // Falls back to the same DB_* values as `pgsql` when DB_AI_ADMIN_* is unset, so a single
+        // admin credential still works until a narrower one (CREATEROLE only) is provisioned.
+        'ai_admin' => [
+            'driver' => 'pgsql',
+            'host' => env('DB_AI_ADMIN_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('DB_AI_ADMIN_PORT', env('DB_PORT', '5432')),
+            'database' => env('DB_AI_ADMIN_DATABASE', env('DB_DATABASE', 'laravel')),
+            'username' => env('DB_AI_ADMIN_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('DB_AI_ADMIN_PASSWORD', env('DB_PASSWORD', '')),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'timezone' => 'UTC',
+        ],
+
+        // P7-01 / GATE 4 (PRD §19, D7): the one connection the AI Analyst module may use. Reaches
+        // Postgres as `hm_ai_readonly` (app/Modules/Ai/Services/AiReadonlyRoleService.php sets up
+        // that role's grants) — SELECT-only on 9 named tables, no PII table, read-only transactions,
+        // a statement_timeout, enforced role-side so they hold regardless of this config. Never used
+        // outside app/Modules/Ai — tests/Arch/AiReadonlyConnectionBoundaryTest.php enforces that.
+        'ai_readonly' => [
+            'driver' => 'pgsql',
+            'host' => env('DB_AI_READONLY_HOST', '127.0.0.1'),
+            'port' => env('DB_AI_READONLY_PORT', '5432'),
+            'database' => env('DB_AI_READONLY_DATABASE', env('DB_DATABASE', 'laravel')),
+            'username' => env('DB_AI_READONLY_USERNAME', 'hm_ai_readonly'),
+            'password' => env('DB_AI_READONLY_PASSWORD', ''),
+            'charset' => env('DB_CHARSET', 'utf8'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'timezone' => 'UTC',
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
