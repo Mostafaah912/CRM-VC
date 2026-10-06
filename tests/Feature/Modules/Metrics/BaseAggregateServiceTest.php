@@ -178,8 +178,8 @@ it('sums only realized orders within the window into monetary_recent, excluding 
     config(['metrics.monetary.window_days' => 60]);
     $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
     $customer = Customer::factory()->create();
-    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 300_000, 'ordered_at' => $asOf->subDays(10)]);
-    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 200_000, 'ordered_at' => $asOf->subDays(200)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'subtotal' => 300_000, 'total' => 300_000, 'ordered_at' => $asOf->subDays(10)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'subtotal' => 200_000, 'total' => 200_000, 'ordered_at' => $asOf->subDays(200)]);
 
     app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
 
@@ -201,12 +201,12 @@ it('leaves monetary_recent null for a customer whose only orders are all outside
         ->and($row->monetary_recent)->toBeNull();
 });
 
-it('excludes shipping from monetary_recent by default, same as monetary (PRD D2)', function () {
+it('excludes shipping from monetary_recent via the goods-value base (subtotal - discount), not a shipping subtraction', function () {
     config(['metrics.include_shipping' => false, 'metrics.monetary.window_days' => 60]);
     $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
     $customer = Customer::factory()->create();
     Order::factory()->for($customer)->create([
-        'is_realized' => true, 'total' => 500_000, 'shipping_total' => 50_000, 'ordered_at' => $asOf->subDay(),
+        'is_realized' => true, 'subtotal' => 450_000, 'shipping_total' => 50_000, 'total' => 500_000, 'ordered_at' => $asOf->subDay(),
     ]);
 
     app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
@@ -227,10 +227,10 @@ it('includes an order exactly at the Tehran-day window boundary and excludes one
     // BaseAggregateService itself never hits it, since it binds its own `?::timestamptz` with an explicit
     // offset in the formatted string, never through an Eloquent attribute.
     $included = Customer::factory()->create();
-    Order::factory()->for($included)->create(['is_realized' => true, 'total' => 111_000, 'ordered_at' => $windowStart->utc()]);
+    Order::factory()->for($included)->create(['is_realized' => true, 'subtotal' => 111_000, 'total' => 111_000, 'ordered_at' => $windowStart->utc()]);
 
     $excluded = Customer::factory()->create();
-    Order::factory()->for($excluded)->create(['is_realized' => true, 'total' => 222_000, 'ordered_at' => $windowStart->subSecond()->utc()]);
+    Order::factory()->for($excluded)->create(['is_realized' => true, 'subtotal' => 222_000, 'total' => 222_000, 'ordered_at' => $windowStart->subSecond()->utc()]);
 
     app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
 
@@ -241,7 +241,7 @@ it('includes an order exactly at the Tehran-day window boundary and excludes one
 it('gives the same monetary_recent on a repeated full recompute (idempotent)', function () {
     $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
     $customer = Customer::factory()->create();
-    Order::factory()->for($customer)->create(['is_realized' => true, 'total' => 650_000, 'ordered_at' => $asOf->subDays(5)]);
+    Order::factory()->for($customer)->create(['is_realized' => true, 'subtotal' => 650_000, 'total' => 650_000, 'ordered_at' => $asOf->subDays(5)]);
 
     app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
     $first = metricsRowFor($customer)->monetary_recent;
@@ -250,6 +250,98 @@ it('gives the same monetary_recent on a repeated full recompute (idempotent)', f
     $second = metricsRowFor($customer)->monetary_recent;
 
     expect($second)->toBe($first)->toBe(650_000);
+});
+
+// ================================================================== P6-21: monetary_recent = goods value, no shipping, no tax, proportional refund
+
+it('excludes tax from monetary_recent — goods value after discount only, unlike monetary (which still includes tax via net_revenue - shipping)', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 500_000, 'discount_total' => 0, 'shipping_total' => 0, 'tax_total' => 50_000,
+        'total' => 550_000, 'refunded_total' => 0,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    $row = metricsRowFor($customer);
+    expect($row->monetary)->toBe(550_000) // unchanged legacy formula: net_revenue - shipping = (550000-0) - 0, still includes tax
+        ->and($row->monetary_recent)->toBe(500_000); // new formula: subtotal - discount, tax excluded
+});
+
+it('excludes shipping from monetary_recent via the goods-value formula, regardless of metrics.include_shipping', function () {
+    config(['metrics.include_shipping' => true]); // even if the legacy monetary toggle says "include it"
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 500_000, 'discount_total' => 0, 'shipping_total' => 100_000, 'tax_total' => 0,
+        'total' => 600_000, 'refunded_total' => 0,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(500_000);
+});
+
+it('applies the discount to monetary_recent — goods value is after discount, not the gross subtotal', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 1_000_000, 'discount_total' => 200_000, 'shipping_total' => 0, 'tax_total' => 0,
+        'total' => 800_000, 'refunded_total' => 0,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(800_000);
+});
+
+it('reduces monetary_recent proportionally for a partial refund, not by the full refunded amount', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    // total=1,000,000, refunded=250,000 -> refund_ratio=0.25 -> goods value (1,000,000) * 0.75 = 750,000.
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 1_000_000, 'discount_total' => 0, 'shipping_total' => 0, 'tax_total' => 0,
+        'total' => 1_000_000, 'refunded_total' => 250_000,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(750_000);
+});
+
+it('combines discount, shipping, tax and a partial refund correctly in monetary_recent', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    // subtotal=1,000,000 discount=100,000 shipping=50,000 tax=30,000 -> total=980,000.
+    // refunded=98,000 -> refund_ratio=0.1 -> goods value (900,000) * 0.9 = 810,000.
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 1_000_000, 'discount_total' => 100_000, 'shipping_total' => 50_000, 'tax_total' => 30_000,
+        'total' => 980_000, 'refunded_total' => 98_000,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(810_000);
+});
+
+it('never divides by zero when an order total is 0 — treats the refund ratio as 0', function () {
+    $asOf = CarbonImmutable::parse('2026-06-30 08:30:00', 'UTC');
+    $customer = Customer::factory()->create();
+    Order::factory()->for($customer)->create([
+        'is_realized' => true, 'is_fully_refunded' => false, 'ordered_at' => $asOf->subDay(),
+        'subtotal' => 0, 'discount_total' => 0, 'shipping_total' => 0, 'tax_total' => 0,
+        'total' => 0, 'refunded_total' => 0,
+    ]);
+
+    app(BaseAggregateService::class)->computeAll(metricRunId(), $asOf);
+
+    expect(metricsRowFor($customer)->monetary_recent)->toBe(0);
 });
 
 it('returns the number of customers processed', function () {

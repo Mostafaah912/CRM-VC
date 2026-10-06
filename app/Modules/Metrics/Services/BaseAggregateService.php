@@ -17,16 +17,31 @@ use Illuminate\Support\Facades\DB;
  * to count days since. `monetary` is `net_revenue` minus shipping unless `metrics.include_shipping`
  * says otherwise (PRD D2); the choice is a fixed, config-selected SQL literal, never request input.
  *
- * `monetary_recent` (P6-20, product-owner decision): the same sum, filtered to realized orders
- * within `metrics.monetary.window_days` of `$asOf` — always computed, regardless of
- * `metrics.monetary.mode`, so RfmCalculator can score it the moment an operator flips the mode, with
- * no separate backfill step. NULL (via `FILTER`, never `COALESCE`d to 0) means "no realized purchase
- * in the window" — a real signal RfmCalculator reads directly (not the same thing as "spent 0"). The
- * window boundary is a Tehran CALENDAR day, not a raw `$asOf - N*86400s` subtraction: `$asOf` is
- * converted to Asia/Tehran, walked back `window_days` days, then floored to that day's own midnight —
- * the same "Tehran local day" `DailyMetricsService` (P6-02) already established for calendar-day
- * grouping, picked here over `JalaliDay::start()` because the input is an already-known instant, not
- * a Jalali date string to parse.
+ * `monetary_recent` (P6-20/P6-21, product-owner decisions): filtered to realized orders within
+ * `metrics.monetary.window_days` of `$asOf` — always computed, regardless of `metrics.monetary.mode`,
+ * so RfmCalculator can score it the moment an operator flips the mode, with no separate backfill
+ * step. NULL (via `FILTER`, never `COALESCE`d to 0) means "no realized purchase in the window" — a
+ * real signal RfmCalculator reads directly (not the same thing as "spent 0"). The window boundary is
+ * a Tehran CALENDAR day, not a raw `$asOf - N*86400s` subtraction: `$asOf` is converted to Asia/Tehran,
+ * walked back `window_days` days, then floored to that day's own midnight — the same "Tehran local
+ * day" `DailyMetricsService` (P6-02) already established for calendar-day grouping, picked here over
+ * `JalaliDay::start()` because the input is an already-known instant, not a Jalali date string to
+ * parse.
+ *
+ * P6-21: unlike `monetary` (legacy formula below, UNCHANGED — still net_revenue minus shipping per
+ * `include_shipping`, still what GATE 2's frozen fixture checks), `monetary_recent`'s own formula was
+ * redefined to a structurally cleaner "goods value, no exceptions": `(subtotal - discount_total)` —
+ * tax and shipping are simply never part of the base, regardless of `include_shipping` — times
+ * `(1 - refund_ratio)`, where `refund_ratio = refunded_total / total` (0 when total is 0, never a
+ * division by zero), applied proportionally across the whole order rather than subtracting the full
+ * refunded amount from goods value alone (a real, found inaccuracy in the old `net_revenue - shipping`
+ * formula: a shipping-only refund would previously have incorrectly reduced M, even though the
+ * customer kept 100% of the goods). Per-item refund data (`order_items.refunded_amount`) was checked
+ * first and found only ~92% reliable against `orders.refunded_total` on dev (8 of 101 refunded orders
+ * mismatched) — too unreliable to sum directly, so the order-level proportional ratio is used instead,
+ * matching the task's own "نسبی" (proportional) wording. `is_fully_refunded = true` orders are already
+ * excluded entirely by this LATERAL's own WHERE clause (unchanged), so this ratio only ever applies to
+ * a genuinely partial refund.
  *
  * This step only ever writes the columns it owns (identity + raw aggregates). RFM/CLV/churn/lifecycle
  * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. `upsert()` itself
@@ -127,7 +142,10 @@ final class BaseAggregateService
                         SUM(o.net_revenue)::bigint AS total_revenue,
                         SUM(o.refunded_total)::bigint AS total_refunded,
                         SUM(o.net_revenue - {$monetaryShippingTerm})::bigint AS monetary,
-                        SUM(o.net_revenue - {$monetaryShippingTerm}) FILTER (WHERE o.ordered_at >= ?::timestamptz)::bigint AS monetary_recent
+                        ROUND(SUM(
+                            (o.subtotal - o.discount_total)
+                            * (1 - LEAST(1.0, CASE WHEN o.total > 0 THEN o.refunded_total::numeric / o.total ELSE 0 END))
+                        ) FILTER (WHERE o.ordered_at >= ?::timestamptz))::bigint AS monetary_recent
                     FROM orders o
                     WHERE o.customer_id = c.id
                       AND o.is_realized = true

@@ -50,7 +50,7 @@ final class MetricsGuideService
         'promising' => 'R ≥ 4 و F ≤ 2 و بیش از یک سفارش',
         'new_customer' => 'R = 5 و دقیقاً یک سفارش',
         'at_risk' => 'R = 2 و F ≥ 3',
-        'cant_lose' => 'R = 1 و F ≥ 4 و M ≥ 4',
+        'cant_lose' => 'R = 1 و F ≥ 4 و ارزش کل عمر مشتری (M) ≥ 4',
         'hibernating' => 'R ≤ 2 و F ≤ 2',
         'lost' => 'R = 1 (و هیچ‌کدام از شرط‌های بالا)',
     ];

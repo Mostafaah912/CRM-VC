@@ -231,3 +231,83 @@ it('exposes null cut-points when mode is lifetime', function () {
 
     expect($calculator->monetaryCutpoints())->toBeNull();
 });
+
+// ================================================================== P6-21: cant_lose uses lifetime M
+
+it('classifies cant_lose from the lifetime monetary NTILE, not the windowed m_score, in recent_window mode', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+
+    // Target: oldest of the group (r_score=1), frequency=5 among [6,5,3,2,1] -> f_score=4 (the exact
+    // shape RfmCalculatorTest.php's own cant_lose test already validates E3 never touches), highest
+    // lifetime `monetary` in the group (lifetime NTILE -> top bucket) but NO purchase in the 60-day
+    // window at all (monetary_recent null for everyone -> the degenerate "nobody purchased" case
+    // forces windowed m_score=1 for all five, which would wrongly fail cant_lose's m>=4 requirement
+    // without the fix).
+    $target = monetaryWindowCustomer(['recency_days' => 100, 'frequency' => 5, 'monetary' => 900_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 40, 'frequency' => 6, 'monetary' => 700_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 30, 'frequency' => 3, 'monetary' => 500_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 20, 'frequency' => 2, 'monetary' => 300_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 10, 'frequency' => 1, 'monetary' => 100_000, 'monetary_recent' => null]);
+
+    app(RfmCalculator::class)->compute();
+
+    $row = monetaryScoresFor($target);
+    expect($row->r_score)->toBe(1)
+        ->and($row->f_score)->toBe(4)
+        ->and($row->m_score)->toBe(1) // the DISPLAYED/windowed M stays 1 (no recent purchase) — only the segment rule reads lifetime M
+        ->and($row->rfm_segment)->toBe('cant_lose');
+});
+
+it('still classifies lost, not cant_lose, when lifetime monetary NTILE is below 4 — even with r=1 and f>=4', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+
+    $target = monetaryWindowCustomer(['recency_days' => 100, 'frequency' => 5, 'monetary' => 100_000, 'monetary_recent' => null]); // lowest lifetime M in the group
+    monetaryWindowCustomer(['recency_days' => 40, 'frequency' => 6, 'monetary' => 300_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 30, 'frequency' => 3, 'monetary' => 500_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 20, 'frequency' => 2, 'monetary' => 700_000, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 10, 'frequency' => 1, 'monetary' => 900_000, 'monetary_recent' => null]);
+
+    app(RfmCalculator::class)->compute();
+
+    $row = monetaryScoresFor($target);
+    expect($row->f_score)->toBe(4)
+        ->and($row->rfm_segment)->toBe('lost');
+});
+
+it('gives the identical cant_lose/lost segment under both monetary modes for the same fixture — the lifetime-M fix makes it mode-independent', function () {
+    $build = function (): Customer {
+        $target = monetaryWindowCustomer(['recency_days' => 100, 'frequency' => 5, 'monetary' => 900_000, 'monetary_recent' => null]);
+        monetaryWindowCustomer(['recency_days' => 40, 'frequency' => 6, 'monetary' => 700_000, 'monetary_recent' => null]);
+        monetaryWindowCustomer(['recency_days' => 30, 'frequency' => 3, 'monetary' => 500_000, 'monetary_recent' => null]);
+        monetaryWindowCustomer(['recency_days' => 20, 'frequency' => 2, 'monetary' => 300_000, 'monetary_recent' => null]);
+        monetaryWindowCustomer(['recency_days' => 10, 'frequency' => 1, 'monetary' => 100_000, 'monetary_recent' => null]);
+
+        return $target;
+    };
+
+    config(['metrics.monetary.mode' => 'lifetime']);
+    $targetLifetime = $build();
+    app(RfmCalculator::class)->compute();
+    $segmentLifetime = monetaryScoresFor($targetLifetime)->rfm_segment;
+
+    DB::table('customer_metrics')->delete();
+    DB::table('customers')->delete();
+
+    config(['metrics.monetary.mode' => 'recent_window']);
+    $targetWindow = $build();
+    app(RfmCalculator::class)->compute();
+    $segmentWindow = monetaryScoresFor($targetWindow)->rfm_segment;
+
+    expect($segmentLifetime)->toBe('cant_lose')->and($segmentWindow)->toBe('cant_lose');
+});
+
+it('leaves ineligible customers with a null segment under the recent_window lifetime-M cant_lose CTE too', function () {
+    config(['metrics.monetary.mode' => 'recent_window']);
+
+    $ineligible = monetaryWindowCustomer(['total_orders' => 0, 'recency_days' => null, 'frequency' => 0, 'monetary' => 0, 'monetary_recent' => null]);
+    monetaryWindowCustomer(['recency_days' => 30, 'frequency' => 5, 'monetary' => 500_000, 'monetary_recent' => null]);
+
+    app(RfmCalculator::class)->compute();
+
+    expect(monetaryScoresFor($ineligible)->rfm_segment)->toBeNull();
+});

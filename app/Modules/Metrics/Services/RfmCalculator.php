@@ -263,7 +263,29 @@ final class RfmCalculator
             SQL);
     }
 
+    /**
+     * P6-21, product-owner decision (ARCHITECTURE.md): `cant_lose` always reads the LIFETIME
+     * `monetary` NTILE, never the windowed `m_score` — in `recent_window` mode, `m_score` has been
+     * overridden to the 60-day value by {@see overrideMonetaryScore()}, but a customer worth winning
+     * back (`cant_lose`'s whole point) is, by definition, someone who stopped buying — they almost
+     * never have a window purchase, so gating this one condition on the windowed score made the
+     * segment collapse to empty (documented in `docs/architecture/sprint-6.md`, "P6-20"'s own impact
+     * report). In `lifetime` mode this is a no-op: `m_score` already IS the lifetime value, so the
+     * fresh NTILE computed here is identical to it — `mapSegmentsLifetime()` below is kept byte-for-
+     * byte as PRD §12 wrote it (GATE 2), never routed through the CTE at all.
+     */
     private function mapSegments(): void
+    {
+        if ($this->monetaryMode() === 'recent_window') {
+            $this->mapSegmentsWithLifetimeCantLose();
+
+            return;
+        }
+
+        $this->mapSegmentsLifetime();
+    }
+
+    private function mapSegmentsLifetime(): void
     {
         DB::statement(<<<'SQL'
             UPDATE customer_metrics SET rfm_segment = CASE
@@ -278,6 +300,38 @@ final class RfmCalculator
               WHEN r_score = 1                                      THEN 'lost'
               ELSE 'promising'
             END
+            SQL);
+    }
+
+    /**
+     * Identical CASE to {@see mapSegmentsLifetime()}, except `cant_lose`'s M check reads
+     * `lm.m_score_lifetime` (a fresh `NTILE(5) OVER (ORDER BY monetary ASC, customer_id ASC)`,
+     * scoped to the same already-nullified eligible rows via `r_score IS NOT NULL`) instead of the
+     * windowed `m_score` column. Only rows present in `lifetime_m` (i.e. eligible) are touched by this
+     * UPDATE; ineligible rows already have `rfm_segment = NULL` from `nullifyIneligible()`, which runs
+     * earlier in {@see compute()}, so they are correctly left untouched here rather than re-nulled.
+     */
+    private function mapSegmentsWithLifetimeCantLose(): void
+    {
+        DB::statement(<<<'SQL'
+            WITH lifetime_m AS (
+                SELECT customer_id, NTILE(5) OVER (ORDER BY monetary ASC, customer_id ASC) AS m_score_lifetime
+                FROM customer_metrics
+                WHERE r_score IS NOT NULL
+            )
+            UPDATE customer_metrics cm SET rfm_segment = CASE
+              WHEN cm.r_score >= 4 AND cm.f_score >= 4                      THEN 'champion'
+              WHEN cm.r_score >= 3 AND cm.f_score >= 3                      THEN 'loyal'
+              WHEN cm.r_score >= 4 AND cm.f_score <= 2 AND cm.frequency > 1 THEN 'promising'
+              WHEN cm.r_score = 5  AND cm.frequency = 1                     THEN 'new_customer'
+              WHEN cm.r_score = 2  AND cm.f_score >= 3                      THEN 'at_risk'
+              WHEN cm.r_score = 1  AND cm.f_score >= 4 AND lm.m_score_lifetime >= 4 THEN 'cant_lose'
+              WHEN cm.r_score <= 2 AND cm.f_score <= 2                      THEN 'hibernating'
+              WHEN cm.r_score = 1                                          THEN 'lost'
+              ELSE 'promising'
+            END
+            FROM lifetime_m lm
+            WHERE lm.customer_id = cm.customer_id
             SQL);
     }
 }
