@@ -205,6 +205,15 @@ it('rejects a value it does not understand instead of ignoring it, and never run
     'injection attempt in status' => ["?status=active'%20OR%201=1"],
 ]);
 
+/* P6-14 phase 2: was in English before the shared JalaliDayRule/JalaliDateRangeValidation. */
+it('rejects an out-of-order first-seen range with a Persian message, not English', function () {
+    $resp = $this->actingAs(Fx::userWith('customers.view'))->get('/customers?first_seen_from=1405/05/01&first_seen_to=1405/01/01');
+    $resp->assertSessionHasErrors(['first_seen_to']);
+
+    expect(session('errors')->get('first_seen_to')[0])
+        ->toBe('انتهای بازه نباید قبل از ابتدای آن باشد.');
+});
+
 it('rejects an over-long search', function () {
     $this->actingAs(Fx::userWith('customers.view'))->get('/customers?search='.str_repeat('x', 101))->assertRedirect()->assertSessionHasErrors('search');
 });

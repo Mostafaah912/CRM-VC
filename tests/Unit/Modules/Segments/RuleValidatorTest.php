@@ -248,3 +248,41 @@ it('carries a Persian message on every exception', function () {
         expect($e->getMessage())->toMatch('/\p{Arabic}/u');
     }
 });
+
+/*
+| P6-14 phase 2: DATE_FIELDS (first_seen_at, expected_next_order_at) scalar/range comparison values
+| are now required to be a Jalali YYYY/MM/DD day string (the Rule Builder's new JalaliDayPicker wire
+| format), the same leap-boundary rule as every other Jalali field in the app (App\Support\JalaliDay).
+*/
+it('accepts a valid Jalali day for a date-field scalar comparison', function (string $operator) {
+    assertValidRule(['field' => 'first_seen_at', 'operator' => $operator, 'value' => '1403/01/01']);
+})->with(['=', '!=', '>', '>=', '<', '<='])->throwsNoExceptions();
+
+it('accepts the leap boundary 1403/12/30 for a date field', function () {
+    assertValidRule(['field' => 'first_seen_at', 'operator' => '=', 'value' => '1403/12/30']);
+})->throwsNoExceptions();
+
+it('rejects 1404/12/30 for a date field (1404 is not a leap Jalali year)', function () {
+    assertRuleFails(['field' => 'first_seen_at', 'operator' => '=', 'value' => '1404/12/30'], RuleValidationException::INVALID_VALUE_SHAPE);
+});
+
+it('rejects a non-Jalali-day scalar value for a date field', function (mixed $value) {
+    assertRuleFails(['field' => 'first_seen_at', 'operator' => '>=', 'value' => $value], RuleValidationException::INVALID_VALUE_SHAPE);
+})->with([
+    'gregorian-looking' => ['2026-03-21'],
+    'month 13' => ['1403/13/01'],
+    'not a string' => [20260321],
+    'empty' => [''],
+]);
+
+it('accepts a Jalali between range for a date field', function () {
+    assertValidRule(['field' => 'first_seen_at', 'operator' => 'between', 'value' => ['1403/01/01', '1403/06/01']]);
+})->throwsNoExceptions();
+
+it('rejects a between range for a date field if either side is not a valid Jalali day', function () {
+    assertRuleFails(['field' => 'first_seen_at', 'operator' => 'between', 'value' => ['1403/01/01', '1404/12/30']], RuleValidationException::INVALID_VALUE_SHAPE);
+});
+
+it('still accepts a plain numeric between range for a non-date field (unaffected by the date check)', function () {
+    assertValidRule(['field' => 'total_orders', 'operator' => 'between', 'value' => [1, 10]]);
+})->throwsNoExceptions();

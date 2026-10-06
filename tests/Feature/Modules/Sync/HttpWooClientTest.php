@@ -568,6 +568,15 @@ it('only ever sends GET requests, including on retries', function () {
 });
 
 it('contains no write-verb HTTP call anywhere in the Sync module', function () {
+    // P6-10: SyncService::pruneLogs() deletes local sync_logs rows (Eloquent, never Woo/HTTP) — the one
+    // legitimate ->delete() in this module. The exemption is the exact source line, so any change to it
+    // (e.g. touching WooClient) stops matching and this test catches it again — never widen this list for
+    // anything that touches WooClient/HttpWooClient.
+    $allowed = [
+        app_path('Modules/Sync/Services/SyncService.php') => [
+            "SyncLog::query()->whereIn('id', \$ids)->delete();",
+        ],
+    ];
     $hits = [];
 
     foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator(app_path('Modules/Sync'))) as $file) {
@@ -575,7 +584,13 @@ it('contains no write-verb HTTP call anywhere in the Sync module', function () {
             continue;
         }
 
-        if (preg_match('/->(post|put|patch|delete|send)\s*\(|Http::(post|put|patch|delete)\b|CURLOPT_POST|CURLOPT_CUSTOMREQUEST/', (string) file_get_contents($file->getPathname()))) {
+        $code = (string) file_get_contents($file->getPathname());
+
+        foreach ($allowed[$file->getPathname()] ?? [] as $exempt) {
+            $code = str_replace($exempt, '', $code);
+        }
+
+        if (preg_match('/->(post|put|patch|delete|send)\s*\(|Http::(post|put|patch|delete)\b|CURLOPT_POST|CURLOPT_CUSTOMREQUEST/', $code)) {
             $hits[] = $file->getPathname();
         }
     }

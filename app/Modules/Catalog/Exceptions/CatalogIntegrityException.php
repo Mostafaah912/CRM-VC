@@ -32,6 +32,22 @@ final class CatalogIntegrityException extends RuntimeException
         return new self(self::SKU_CONFLICT, "Woo variation {$wooVariationId} repeats SKU '{$sku}' already used earlier in the same product payload.");
     }
 
+    /** P6 decision: products can now own a SKU too, so a conflict can occur across either table. */
+    public static function productSkuAlreadyOwnedByProduct(int $wooProductId, string $sku, int $ownerProductId): self
+    {
+        return new self(self::SKU_CONFLICT, "Woo product {$wooProductId} wants SKU '{$sku}', which local product {$ownerProductId} already owns.");
+    }
+
+    public static function productSkuAlreadyOwnedByVariation(int $wooProductId, string $sku, int $ownerVariationId): self
+    {
+        return new self(self::SKU_CONFLICT, "Woo product {$wooProductId} wants SKU '{$sku}', which local variation {$ownerVariationId} already owns.");
+    }
+
+    public static function variationSkuAlreadyOwnedByProduct(int $wooVariationId, string $sku, int $ownerProductId): self
+    {
+        return new self(self::SKU_CONFLICT, "Woo variation {$wooVariationId} wants SKU '{$sku}', which local product {$ownerProductId} already owns.");
+    }
+
     public static function variationUnderAnotherProduct(int $wooVariationId, int $wooProductId): self
     {
         return new self(self::VARIATION_PARENT_MISMATCH, "Woo variation {$wooVariationId} already belongs to a different local product than Woo product {$wooProductId}.");

@@ -113,6 +113,18 @@ it('paginates the most recent audit entries first', function () {
 
     $page = app(AuditService::class)->paginate(perPage: 10);
 
-    expect($page->items()[0]->action)->toBe('second')
-        ->and($page->items()[1]->action)->toBe('first');
+    expect($page->items()[0]['action'])->toBe('second')
+        ->and($page->items()[1]['action'])->toBe('first');
+});
+
+it('formats created_at as Jalali/Tehran time (P6-11), never the raw Gregorian value the column stores', function () {
+    // audit_logs.created_at is a DB-side useCurrent() default (AuditLog has no Eloquent timestamps), so
+    // travelTo() cannot pin it — the shape (Jalali, not a Gregorian year) is what this test can prove.
+    app(AuditService::class)->record(AuditActorType::System, 'x', 'X', 1);
+
+    $row = app(AuditService::class)->paginate(perPage: 10)->items()[0];
+    $storedGregorianYear = AuditLog::query()->latest('id')->first()->created_at->format('Y');
+
+    expect($row['created_at'])->toMatch('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/')
+        ->and($row['created_at'])->not->toContain((string) $storedGregorianYear);
 });

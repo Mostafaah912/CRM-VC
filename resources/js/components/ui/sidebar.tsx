@@ -1,7 +1,12 @@
 import { Slot } from "@radix-ui/react-slot"
 import type { VariantProps} from "class-variance-authority";
 import { cva } from "class-variance-authority"
-import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "lucide-react"
+import {
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
+} from "lucide-react"
 import * as React from "react"
 
 import { Button } from "@/components/ui/button"
@@ -249,9 +254,13 @@ function Sidebar({
 function SidebarTrigger({
   className,
   onClick,
+  side = "left",
   ...props
-}: React.ComponentProps<typeof Button>) {
+}: React.ComponentProps<typeof Button> & { side?: "left" | "right" }) {
   const { toggleSidebar, isMobile, state } = useSidebar()
+  const collapsed = isMobile || state === "collapsed"
+  const OpenIcon = side === "right" ? PanelRightOpenIcon : PanelLeftOpenIcon
+  const CloseIcon = side === "right" ? PanelRightCloseIcon : PanelLeftCloseIcon
 
   return (
     <Button
@@ -266,7 +275,7 @@ function SidebarTrigger({
       }}
       {...props}
     >
-      {isMobile || state === "collapsed" ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+      {collapsed ? <OpenIcon /> : <CloseIcon />}
       <span className="sr-only">Toggle sidebar</span>
     </Button>
   )
@@ -303,7 +312,11 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
       data-slot="sidebar-inset"
       className={cn(
         "bg-background relative flex max-w-full min-h-svh flex-1 flex-col",
-        "peer-data-[variant=inset]:min-h-[calc(100svh-(--spacing(4)))] md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:ml-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ml-0",
+        // The margin that collapses against the panel must drop on whichever side the
+        // panel actually renders (`data-side` on the Sidebar peer) — hardcoding left here
+        // while the app is RTL (panel on the right) is the root cause of content sliding
+        // under the sidebar.
+        "peer-data-[variant=inset]:min-h-[calc(100svh-(--spacing(4)))] md:peer-data-[variant=inset]:m-2 md:peer-data-[variant=inset]:peer-data-[side=left]:ml-0 md:peer-data-[variant=inset]:peer-data-[side=right]:mr-0 md:peer-data-[variant=inset]:rounded-xl md:peer-data-[variant=inset]:shadow-sm md:peer-data-[variant=inset]:peer-data-[state=collapsed]:peer-data-[side=left]:ml-0 md:peer-data-[variant=inset]:peer-data-[state=collapsed]:peer-data-[side=right]:mr-0",
         className
       )}
       {...props}

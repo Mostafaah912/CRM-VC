@@ -76,6 +76,10 @@ final class SyncService
      */
     public function run(SyncEntity $entity, SyncMode $mode = SyncMode::Incremental): ?SyncJob
     {
+        if ($entity !== SyncEntity::Orders) {
+            throw new InvalidArgumentException('SyncService::run() only supports SyncEntity::Orders; catalog syncs run through CatalogSyncJob, not a cursor/window run.');
+        }
+
         if ($mode === SyncMode::Webhook) {
             throw new InvalidArgumentException('The webhook mode is not run through SyncService: a webhook delivery starts an incremental run.');
         }
@@ -273,6 +277,35 @@ final class SyncService
                 'chunked' => $chunkBoundary !== null,
             ]);
         });
+    }
+
+    /**
+     * Deletes sync_logs rows older than $days (P6-10, PruneLogsJob), oldest-affecting first, in chunks so a large
+     * table never holds one huge transaction/lock. Idempotent: a second run over the same window deletes nothing.
+     */
+    public function pruneLogs(int $days, int $chunkSize = 1000): int
+    {
+        $cutoff = CarbonImmutable::now('UTC')->subDays($days);
+        $deleted = 0;
+
+        do {
+            $ids = SyncLog::query()->where('created_at', '<', $cutoff)->limit($chunkSize)->pluck('id');
+
+            if ($ids->isEmpty()) {
+                break;
+            }
+
+            SyncLog::query()->whereIn('id', $ids)->delete();
+            $deleted = $deleted + $ids->count();
+        } while ($ids->count() === $chunkSize);
+
+        return $deleted;
+    }
+
+    /** P6-10: consecutive_failures only ever moves for the orders entity (run() refuses any other). */
+    public function ordersConsecutiveFailures(): int
+    {
+        return (int) (SyncCursor::query()->whereKey(SyncEntity::Orders->value)->value('consecutive_failures') ?? 0);
     }
 
     /** woo.sync_epoch, the start of a full sync. */

@@ -19,7 +19,7 @@ final class OrderShowService
 {
     private const ORDER_COLUMNS = [
         'id', 'woo_order_id', 'status', 'total', 'subtotal', 'discount_total', 'shipping_total', 'tax_total',
-        'refunded_total', 'is_realized', 'is_fully_refunded', 'needs_phone_review', 'ordered_at', 'customer_id',
+        'refunded_total', 'net_revenue', 'is_realized', 'is_fully_refunded', 'needs_phone_review', 'ordered_at', 'customer_id',
     ];
 
     private const ITEM_COLUMNS = ['name_snapshot', 'sku', 'qty', 'unit_price', 'line_total'];

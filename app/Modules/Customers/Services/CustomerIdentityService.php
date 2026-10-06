@@ -13,6 +13,8 @@ use App\Modules\Customers\Models\CustomerIdentity;
 use App\Modules\Customers\Models\IdentityConflict;
 use App\Support\Exceptions\InvalidPhoneException;
 use App\Support\PhoneNormalizer;
+use Carbon\CarbonImmutable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use LogicException;
@@ -48,10 +50,22 @@ final class CustomerIdentityService
 
     private const SOURCE_ID_MAX = 64;
 
+    /** customers.province/city column widths (PRD §09). */
+    private const PROVINCE_MAX = 60;
+
+    private const CITY_MAX = 80;
+
     public function __construct(private readonly PersonNameNormalizer $names) {}
 
     /**
      * @throws InvalidPhoneException when the phone is not a valid Iranian mobile number
+     */
+    /**
+     * `$province`/`$city` are the order's BILLING address (PRD §08's identity flow is billing-centric;
+     * `customers.province`/`city` are single columns, not per-type) — adopted "most recent non-empty
+     * value" (same rule `adoptNames()` already applies to names: trusted to the caller's own call
+     * order, not a timestamp comparison here). `$orderedAt` only ever moves `first_seen_at` EARLIER
+     * (P6-14 phase 4): the oldest known order a customer appears on, never the latest.
      */
     public function resolve(
         ?string $phoneRaw,
@@ -60,6 +74,9 @@ final class CustomerIdentityService
         IdentitySource $source,
         string $sourceId,
         ?int $wooOrderId = null,
+        ?string $province = null,
+        ?string $city = null,
+        ?CarbonImmutable $orderedAt = null,
     ): Customer {
         $phone = PhoneNormalizer::normalize($phoneRaw);
         $sourceId = trim($sourceId);
@@ -71,8 +88,10 @@ final class CustomerIdentityService
         $first = $this->clean($firstName, self::FIRST_NAME_MAX);
         $last = $this->clean($lastName, self::LAST_NAME_MAX);
         $rawPhone = $this->clean($phoneRaw, self::RAW_PHONE_MAX);
+        $province = $this->clean($province, self::PROVINCE_MAX);
+        $city = $this->clean($city, self::CITY_MAX);
 
-        return DB::transaction(function () use ($phone, $rawPhone, $first, $last, $source, $sourceId, $wooOrderId): Customer {
+        return DB::transaction(function () use ($phone, $rawPhone, $first, $last, $source, $sourceId, $wooOrderId, $province, $city, $orderedAt): Customer {
             $customer = $this->lockedByPhone($phone);
             $created = false;
 
@@ -84,6 +103,9 @@ final class CustomerIdentityService
                     'first_name' => $first,
                     'last_name' => $last,
                     'display_name' => $this->compose($first, $last),
+                    'province' => $province,
+                    'city' => $city,
+                    'first_seen_at' => $orderedAt,
                     'created_at' => $now,
                     'updated_at' => $now,
                 ]]) === 1;
@@ -99,7 +121,7 @@ final class CustomerIdentityService
                 'created_at' => now(),
             ]]);
 
-            $conflict = $created ? null : $this->reconcileExisting($customer, $rawPhone, $first, $last, $wooOrderId);
+            $conflict = $created ? null : $this->reconcileExisting($customer, $rawPhone, $first, $last, $wooOrderId, $province, $city, $orderedAt);
 
             if ($created) {
                 DB::afterCommit(fn () => CustomerCreated::dispatch($customer->id));
@@ -125,10 +147,13 @@ final class CustomerIdentityService
         ?string $lastName,
         ?int $wooCustomerId,
         int $wooOrderId,
+        ?string $province = null,
+        ?string $city = null,
+        ?CarbonImmutable $orderedAt = null,
     ): Customer {
         return $wooCustomerId === null
-            ? $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooGuestOrder, (string) $wooOrderId, $wooOrderId)
-            : $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooUser, (string) $wooCustomerId, $wooOrderId);
+            ? $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooGuestOrder, (string) $wooOrderId, $wooOrderId, $province, $city, $orderedAt)
+            : $this->resolve($phoneRaw, $firstName, $lastName, IdentitySource::WooUser, (string) $wooCustomerId, $wooOrderId, $province, $city, $orderedAt);
     }
 
     /**
@@ -158,7 +183,7 @@ final class CustomerIdentityService
      * An existing customer: record a conflict if the last name is incompatible (and leave its name
      * alone), otherwise move names to the most recent non-empty values. Returns the NEW conflict, if any.
      */
-    private function reconcileExisting(Customer $customer, ?string $rawPhone, ?string $first, ?string $last, ?int $wooOrderId): ?IdentityConflict
+    private function reconcileExisting(Customer $customer, ?string $rawPhone, ?string $first, ?string $last, ?int $wooOrderId, ?string $province, ?string $city, ?CarbonImmutable $orderedAt): ?IdentityConflict
     {
         $conflict = null;
 
@@ -170,6 +195,18 @@ final class CustomerIdentityService
 
         if ($rawPhone !== null) {
             $customer->phone_raw_last = $rawPhone;
+        }
+
+        if ($province !== null) {
+            $customer->province = $province;
+        }
+
+        if ($city !== null) {
+            $customer->city = $city;
+        }
+
+        if ($orderedAt !== null && ($customer->first_seen_at === null || $orderedAt->lessThan($customer->first_seen_at))) {
+            $customer->first_seen_at = Carbon::instance($orderedAt);
         }
 
         if ($customer->isDirty()) {
@@ -206,6 +243,11 @@ final class CustomerIdentityService
     /** One pending row per (customer, incoming name, order) — a resync or a resolved review never re-raises it. */
     private function recordConflict(Customer $customer, ?string $incomingName, ?int $wooOrderId): ?IdentityConflict
     {
+        // A name mismatch always means this customer needs review, whether or not this exact
+        // (customer, name, order) combination was already logged (P6-14 phase 4 — previously this
+        // column was never written at all, so it could never actually become true).
+        $customer->needs_review = true;
+
         $alreadyRecorded = IdentityConflict::query()
             ->where('customer_id', $customer->id)
             ->where('incoming_name', $incomingName)

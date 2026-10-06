@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { JalaliRangePicker } from '@/components/jalali-date-picker';
 import {
     Select,
     SelectContent,
@@ -22,6 +23,7 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
 import { orderStatuses } from '@/lib/customer-labels';
 import { formatToman } from '@/lib/format';
 import { dashboard } from '@/routes';
@@ -219,33 +221,14 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
 
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="ordered-from">
-                                تاریخ ثبت از (شمسی)
-                            </Label>
-                            <Input
-                                id="ordered-from"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/01/01"
-                                value={state.ordered_from}
-                                onChange={(event) =>
-                                    set('ordered_from', event.target.value)
-                                }
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="ordered-to">
-                                تاریخ ثبت تا (شمسی)
-                            </Label>
-                            <Input
-                                id="ordered-to"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/06/29"
-                                value={state.ordered_to}
-                                onChange={(event) =>
-                                    set('ordered_to', event.target.value)
-                                }
+                            <Label>تاریخ ثبت</Label>
+                            <JalaliRangePicker
+                                from={state.ordered_from || null}
+                                to={state.ordered_to || null}
+                                onChange={(next) => {
+                                    set('ordered_from', next.from ?? '');
+                                    set('ordered_to', next.to ?? '');
+                                }}
                             />
                         </div>
                         <div className="ms-auto flex gap-2">
@@ -320,6 +303,14 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         {formatToman(order.total)}
+                                        {order.refunded_total > 0 && (
+                                            <span className="text-muted-foreground block text-xs">
+                                                خالص:{' '}
+                                                {formatToman(
+                                                    order.net_revenue,
+                                                )}
+                                            </span>
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         {order.customer_id === null ? (
@@ -333,8 +324,16 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
                                                 )}
                                                 className="underline-offset-4 hover:underline"
                                             >
-                                                {order.customer_display_name ??
-                                                    '—'}
+                                                {order.customer_display_name ===
+                                                null ? (
+                                                    '—'
+                                                ) : (
+                                                    <TruncatedText
+                                                        value={
+                                                            order.customer_display_name
+                                                        }
+                                                    />
+                                                )}
                                             </Link>
                                         )}
                                     </TableCell>

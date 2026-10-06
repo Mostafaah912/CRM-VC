@@ -101,6 +101,8 @@ final class OrderSyncService
         return new OrderInput(
             $o->wooOrderId, $o->number, $o->status, $o->wooCustomerId,
             $o->billingFirstName, $o->billingLastName, $o->billingPhone,
+            $o->billingProvince, $o->billingCity, $o->billingAddress, $o->billingPostcode,
+            $o->shippingProvince, $o->shippingCity, $o->shippingAddress, $o->shippingPostcode,
             $o->total, $o->discountTotal, $o->shippingTotal, $o->taxTotal,
             $o->couponCodes, $o->paymentMethod,
             $o->orderedAt, $o->paidAt, $o->completedAt, $o->wooModifiedAt,

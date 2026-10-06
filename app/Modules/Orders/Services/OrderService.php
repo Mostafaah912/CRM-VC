@@ -6,6 +6,7 @@ namespace App\Modules\Orders\Services;
 
 use App\Modules\Catalog\Services\CatalogService;
 use App\Modules\Catalog\Services\ResolvedCatalogItem;
+use App\Modules\Customers\Services\CustomerAddressService;
 use App\Modules\Customers\Services\CustomerIdentityService;
 use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Orders\Models\Order;
@@ -48,6 +49,7 @@ final class OrderService
     public function __construct(
         private readonly OrderStatusMapper $statuses,
         private readonly CustomerIdentityService $identities,
+        private readonly CustomerAddressService $addresses,
         private readonly CatalogService $catalog,
     ) {}
 
@@ -66,6 +68,12 @@ final class OrderService
         );
     }
 
+    /** How many stored orders still have no customer (PRD §08 step 1: an unusable phone, `needs_phone_review = true`). */
+    public function countNeedingPhoneReview(): int
+    {
+        return Order::query()->where('needs_phone_review', true)->count();
+    }
+
     /**
      * @return int the local order id
      */
@@ -73,6 +81,11 @@ final class OrderService
     {
         return DB::transaction(function () use ($input): int {
             $customerId = $this->customerId($input);
+
+            if ($customerId !== null) {
+                $this->addresses->upsert($customerId, 'billing', $input->billingProvince, $input->billingCity, $input->billingAddress, $input->billingPostcode);
+                $this->addresses->upsert($customerId, 'shipping', $input->shippingProvince, $input->shippingCity, $input->shippingAddress, $input->shippingPostcode);
+            }
 
             $order = Order::withTrashed()->where('woo_order_id', $input->wooOrderId)->lockForUpdate()->first()
                 ?? new Order(['woo_order_id' => $input->wooOrderId]);
@@ -115,6 +128,9 @@ final class OrderService
                 $input->billingLastName,
                 $input->wooCustomerId,
                 $input->wooOrderId,
+                $input->billingProvince,
+                $input->billingCity,
+                $input->orderedAt,
             )->id;
         } catch (InvalidPhoneException) {
             // Nothing was written (the phone is normalized first). The exception is not chained or logged: its text holds the number.
@@ -160,9 +176,14 @@ final class OrderService
     }
 
     /**
-     * PRD §10, in this order and no other: (1) the Woo variation id, when there is one; (2) the Woo product id
-     * together with the SKU; (3) the SKU alone; (4) nothing — the line keeps its SKU and name and is logged.
-     * The database allows one variation per SKU, so no step can match twice and no tie-break exists.
+     * PRD §10's original four steps, in this order and no other: (1) the Woo variation id, when there is
+     * one; (2) the Woo product id together with the SKU; (3) the SKU alone; then, before giving up, one
+     * extra step this project's owner added (P6 decision, ARCHITECTURE.md — NOT part of PRD §10's
+     * original list): (3.5) the SKU alone against a "simple" product's own SKU (`products.sku`), since
+     * PRD never defined how a simple product — which has no variation at all — could ever resolve.
+     * Step (4) nothing — the line keeps its SKU and name and is logged. The database allows one variation
+     * per SKU (and, since the P6 decision, one product per SKU, checked against both tables), so no step
+     * can match twice and no tie-break exists.
      */
     private function resolve(OrderItemInput $item, int $wooOrderId): ?ResolvedCatalogItem
     {
@@ -178,6 +199,10 @@ final class OrderService
 
         if ($resolved === null && $item->sku !== null) {
             $resolved = $this->catalog->resolveVariationBySku($item->sku);
+        }
+
+        if ($resolved === null && $item->sku !== null) {
+            $resolved = $this->catalog->resolveProductBySku($item->sku);
         }
 
         if ($resolved === null) {

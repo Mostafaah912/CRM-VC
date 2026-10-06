@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Orders;
 
-use App\Modules\Customers\Support\JalaliDay;
 use App\Modules\Orders\Services\OrderListService;
 use App\Modules\Orders\Support\OrderListFilters;
-use Closure;
-use Illuminate\Contracts\Validation\Validator;
+use App\Support\JalaliDateRangeValidation;
+use App\Support\JalaliDay;
+use App\Support\Rules\JalaliDayRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * The query string of the order list: every value is optional, an empty one means "not asked", and one that is not understood is
@@ -37,22 +38,15 @@ class OrderListRequest extends FormRequest
             'status' => ['nullable', 'string', 'max:30', Rule::in($orders->statusOptions())],
             'is_realized' => ['nullable', 'boolean'],
             'needs_phone_review' => ['nullable', 'boolean'],
-            'ordered_from' => ['nullable', 'string', $this->jalaliDay()],
-            'ordered_to' => ['nullable', 'string', $this->jalaliDay()],
+            'ordered_from' => ['nullable', 'string', new JalaliDayRule],
+            'ordered_to' => ['nullable', 'string', new JalaliDayRule],
             'page' => ['nullable', 'integer', 'min:1', 'max:100000'],
         ];
     }
 
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator): void {
-            $from = JalaliDay::start((string) $this->input('ordered_from'));
-            $to = JalaliDay::start((string) $this->input('ordered_to'));
-
-            if (! $validator->errors()->any() && $from !== null && $to !== null && $from->greaterThan($to)) {
-                $validator->errors()->add('ordered_to', 'The end of the range must not be before its start.');
-            }
-        });
+        $validator->after(fn (Validator $validator) => JalaliDateRangeValidation::assertOrder($validator, 'ordered_from', 'ordered_to'));
     }
 
     public function filters(): OrderListFilters
@@ -87,14 +81,5 @@ class OrderListRequest extends FormRequest
     public function page(): int
     {
         return max(1, $this->integer('page', 1));
-    }
-
-    private function jalaliDay(): Closure
-    {
-        return function (string $attribute, mixed $value, Closure $fail): void {
-            if (JalaliDay::start((string) $value) === null) {
-                $fail("The {$attribute} must be a Jalali day written YYYY/MM/DD.");
-            }
-        };
     }
 }

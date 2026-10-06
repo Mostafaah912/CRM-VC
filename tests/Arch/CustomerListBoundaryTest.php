@@ -25,7 +25,7 @@ function clBackendFiles(): array
         'app/Modules/Customers/Services/CustomerListService.php',
         'app/Modules/Customers/Support/CustomerListFilters.php',
         'app/Modules/Customers/Support/CustomerListRow.php',
-        'app/Modules/Customers/Support/JalaliDay.php',
+        'app/Support/JalaliDay.php',
         'app/Support/PhoneMask.php',
         'app/Support/Digits.php',
     ]);
@@ -65,7 +65,7 @@ it('registers the list and the Customer 360 page and its JSON endpoints (timelin
     $routes = Scanner::phpCode(clFile('routes/internal.php'));
     $web = (string) file_get_contents(clFile('routes/web.php'));
 
-    expect(substr_count($routes, 'Route::get('))->toBe(15) // the list; P3-03's page; P3-04's timeline; P3-05's orders/products/notes tabs; P3-06's order list and detail; P3-07's product list; P4-08's RFM page; P5-06's segment index/create/show/edit/export
+    expect(substr_count($routes, 'Route::get('))->toBe(22) // the list; P3-03's page; P3-04's timeline; P3-05's orders/products/notes tabs; P3-06's order list and detail; P3-07's product list; P4-08's RFM page; P5-06's segment index/create/show/edit/export; P6-06's dashboard; P6-07's drill show/export; P6-08's cohort/retention/affinity pages; P6-18 phase 5's metrics guide page
         ->and($routes)->not->toMatch('/Route::(put|patch|any|match|resource|apiResource)\b/')
         ->and(substr_count($routes, 'Route::post('))->toBe(6) // P3-02's audited reveal, P3-05's note store, P5-05's segment rule preview, P5-06's segment store/update/evaluate
         ->and(substr_count($routes, 'Route::delete('))->toBe(2) // P3-05's note delete, P5-06's segment delete
@@ -116,7 +116,7 @@ it('masks in the row, unconditionally — the list has no path that can carry a 
 it('formats every date through JalaliDate and never builds one from a raw string', function () {
     expect(Scanner::violations([clFile('app/Modules/Customers/Support/CustomerListRow.php')], ['/->format\s*\(/', '/\bdate\s*\(/']))->toBe([])
         ->and(Scanner::phpCode(clFile('app/Modules/Customers/Support/CustomerListRow.php')))->toContain('JalaliDate::format(')
-        ->and(Scanner::phpCode(clFile('app/Modules/Customers/Support/JalaliDay.php')))->toContain('JalaliDate::');
+        ->and(Scanner::phpCode(clFile('app/Support/JalaliDay.php')))->toContain('JalaliDate::');
 });
 
 it('writes the page in strict TypeScript, with the one shared badge, no any, no raw HTML, no console, no fetch of its own', function () {

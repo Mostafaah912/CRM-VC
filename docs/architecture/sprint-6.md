@@ -1,0 +1,1471 @@
+# Architecture Log — Sprint 6
+
+Split-file convention از Sprint 5 ادامه دارد؛ `ARCHITECTURE.md` فقط index و Open Items را نگه می‌دارد، تاریخچه‌ی کامل هر تسک این‌جاست.
+
+## شروع Sprint 6 — بررسی GATE 1–3 قبل از کار
+
+طبق `gate-check`: به‌جای حدس زدن، سه سوییت واقعی اجرا شد — `Gate2MetricsVerificationTest`، `Gate3SqlInjectionTest`، `ReconciliationServiceTest` (GATE 1). نتیجه: **۱۳۴/۱۳۴ سبز** (۱۵۳۰ Assertion). هر سه دروازه همچنان عبورشده — کاری برای دوباره بستن لازم نبود. `main` هم قبل از شاخه‌زدن با `Origin/main` هم‌گام شد (fast-forward، Sprint 5 کامل داخلش).
+
+## Bugfix — `customers.metrics_dirty` هرگز `false` نمی‌شد (PRD §11 گام ۱۱)
+
+**زمینه:** یافته‌ی P5-08 (`sprint-5.md`): هیچ نویسنده‌ای `metrics_dirty` را `false` نمی‌کرد؛ روی dev هر ۱۹٬۹۰۵ مشتری `true` بودند. PRD §11 صراحتاً گام ۱۱ از ۱۲ گام `recomputeAll()` را «`metrics_dirty = false`» تعریف کرده، درست قبل از گام ۱۲ (`finish → event`).
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته و قرمز اجرا شدند):** ۶ تست تازه —
+- ۱ تست واحد روی خودِ `BaseAggregateService::resetDirtyFlag()` (`tests/Feature/Modules/Metrics/BaseAggregateServiceTest.php`): فقط مشتریان همان `metric_run_id` ریست می‌شوند، مشتری متعلق به یک Run دیگر دست‌نخورده می‌ماند.
+- ۵ تست سرتاسری روی `RecomputeMetricsJob::dispatchSync()` (`tests/Feature/Modules/Metrics/MetricsDirtyResetTest.php`): بعد از `dirty` مشتری پردازش‌شده `false` می‌شود؛ اجرای دوباره‌ی `dirty` بدون تغییر → `customers_processed=0`؛ `full` همه‌ی پردازش‌شده‌ها (چه قبلاً `true` چه `false`) را ریست می‌کند؛ مشتری نرم‌حذف‌شده (خارج از WHERE پایه) دست‌نخورده می‌ماند؛ شکست وسط Pipeline (همان ترفند `ALTER TABLE ... DROP COLUMN` که `RecomputeMetricsJobTest` قبلاً استفاده کرده بود) ریست را هم برمی‌گرداند.
+
+اجرای اول این ۶ تست: ۳ قرمز به‌خاطر رفتار غلط، ۱ قرمز به‌خاطر متد ناموجود (`resetDirtyFlag`) — دقیقاً همان‌هایی که انتظار می‌رفت.
+
+**طراحی انتخاب‌شده (ساده‌ترین سازگار با PRD §11، بدون Migration/Schema):** متد تازه `BaseAggregateService::resetDirtyFlag(int $metricRunId): int` — یک `UPDATE customers ... FROM customer_metrics WHERE cm.metric_run_id = ? AND c.metrics_dirty = true`. هیچ ستون/ردیابی تازه‌ای لازم نبود: `metric_run_id` از قبل (گام ۳، UPSERT پایه) دقیقاً روی همان مشتریانی نوشته می‌شود که آن Run واقعاً پردازش کرده — چه `full` (همه) چه `dirty` (فقط `metrics_dirty=true`‌ها) — پس فیلتر روی همین ستون، بدون فیلتر اضافه، هر دو حالت را درست پوشش می‌دهد. این متد آخرین خط داخل همان `DB::transaction()` موجود در `MetricsRecomputeService::run()` است (بعد از `lifecycle->resolve()`، قبل از `return $count`) — یعنی شکست هر گام قبلی، ریست را هم Rollback می‌کند، بدون نیاز به منطق تازه.
+
+**پنجره‌ی رقابتی باقی‌مانده (عمداً حل نشد، طبق دستور ثبت شود):** اگر بین شروع Pipeline (گام ۳، خواندن Aggregate) و پایان آن (گام ۱۱، همین Transaction) یک سفارش تازه برای همان مشتری برسد و Listener `MarkCustomerMetricsDirty` را صدا بزند، `UPDATE` ما (که هدفش `metrics_dirty=true` است) منتظر قفل ردیف آن Customer می‌ماند، بعد آن را هم `false` می‌کند — یعنی سفارش تازه «قورت داده می‌شود»: مشتری «تمیز» علامت می‌خورد در حالی که Aggregateهایش هنوز آن سفارش را ندیده. تنها راه Mitigation فعلی: اجرای شبانه‌ی `full` (PRD §22) که همه‌چیز را صرف‌نظر از `metrics_dirty` دوباره می‌سازد، پس حداکثر یک شبانه‌روز اثر می‌ماند. رفع کامل (مثلاً قفل‌گیری صریح ردیف مشتری در Listener، یا شرط زمانی روی `updated_at`) خارج از Scope این Bugfix است.
+
+**Mutation check دستی:** خط `$this->baseAggregates->resetDirtyFlag($run->id);` موقتاً به کامنت تبدیل شد → از ۵ تست `MetricsDirtyResetTest`، دقیقاً ۳ تای مرتبط با ریست شکستند (۲ تای دیگر — نرم‌حذف‌شده و شکست وسط Pipeline — طبیعتاً بدون تغییر سبز ماندند چون رفتار مورد انتظارشان همان «دست‌نخورده ماندن» است). خط بازگردانده شد، هر ۵ سبز.
+
+**نتیجه:** `Gate2MetricsVerificationTest` و `tests/fixtures/expected_metrics.json` دست‌نخورده ماندند (۲/۲ سبز، ۱۱۶۹ Assertion). `RecomputeMetricsJobTest` (۱۰ تست قبلی) هم بدون تغییر سبز. Pint تمیز، PHPStan روی دو فایل تغییرکرده ۰ خطا.
+
+**فایل‌ها:** `app/Modules/Metrics/Services/BaseAggregateService.php` (متد تازه + بازنویسی یک پاراگراف Docblock)، `app/Modules/Metrics/Services/MetricsRecomputeService.php` (یک خط فراخوانی + Docblock)، `tests/Feature/Modules/Metrics/BaseAggregateServiceTest.php` (۱ تست تازه)، `tests/Feature/Modules/Metrics/MetricsDirtyResetTest.php` (فایل تازه، ۵ تست).
+
+**⚠ اثر جانبی کشف‌شده هنگام اجرای کامل تست‌ها (بستن Sprint 6، commit جدا):** بعد از این Bugfix، `php artisan test` کامل ۲ تست موجود در `MarkCustomerMetricsDirtyTest.php` را قرمز کرد (`it sets metrics_dirty on the event's customer`، `it never touches another customer's metrics_dirty`) — هر دو حتی تنها هم قرمز بودند، نه فقط در ترکیب با بقیه‌ی Suite. علت: `phpunit.xml` روی محیط تست `QUEUE_CONNECTION=sync` تنظیم کرده؛ این دو تست، برخلاف دو تست خواهر دیگر در همان فایل، `Queue::fake()` نداشتند. بدون آن، `RecomputeMetricsJob::dispatch('dirty')->delay(...)` واقعاً و هم‌زمان (چون Sync، `delay` را نادیده می‌گیرد) همان لحظه اجرا می‌شود — و حالا که Bugfix بالا واقعاً `metrics_dirty` را در پایان Pipeline `false` می‌کند، همان Job هم‌زمان پرچمی را که تست لحظه‌ای پیش `true` کرده بود، دوباره `false` می‌کند، قبل از این‌که Assertion اجرا شود. این یک وابستگی پنهان به همان باگی بود که رفع شد — نه یک رگرسیون در کد Production؛ در Production صف واقعی است، ۵ دقیقه تأخیر دارد، و تا آن زمان Aggregate واقعاً سفارش تازه را دیده، پس ریست‌شدن درست است. رفع: افزودن `Queue::fake()` به همان دو تست (دقیقاً همان الگویی که دو تست خواهرشان از قبل داشتند). `php artisan test` کامل بعد از این رفع: **۲۹۰۹/۲۹۰۹ سبز، ۱۳٬۵۸۱ Assertion**.
+
+---
+
+## P6-01 — Customer purchase aggregates
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php` (متد `rebuild()`) + `app/Modules/Analytics/Jobs/BuildCustomerPurchaseAggregatesJob.php` + `app/Modules/Analytics/Support/CustomerPurchaseAggregateSummary.php`. طبق PRD §16 عیناً: دو `INSERT ... SELECT` جدا برای `customer_product_purchases` و `customer_category_purchases` (دومی با JOIN از `product_category_product`)، هر دو داخل TRUNCATE قبل از INSERT، هر دو در یک `DB::transaction()`.
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱۳ تست تازه —
+- `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php` (۱۰ مورد): سفارش غیر-`is_realized` حذف می‌شود؛ سفارش نرم‌حذف‌شده حذف می‌شود؛ آیتم با `product_id=NULL` حذف می‌شود (از هر دو جدول)؛ عودت جزئی از `revenue` کم می‌شود ولی سفارش حذف نمی‌شود (برخلاف Base Aggregates)؛ دو ردیف از یک محصول در یک سفارش، یک `orders_count` می‌شود؛ محصول در دو دسته زیر هر دو دسته با اعداد کامل شمرده می‌شود؛ `last_bought_at` جدیدترین سفارش را می‌گیرد؛ اجرای دوباره Idempotent است (بدون تکثیر/تغییر)؛ بازسازی از صفر یعنی ردیف قدیمیِ محصولِ دیگر-خریداری-نشده پاک می‌شود؛ خلاصه‌ی برگشتی تعداد ردیف هر جدول را درست گزارش می‌دهد.
+- `tests/Feature/Modules/Analytics/BuildCustomerPurchaseAggregatesJobTest.php` (۳ مورد): `ShouldBeUnique`؛ `uniqueFor(600) > timeout(300)`؛ Dispatch واقعی هر دو جدول را پر می‌کند.
+
+اجرای اول: همه‌ی ۱۳ تست قرمز (`Class ... does not exist`) — به‌خاطر نبودن کلاس‌ها، دقیقاً همان قرمزی مورد انتظار.
+
+**تفاوت عمدی از Base Aggregates (ثبت طبق دستور):** PRD §16 هیچ فیلتر `is_fully_refunded` ندارد — برخلاف `BaseAggregateService` (PRD §11) که سفارش‌های کاملاً مرجوعی را کلاً کنار می‌گذارد. این‌جا عیناً طبق PRD §16 پیاده شد: سفارش کاملاً مرجوعی هم در `orders_count`/`items_count` شمرده می‌شود، فقط `revenue` آن با `line_total - refunded_amount` صفر/منفی‌جبران می‌شود (هیچ آیتمی که کاملاً مرجوع شده باشد `revenue` منفی مصنوعی تولید نمی‌کند چون `line_total - refunded_amount` طبق قرارداد Refund Service هرگز منفی نمی‌شود — این فرض تست نشد، خارج از Scope این تسک).
+
+**TRUNCATE در برابر DELETE+INSERT (تصمیم صریح طبق دستور کاربر):** TRUNCATE انتخاب شد، داخل همان Transaction با INSERT. دلیل: (۱) PRD §16 عیناً `TRUNCATE` نوشته؛ (۲) Docblock هر دو Migration (`033`/`034`) از قبل این دو جدول را «nightly TRUNCATE-and-rebuild aggregate» نامیده بودند — این یک تصمیم از‌قبل‌ثبت‌شده است، نه تصمیم تازه‌ی این تسک؛ (۳) `grep -rln customer_product_purchases\|customer_category_purchases app/ resources/js/ routes/` هیچ خواننده‌ای برنگرداند — یعنی امروز هیچ صفحه/سرویسی هم‌زمان از این دو جدول نمی‌خواند، پس قفل `ACCESS EXCLUSIVE` کوتاه TRUNCATE (اجرای واقعی dev: ۶۳ میلی‌ثانیه کل کار) هیچ تأثیر عملی ندارد؛ DELETE+INSERT برای حل یک مسئله‌ی هم‌زمانی که هنوز وجود ندارد، یک تصمیم قبلی مستند را دور می‌زد. **پرچم برای آینده:** وقتی تسک‌های بعدی Sprint 6 (Dashboard/Affinity/Customer 360) شروع به خواندن زنده از این جدول‌ها کنند و اگر هم‌زمان با زنجیره‌ی شبانه بخواهند بخوانند، این تصمیم باید بازبینی شود — این‌جا فقط پرچم شد، حل نشد.
+
+**مرز ماژول — بدون تغییر Arch Test:** `tests/Arch/ArchitectureTest.php`'s Rule 7 (`confines raw SQL to migrations, the Metrics/Analytics modules...`) از قبل کل `app/Modules/Analytics/` را در `$allowedPrefixes` معاف کرده بود — برخلاف استثنای تک‌فایلیِ `Catalog\ProductListService` (P3-07). این معافیت گسترده هم از قبل در `ARCHITECTURE.md`("Confirmed decisions") ثبت شده بود. **نتیجه: هیچ تغییری در Allowlist یا هر Arch Test دیگر لازم نشد** — کد فقط جدول‌ها را با نام صریح (`orders`, `order_items`, `product_category_product`, خودِ دو جدول مقصد) می‌خواند/می‌نویسد، بدون Import هیچ Model ماژول دیگر (سازگار با جدول وابستگی `Analytics => [Core, Orders, Metrics, Catalog]`). `php artisan test --filter=ArchitectureTest` بعد از افزودن این دو فایل: ۱۴/۱۴ سبز، بدون تغییر.
+
+**Queue:** `metrics` (نه `analytics` — Horizon فقط `critical/sync/metrics/ai/default` را Supervise می‌کند؛ `config/horizon.php:203` تأیید شد). همان انتخابی که `RebuildAllSegmentsJob` (P5-08) قبلاً کرده بود، با همان استدلال: طبق زنجیره‌ی شبانه‌ی PRD §22 این Job بلافاصله بعد از `RecomputeMetricsJob('full')` می‌آید، پس باید روی همان Worker Pool باشد، نه رقابت روی `default`.
+
+**ابهام ثبت‌شده (طبق دستور، بدون کد اضافه):** PRD §10 از دستور کنسول `analytics:rebuild` نام می‌برد، ولی Backlog (بخش ۲۵) هیچ تسک مشخصی را مسئول ساخت آن نکرده — نه در P6-01، نه در کل Sprint 6. طبق قانون «یک Feature در هر Session»، این دستور ساخته نشد؛ برای راستی‌آزمایی dev از `BuildCustomerPurchaseAggregatesJob::dispatchSync()` در `php artisan tinker` استفاده شد. تصمیم نهایی (ساخت `analytics:rebuild` عمومی، یا واگذاری به Scheduler-only در P6-09) باید هنگام برنامه‌ریزی یک تسک بعدی گرفته شود.
+
+**راستی‌آزمایی روی dev:**
+
+```
+elapsed_ms = 63
+customer_product_purchases rows = 0
+customer_category_purchases rows = 0
+independent_sum (SUM(line_total-refunded_amount) روی order_items واقعی/زنده با product_id غیر NULL) = 0
+table_sum (SUM(revenue) در customer_product_purchases) = 0
+```
+
+**⚠ یافته‌ی جدید — تشدید شدت یک Open Item موجود، نه یک باگ تازه:** صفر بودن هر دو جدول تصادفی نبود. کوئری مستقیم نشان داد **هیچ‌کدام از ۶۱٬۳۵۸ ردیف `order_items` روی dev** (نه فقط سفارش‌های محقق‌شده) `product_id` یا `variation_id` مقداردهی‌شده ندارند — با وجود ۱۲ ردیف در جدول `products`. `ARCHITECTURE.md`'s Open Item موجود («Simple products have no resolvable SKU/price»، P2-05/P2-06) این را به‌صورت یک محدودیت جزئی برای محصولات ساده توصیف کرده بود؛ عدد واقعی نشان می‌دهد **۱۰۰٪** از خطوط سفارش، نه بخشی از آن‌ها، تحت تأثیرند. کد این تسک (P6-01) دقیقاً طبق قرارداد PRD §16 عمل کرد (`WHERE oi.product_id IS NOT NULL` — رفتار درست، نتیجه‌ی درستِ روی داده‌ی ناقص). راستی‌آزمایی مستقل (`independent_sum` در برابر `table_sum`) به‌صورت بدیهی برابر بود (۰=۰) — یعنی این چک برابری خودش هیچ باگی را رد نمی‌کند تا Catalog/Sync محصول را به خطوط سفارش وصل کند؛ باید بعد از رفع P2-05/P2-06 دوباره با داده‌ی واقعی اجرا شود. متن Open Item در `ARCHITECTURE.md` به‌روزرسانی شد (شدت، نه تکرار).
+
+**تست کامل این تسک:** `php artisan test --filter="CustomerPurchaseAggregateServiceTest|BuildCustomerPurchaseAggregatesJobTest"` → ۱۳/۱۳ سبز (۲۸ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز. Pint تمیز (یک‌بار Auto-fix روی ترتیب Import در فایل تست). PHPStan روی `app/Modules/Analytics/` → ۰ خطا.
+
+**Mutation check دستی:** فیلتر `oi.product_id IS NOT NULL` موقتاً به `1=1` تغییر کرد → بلافاصله یک `QueryException` واقعی (Not-null violation روی `customer_product_purchases.product_id`) یکی از ۱۰ تست را شکست — یعنی این فیلتر واقعاً لازم است، نه صرفاً تزئینی. فایل بازگردانده شد، ۱۳/۱۳ دوباره سبز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php`، `app/Modules/Analytics/Jobs/BuildCustomerPurchaseAggregatesJob.php`، `app/Modules/Analytics/Support/CustomerPurchaseAggregateSummary.php`، `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php`، `tests/Feature/Modules/Analytics/BuildCustomerPurchaseAggregatesJobTest.php`.
+
+**عمداً ساخته نشد (طبق دستور، برای تسک‌های بعدی Sprint 6):** `analytics:rebuild` کنسول، Daily metrics (P6-02)، Cohort (P6-03/۰۴)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-02 — Daily metrics
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/DailyMetricsService.php` (متد `rebuild(int $days, ?CarbonImmutable $asOf)`) + `app/Modules/Analytics/Jobs/BuildDailyMetricsJob.php` (`$days = 3` پیش‌فرض) + `app/Modules/Analytics/Support/DailyMetricsSummary.php`. Migration جدول `daily_metrics` از قبل وجود داشت (`2026_09_18_165733_create_daily_metrics_table.php`، دقیقاً طبق PRD §۹) — فقط بررسی شد، چیزی ساخته نشد.
+
+**ابهام PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):** PRD §۲۲ زنجیره‌ی شبانه را `BuildDailyMetricsJob(3)` می‌نویسد ولی معنای عدد ۳ را جایی توضیح نمی‌دهد. ساده‌ترین تفسیر سازگار با بقیه‌ی PRD انتخاب شد: یک «پنجره‌ی اصلاح» ۳روزه (امروز + دو روز قبل)، هم‌خانواده با الگوی `metrics:recompute --dirty` (PRD §۱۱) — روزهای اخیر ممکن است بعداً عوض شوند (عودت دیرهنگام، Sync دیرهنگام)، روزهای قدیمی‌تر پایدارند. برخلاف P6-01 (TRUNCATE کامل)، این‌جا فقط پنجره‌ی درخواستی UPSERT می‌شود (`ON CONFLICT (date) DO UPDATE`) و هر روز قدیمی‌تر دست‌نخورده می‌ماند — چون رفتار `BuildDailyMetricsJob(3)` بازسازی کل تاریخچه نیست.
+
+**تصمیم‌های دیگر (طبق دستور، هرکدام با دلیل):**
+- «سفارش شمرده‌شده» عیناً همان تعریف `BaseAggregateService` (PRD §۱۱): `is_realized = true AND is_fully_refunded = false AND deleted_at IS NULL` — نه تعریف P6-01 (که `is_fully_refunded` را فیلتر نمی‌کند)، چون `daily_metrics` همان اعداد Trend داشبورد را تغذیه می‌کند که باید با بقیه‌ی Metrics یکی باشند.
+- روز تقویمی = روز شمسی/میلادی **محلی تهران** (`ordered_at AT TIME ZONE 'Asia/Tehran'`), نه UTC — طبق CLAUDE.md §۲. `jalali_date` با همان تابع PL/pgSQL `to_jalali()` نوشته می‌شود که `BaseAggregateService` برای `cohort_month` استفاده می‌کند.
+- `customers_new`/`customers_repeat`/`revenue_new`/`revenue_repeat` از روی `customer_metrics.first_order_at` تشخیص داده می‌شوند (نه محاسبه‌ی دوباره از `orders`) — یعنی این Job به‌صراحت به تازه‌بودن `customer_metrics` وابسته است؛ همان دلیلی که PRD §۲۲ ترتیب زنجیره را `RecomputeMetricsJob('full') → BuildCustomerPurchaseAggregatesJob → BuildDailyMetricsJob(3)` گذاشته. اگر این Job جدا از زنجیره و روی `customer_metrics` بیات اجرا شود، مشتری واقعاً-تازه ممکن است تا بازمحاسبه‌ی بعدی «بازگشتی» شمرده شود — ثبت شد، رفع نشد (همان الگوی مستندسازی `RebuildAllSegmentsJob`).
+- Queue = `metrics` (همان انتخاب P5-08/P6-01، چون Horizon فقط `critical/sync/metrics/ai/default` را Supervise می‌کند).
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱۵ تست تازه —
+- `tests/Feature/Modules/Analytics/DailyMetricsServiceTest.php` (۱۱ مورد): سفارش غیر-realized حساب نمی‌شود؛ روز بدون سفارش هم یک ردیف صفر می‌گیرد (نه غایب)؛ مرز روز تهران (سفارش ساعت ۰۱:۰۰ بامداد ۱۶ام به‌وقت تهران درست زیر ۱۶ام می‌رود، نه ۱۵ام UTC)؛ مقادیر دقیق revenue/refunds/net_revenue/aov روی یک روز دو-سفارشی؛ سفارش کاملاً‌مرجوعی مثل Base Aggregates حذف می‌شود؛ سفارش نرم‌حذف‌شده حذف می‌شود؛ تفکیک new/repeat از روی `first_order_at`؛ یک مشتری با دو سفارش هم‌روز یک‌بار شمرده می‌شود و new درست تشخیص داده می‌شود؛ Idempotent (دو اجرا = یک نتیجه)؛ روز خارج از پنجره دست‌نخورده می‌ماند؛ پنجره‌ی چندروزه شامل روز میانیِ بدون سفارش هم می‌شود.
+- `tests/Feature/Modules/Analytics/BuildDailyMetricsJobTest.php` (۴ مورد): `ShouldBeUnique`؛ `uniqueFor(600) > timeout(300)`؛ پیش‌فرض `$days=3`؛ Dispatch واقعی جدول را پر می‌کند.
+
+اجرای اول: هر ۱۵ تست قرمز (`Class ... does not exist`)؛ بعد از پیاده‌سازی، هر ۱۵ سبز — بدون هیچ اصلاح رفتار لازم (طراحی اول درست بود).
+
+**Mutation check دستی (۲ مورد):** (۱) حذف `AND o.is_fully_refunded = false` → دقیقاً همان تستِ «سفارش کاملاً‌مرجوعی» شکست (۱۰/۱۱). (۲) گروه‌بندی روز را از `(ordered_at AT TIME ZONE 'Asia/Tehran')::date` به `(ordered_at)::date` (UTC خام) تغییر داد → دقیقاً تست مرز روز تهران شکست (۱۰/۱۱). هر دو بازگردانده شدند، ۱۵/۱۵ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev (پنجره‌ی ۷۳۵ روزه، از ۱۴۰۳/۰۷/۰۱ یعنی همان مبدأ GATE 1 تا امروز — عمداً همان ۱۱ سفارش خیلی‌قدیمیِ تاریخ‌غلط، یافته‌ی از‌قبل‌ثبت‌شده‌ی P2 با تاریخ سال ۱۴۰۴ در ستون میلادی، بیرون از این پنجره ماندند):**
+
+```
+elapsed_ms = 572
+daily_metrics rows written = 735 (کل پنجره، شامل روزهای بدون سفارش)
+daily_metrics: SUM(orders_count)=15,716   SUM(revenue)=12,157,406,361   SUM(customers_new)=13,973
+مستقیم از orders (همان فیلتر): COUNT(*)=15,716   SUM(total)=12,157,406,361
+مستقیم از customer_metrics.first_order_at در همین پنجره: 13,973
+```
+
+سه عدد **دقیقاً برابر** بودند، بدون هیچ اختلاف. کنترل داخلیِ اضافه: هیچ ردیفی در `daily_metrics` نقض `revenue_new + revenue_repeat = revenue` یا `customers_new + customers_repeat = customers_total` یا `revenue_repeat < 0` نداشت (۰ از ۷۳۵).
+
+**تست کامل این تسک:** `php artisan test --filter="DailyMetricsServiceTest|BuildDailyMetricsJobTest"` → ۱۵/۱۵ سبز (۳۷ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist (همان معافیت گسترده‌ی P6-01). PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/DailyMetricsService.php`، `app/Modules/Analytics/Jobs/BuildDailyMetricsJob.php`، `app/Modules/Analytics/Support/DailyMetricsSummary.php`، `tests/Feature/Modules/Analytics/DailyMetricsServiceTest.php`، `tests/Feature/Modules/Analytics/BuildDailyMetricsJobTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول (همان ابهام قبلی)، Cohort (P6-03/۰۴)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-03 — Cohort snapshots + maturity flag
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/CohortSnapshotService.php` (متد `rebuild(?CarbonImmutable $asOf)`) + `app/Modules/Analytics/Jobs/BuildCohortSnapshotsJob.php` (بدون آرگومان، طبق PRD §۲۲) + `app/Modules/Analytics/Support/CohortSnapshotSummary.php`. Migration جدول `cohort_snapshots` از قبل وجود داشت (`2026_09_18_165734_create_cohort_snapshots_table.php`، دقیقاً طبق PRD §۹؛ Docblock خودش هم از قبل «TRUNCATE-and-rebuild table» می‌گفت) — فقط بررسی شد.
+
+**ابهام‌های PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):**
+- **تعداد Period در هر Cohort:** PRD §۱۵ فقط «period 0 = acquisition» می‌گوید، هیچ سقفی مشخص نمی‌کند. ساده‌ترین تفسیر سازگار: از `config('metrics.horizon_years')` (همان افق ۲ساله‌ی CLV، PRD §۱۲/D12) استفاده شد → سقف ۲۴ دوره. دلیل رد گزینه‌ی جایگزین («فقط تا آخرین دوره‌ی واقعاً گذشته‌ی هر Cohort»): این گزینه هر ردیف تولیدشده را همیشه Mature می‌کرد (چون هرگز دوره‌ای فراتر از زمان سپری‌شده تولید نمی‌شد) و ستون `is_mature` را عملاً بلااستفاده می‌گذاشت — دقیقاً برخلاف هشدار «تله Cohort نابالغ» PRD که می‌خواهد سلول نابالغِ ماتریس واقعاً وجود داشته باشد (خاکستری/علامت‌دار، نه غایب و نه صفر). با سقف ثابت، هر Cohort برای هر ۲۵ دوره (۰ تا ۲۴) یک ردیف می‌گیرد؛ Cohortهای جوان برای دوره‌های آینده `is_mature=false` و `active_customers=0` واقعی می‌گیرند.
+- **تناقض فرمول Maturity با توضیح آن:** PRD §۱۵ یک خط بالاتر از فرمول SQL می‌گوید «Cohort واقعاً برای N ماه کامل وجود داشته باشد» (که یعنی عملگر باید `>` باشد، نه `>=`)، ولی خودِ SQL باکس‌شده می‌نویسد `jalali_month_diff(...) >= period_number` (ماه در حال گذر را هم Mature می‌شمارد). فرمول SQL باکس‌شده عیناً پیاده شد (همان اولویتی که در سراسر این کدبیس به SQL باکس‌شده‌ی PRD داده می‌شود، نه توضیح نثری آن — مثلاً `BaseAggregateService` هم SQL §۱۱ را عیناً می‌آورد) — تناقض فقط ثبت شد، حل نشد به‌نفع یکی.
+- **«Revenue» کدام تعریف:** برخلاف `daily_metrics` (P6-02) که سه ستون جدا (`revenue`/`refunds`/`net_revenue`) دارد، اینجا PRD فقط یک ستون `revenue` تعریف کرده. `o.net_revenue` (خالص، بعد از عودت) انتخاب شد — همان مبنایی که `BaseAggregateService`، `DailyMetricsService.net_revenue`، و کل موتور RFM/CLV/Churn روی آن ساخته شده‌اند؛ یک تعریف «واقعی از پول رسیده» در کل Metrics/Analytics.
+- **«سفارش شمرده‌شده»:** عیناً همان تعریف `BaseAggregateService`/P6-02: `is_realized = true AND is_fully_refunded = false AND deleted_at IS NULL` (مشتری نرم‌حذف‌شده هم فیلتر شد) — نه تعریف P6-01 که `is_fully_refunded` را نادیده می‌گیرد.
+
+**وابستگی ترتیب زنجیره (ثبت، نه رفع، همان الگوی مستندسازی P6-02/P5-08):** `cohort_month` مستقیماً از `customer_metrics.cohort_month` خوانده می‌شود، نه دوباره از `orders` محاسبه — یعنی این Job هم به تازه‌بودن خروجی `RecomputeMetricsJob('full')` وابسته است، دقیقاً همان‌طور که PRD §۲۲ ترتیبش داده.
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱۰ تست تازه —
+- `tests/Feature/Modules/Analytics/CohortSnapshotServiceTest.php` (۷ مورد): مقادیر دقیق `cohort_size`/`active_customers`/`retention_rate`/`orders_count`/`revenue`/`cumulative_revenue` روی فیکسچر دو‌مشتری دو‌دوره‌ای؛ سفارش غیر-realized نه مشتری فعال نه Revenue اضافه نمی‌کند؛ سفارش کاملاً‌مرجوعی و نرم‌حذف‌شده حذف می‌شوند؛ مرز ماه شمسی/تهران (سفارش ساعت ۰۰:۱۵ بامداد تهران روز اول ماه بعد، که در UTC خام هنوز روز قبل است، درست به ماه بعد نسبت داده می‌شود)؛ پرچم Maturity (دوره‌ی نرسیده `false`، دوره‌ی مرزی/در-حال-گذر طبق فرمول باکس‌شده `true`)؛ Idempotent؛ بازسازی از صفر (Cohort قدیمیِ دیگر در `customer_metrics` نبود، از جدول حذف می‌شود).
+- `tests/Feature/Modules/Analytics/BuildCohortSnapshotsJobTest.php` (۳ مورد): `ShouldBeUnique`؛ `uniqueFor(600) > timeout(300)`؛ Dispatch واقعی جدول را پر می‌کند.
+
+اجرای اول: هر ۱۰ تست قرمز (`Class ... does not exist`)؛ بعد از پیاده‌سازی، هر ۱۰ سبز — بدون هیچ اصلاح رفتار لازم.
+
+**Mutation check دستی (۲ مورد):** (۱) حذف `AND o.is_fully_refunded = false` → دقیقاً تست «سفارش کاملاً‌مرجوعی» شکست (۶/۷). (۲) تغییر عملگر Maturity از `>=` به `>` → دقیقاً تست Maturity شکست (۶/۷). هر دو بازگردانده شدند، ۱۰/۱۰ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev:**
+
+```
+elapsed_ms = 703
+rows written = 625  (۲۵ Cohort × ۲۵ دوره [۰..۲۴])، min cohort_month=1403-06  max=1405-07
+SUM(cohort_size @ period 0)      = 13,981   مستقیم COUNT(مشتری‌های non-deleted با cohort_month غیرNULL) = 13,981
+SUM(revenue در کل جدول)          = 12,015,968,388   مستقیم SUM(net_revenue) با همان فیلتر = 12,015,968,388
+SUM(orders_count در کل جدول)     = 15,581   مستقیم COUNT(*) با همان فیلتر = 15,581
+```
+
+سه عدد **دقیقاً برابر**. کنترل سلامت اضافه: هیچ ردیفی `cumulative_revenue < revenue` یا `active_customers > cohort_size` نداشت (۰ از ۶۲۵). **یافته‌ی جانبی، بدون نیاز به کاری:** دو سفارش با تاریخ خراب (سال ۱۴۰۴ میلادی، یافته‌ی از‌قبل‌ثبت‌شده در Open Items) هر دو `customer_id = NULL` دارند (سفارش بی‌موبایل)، پس به‌طور طبیعی از این محاسبه بیرون ماندند — بدون نیاز به فیلتر دستی اضافه.
+
+**تست کامل این تسک:** `php artisan test --filter="CohortSnapshotServiceTest|BuildCohortSnapshotsJobTest"` → ۱۰/۱۰ سبز (۳۰ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist. PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/CohortSnapshotService.php`، `app/Modules/Analytics/Jobs/BuildCohortSnapshotsJob.php`، `app/Modules/Analytics/Support/CohortSnapshotSummary.php`، `tests/Feature/Modules/Analytics/CohortSnapshotServiceTest.php`، `tests/Feature/Modules/Analytics/BuildCohortSnapshotsJobTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول، Retention/immature-guard صفحات و Store-level معیارها (Repeat Purchase Rate/N-day retention/Returning revenue share — بخش «معیارهای سطح فروشگاه» PRD §۱۵، مال P6-04)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## P6-04 — Retention + immature guard + «داده کافی نیست»
+
+**چه ساخته شد:** `app/Modules/Analytics/Services/RetentionService.php` با سه متد مستقل — `repeatPurchaseRate()`، `returningRevenueShare()`، `nDayRetention(int $days, ?CarbonImmutable $asOf)` — و سه DTO همراه (`RepeatPurchaseRateResult`، `ReturningRevenueShareResult`، `NDayRetentionResult`) در `app/Modules/Analytics/Support/`.
+
+**تصمیم معماری (ابهام حل‌شده، ثبت پیش از کد): بدون Job، بدون Migration، بدون جدول.** برخلاف P6-01/۰۲/۰۳، فهرست Jobهای PRD §۲۲ هیچ Job مشخصی برای این سه معیار ندارد؛ هرکدام یک خواندن ارزان روی جدول‌های از‌قبل‌مادی‌شده (`customer_metrics`/`orders`) است، نه یک Aggregate سنگین سراسری. قانون Dashboard در PRD §۱۸ («هیچ تجمیع سنگینی در لحظه بارگذاری») همان‌طور برآورده می‌شود که صفحات RFM/Churn از قبل برآورده می‌کنند (خواندن مستقیم از `customer_metrics`)، نه با افزودن یک جدول Cache دیگر برای عددهایی به این ارزانی.
+
+**ابهام‌های دیگر PRD حل‌شده (طبق دستور، پیش از کد ثبت شد):**
+- **Maturity اینجا چیست:** فرمول PRD §۱۵ («N-day retention: only over MATURE cohorts (first_order_at <= now() - n days)») یک مفهوم Maturity **روزانه و سطح‌مشتری** است، کاملاً جدا از `cohort_snapshots.is_mature` (P6-03، سطح‌ماه و سطح‌Cohort) — پس این سرویس اصلاً به `cohort_snapshots` سر نمی‌زند؛ Maturity مستقیماً از `customer_metrics.first_order_at` محاسبه می‌شود.
+- **«تله Cohort نابالغ» چطور اعمال شد:** مشتری نابالغ (کمتر از N روز از اولین سفارشش گذشته) کاملاً از محاسبه (هم صورت هم مخرج کسر) حذف می‌شود — حتی اگر از قبل یک سفارش دوم زودهنگام ثبت کرده باشد؛ شامل‌کردنش نرخ را با یک نمونه‌ی ناقص و جهت‌دار متورم می‌کند (تست اختصاصی نوشته شد، پایین).
+- **«داده کافی نیست»:** بدون آستانه‌ی اختراعی (برخلاف Churn که PRD خودش عدد ۲۰۰ می‌دهد) — ساده‌ترین تفسیر: مخرج صفر (هیچ مشتری واجد شرایط/بالغی نیست) یعنی `insufficientData=true` و مقدار نرخ `null`، هرگز یک صفر ساختگی.
+- **Returning Revenue Share در سطح سفارش، نه روز:** برخلاف `DailyMetricsService` (P6-02) که new/repeat را در سطح **روز تقویمی** تفکیک می‌کند، فرمول PRD §۱۵ اینجا دقیقاً لحظه‌ی `first_order_at` را با `ordered_at` مقایسه می‌کند — یعنی سفارش دومِ همان‌روزِ سفارش اول هم «بازگشتی» شمرده می‌شود (برخلاف P6-02). عیناً طبق فرمول پیاده شد؛ تفاوت با P6-02 عمدی و ثبت‌شده است، نه ناهماهنگی.
+- **فیلتر `is_fully_refunded` فقط روی دو متد، نه سه‌تا:** برای `nDayRetention` عیناً همان تعریف `BaseAggregateService` اعمال شد. برای `returningRevenueShare` این فیلتر **عمداً حذف شد** — چون برای سفارش کاملاً‌مرجوعی `net_revenue = total − refunded_total = 0` همیشه برقرار است، پس فیلتر یا نبودنش هیچ تفاوتی در جمع نمی‌گذارد (Mutation Test زیر این را ثابت کرد: حذف فیلتر هیچ تستی را نشکست، چون از اول اثری نداشت — نگه‌داشتنش صرفاً کد بی‌اثر بود).
+
+**TEST FIRST (تأیید صریح: تست‌ها قبل از کد نوشته شدند):** ۱ فایل، ۱۵ تست — `tests/Feature/Modules/Analytics/RetentionServiceTest.php`: مقادیر دقیق هر سه متد روی فیکسچرهای کوچک؛ حذف مشتری نرم‌حذف‌شده و سفارش غیر-realized/کاملاً‌مرجوعی از هر سه؛ مرز Maturity شامل (`first_order_at = asOf − N روز` دقیقاً باید بالغ باشد)؛ حذف کامل مشتری نابالغ حتی با بازگشت زودهنگام (تله Cohort نابالغ)؛ بازگشت بیرون از پنجره‌ی N روزه حذف می‌شود؛ «داده کافی نیست» وقتی مخرج صفر است؛ Idempotent (دو فراخوانی = یک نتیجه، بدون نوشتن چیزی).
+
+**«مرز زمان تهران» در این تسک به چه معناست (توضیح صریح، چون شکل متفاوتی از P6-02/۰۳ دارد):** ریاضی این سرویس روی بازه‌های زمانی مطلق (`INTERVAL 'N day'` روی `timestamptz`) است، نه گروه‌بندی روی روز/ماه تقویمی — پس هیچ مرز تقویمی تهرانی برای شکستن وجود ندارد (۳۰ روز واقعی همیشه ۳۰ روز واقعی است، مستقل از منطقه‌زمانی نمایش). چیزی که واقعاً تست شد: فراخوانی با `$asOf` یک‌بار در Asia/Tehran و یک‌بار در UTC (همان لحظه‌ی مطلق) باید دقیقاً یک نتیجه بدهد — یعنی سرویس منطقه‌زمانیِ نمایشیِ ورودی را نادیده می‌گیرد و فقط لحظه‌ی مطلق مهم است.
+
+**یافته‌ی جانبی حین TEST FIRST (رفع شد، کد Production هرگز اشتباه نبود):** دو Helper تست (`rsSeedMetrics`، `rsOrder`) اول بدون `->utc()` نوشته شدند؛ چون `DB::table()->insert()` هیچ Cast تاریخی مثل مدل Eloquent ندارد و Cast `'datetime'` مدل `Order` هم قبل از فرمت‌کردن منطقه‌زمانی را عوض نمی‌کند، هر دو رقم ساعت محلیِ Asia/Tehran را عیناً به‌عنوان UTC می‌نوشتند (همان تله‌ی مستندشده در ARCHITECTURE.md/P0-05). ۳ تست به‌خاطر همین با اعداد نادرست شکستند؛ رفع با افزودن `->utc()` صریح در هر دو Helper (همان الگویی که `DailyMetricsServiceTest`‌ی P6-02 از قبل داشت). **هیچ خط از `RetentionService.php` نیاز به تغییر نداشت** — باگ فقط در فیکسچر تست بود، نه در منطق سرویس.
+
+**Mutation check دستی (۳ مورد، هرکدام تا رد‌شدن دقیقاً همان تست هدف تکرار شد):** (۱) حذف `AND o.is_fully_refunded = false` از `nDayRetention` → دقیقاً تست «سفارش کاملاً‌مرجوعی» شکست. (۲) عملگر مرز Maturity از `<=` به `<` → دقیقاً تست «مرز شامل» شکست. (۳) سقف پنجره‌ی بازگشت را ۱۰ روز بزرگ‌تر کرد → دقیقاً تست «بیرون از پنجره» شکست. یک مورد چهارم (حذف فیلتر `is_fully_refunded` از `returningRevenueShare`) **هیچ تستی را نشکست** — که خودش تأیید مستقل تصمیم بالا بود (فیلتر همیشه بی‌اثر است)، نه یک شکاف پوشش. همه‌ی موارد بازگردانده شدند، ۱۵/۱۵ دوباره سبز.
+
+**راستی‌آزمایی مستقل روی dev:**
+
+```
+RepeatPurchaseRate:      eligible=13,981  repeat=1,078   rate=0.0771 (۷٫۷۱٪)
+مستقیم از customer_metrics: eligible=13,981  repeat=1,078   ✓ برابر
+
+ReturningRevenueShare:   total=12,015,968,388  returning=2,013,093,961  share=0.1675 (۱۶٫۷۵٪)
+مستقیم SUM(net_revenue) با همان فیلتر: total=12,015,968,388   ✓ برابر
+
+NDayRetention(30):  mature=13,020  returned=464   rate=0.0356 (۳٫۵۶٪)
+مستقیم: mature=13,020  returned=464   ✓ برابر
+
+NDayRetention(90):  mature=9,956   returned=547   rate=0.0549 (۵٫۴۹٪)  (فقط برای مقایسه آورده شد، Cross-check جدا نگرفت)
+```
+
+سه عدد اصلی **دقیقاً برابر** کوئری مستقل. **سیگنال کسب‌وکاری (نه باگ، طبق یادآوری خودِ اسکیل `gate-check` درباره‌ی نرخ خرید مجدد زیر ۱۰٪):** Repeat Purchase Rate واقعی روی dev ۷٫۷۱٪ است — زیر آستانه‌ی ۱۰٪ — باید به کاربر گزارش شود به‌عنوان یک واقعیت کسب‌وکار، نه یک نشانه‌ی باگ محاسباتی (خود اعداد با کوئری مستقل تأیید شدند).
+
+**تست کامل این تسک:** `php artisan test --filter=RetentionServiceTest` → ۱۵/۱۵ سبز (۳۷ Assertion). `ArchitectureTest` → ۱۴/۱۴ سبز، بدون تغییر Allowlist. PHPStan روی `app/Modules/Analytics/` → ۰ خطا. Pint تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/RetentionService.php`، `app/Modules/Analytics/Support/RepeatPurchaseRateResult.php`، `app/Modules/Analytics/Support/ReturningRevenueShareResult.php`، `app/Modules/Analytics/Support/NDayRetentionResult.php`، `tests/Feature/Modules/Analytics/RetentionServiceTest.php`.
+
+**عمداً ساخته نشد:** `analytics:rebuild` کنسول، صفحات Cohort/Retention UI («سلول نابالغ خاکستری» ماتریس، مال P6-08)، Affinity (P6-05)، Dashboard (P6-06+)، زنجیره‌ی کامل Scheduler (P6-09).
+
+---
+
+## تشخیص — چرا هیچ‌کدام از ۶۱٬۳۵۸ ردیف order_items روی dev، product_id قابل‌حل ندارد (بدون کد، طبق دستور صریح توقف)
+
+**درخواست:** رفع باگی که P6-01 (aggregates خالی)، P6-05 (Affinity) و سگمنت‌های محصول‌محور را می‌شکند. مرحله‌ی ۱ (تشخیص، فقط خواندن) کامل شد؛ مرحله‌ی ۲ (رفع) طبق دستور صریح متوقف شد چون رفع واقعی نیازمند اجرای زنده روی WooCommerce است — این بخش فقط تشخیص + برنامه‌ی رفع را ثبت می‌کند، **هیچ کد/Migration/Jobی نوشته نشد**.
+
+### علت اصلی (۱۰۰٪ از ۶۱٬۳۵۸ ردیف): کاتالوگ واقعی Woo هرگز روی dev Sync نشده
+
+با کوئری مستقیم و خواندن کد تأیید شد:
+
+- `products` روی dev **۱۲ ردیف** دارد، همه با `woo_product_id` بین ۳۰۰۰ تا ۳۰۱۱ و `synced_at` ثابت `2026-06-30 08:30:00`؛ `product_variations` **۲۴ ردیف** با `woo_variation_id` ۴۰۰۰۰-۴۰۰۲۳ و SKUهایی مثل `HM-00-S`. این‌ها عیناً `database/seeders/DemoDataSeeder.php:154` (`'woo_product_id' => 3000 + $p`) هستند — یعنی داده‌ی Fixture تست Gate 2، نه کاتالوگ واقعی فروشگاه.
+- `order_items` واقعی (۶۱٬۳۵۸ ردیف) SKUهای واقعی مثل `hmp-7614`/`hmp-6072` دارند (۱٬۹۱۱ SKU یکتا) — **صفر** تطابق با ۲۴ SKU فیکسچر بالا (`JOIN order_items ON sku = product_variations.sku` → ۰ ردیف).
+- `sync_cursors` روی dev **فقط یک ردیف دارد: `orders`**. هیچ Cursor/Sync-jobی برای `products`/`variations`/`categories` هرگز اجرا نشده.
+- `app/Modules/Sync/Enums/SyncEntity.php` امروز **فقط `Orders`** دارد؛ کامنت خودِ فایل صریح است: «catalog and customers are not run through here yet». `php artisan hm:sync --entity=products` هم امروز اجرا نمی‌شود: `SyncCommand.php` پیام ثابت `Unknown entity. Supported: orders.` می‌دهد.
+- **`CatalogSyncService` (ساخته‌شده در P2-05، طبق `sprint-2.md` با ۱۰۳۶ تست سبز و Mutation check کامل) هرگز از هیچ‌جای اپلیکیشن صدا زده نمی‌شود** — `grep -rln CatalogSyncService app/ routes/` فقط خودِ فایل را برمی‌گرداند. این عمدی و مستند بود: خودِ P2-05 زیر «آنچه ساخته نشد» می‌گوید «SyncService/Job/Cursor/Window» برای کاتالوگ ساخته نشد؛ P2-08 صریح می‌گوید «Sync دسته‌بندی/محصول/مشتری در این Run» عمداً نیست؛ P2-10 هم فقط `orders` را Schedule کرده. **این یک باگ نیست — یک تسک Backlog است که هرگز به Job/Command سطح Sprint 2 نرسید**، نه خطای پیاده‌سازی.
+
+### علت دوم، ساختاری (بخشی از ردیف‌ها را حتی بعد از Sync واقعی هم می‌بندد)
+
+- `products` ستون `sku`/`price` ندارد؛ فقط `product_variations` دارد. الگوریتم ۴مرحله‌ای Resolve (`OrderService::resolve()`, PRD §۱۰) فقط با `product_variations` کار می‌کند (`resolveVariationByWooId`/`ByProductAndSku`/`BySku`) — هرگز مستقیم با `products`.
+- طبق `sprint-2.md`‌ی P2-05 (خط ۷۷) محصول Woo از نوع `simple` هیچ ردیف `product_variations`ی نمی‌گیرد؛ P2-06 (خط ۹۳) همین را «محدودیت شناخته‌شده» می‌نامد و صراحتاً می‌گوید «⚠ باید قبل از P2-06 تصمیم‌گیری شود» — این تصمیم هرگز گرفته نشد (همان Open Item موجود در ARCHITECTURE.md، P2-05/P2-06). یعنی حتی بعد از یک Sync واقعیِ کامل، **خط سفارش هر محصول Simple همچنان NULL می‌ماند**، مگر این تصمیم گرفته شود.
+
+### محدودیت سوم: داده‌ی خام Woo برای Backfill محلی نصفه‌کاره باقی مانده
+
+`order_items` هرگز شناسه‌ی خام Woo (`woo_product_id`/`woo_variation_id` که Woo در Payload می‌فرستد) را ذخیره نمی‌کند — فقط ستون‌های FK حل‌شده (که امروز همه NULL‌اند). چیزی که واقعاً باقی مانده:
+
+```
+کل order_items:            61,358
+با sku غیر NULL:            55,560  (۹۰٫۵۵٪) — بعد از Sync واقعی، از مرحله‌ی ۲/۳ Resolve قابل بازیابی
+با sku NULL:                 5,798  (۹٫۴۵٪)  — هیچ داده‌ای برای Resolve محلی باقی نمانده؛ فقط با Re-sync از Woo (و Migration جدید برای نگه‌داشتن id خام) قابل حل است
+```
+
+پس یک Backfill محلی صرف (بدون Re-sync سفارش‌ها) حداکثر تا ۹۰٫۵۵٪ می‌تواند برود، هرگز ۱۰۰٪.
+
+### برنامه‌ی رفع (سه تصمیم، به ترتیب وابستگی — هیچ‌کدام امروز اجرا نشد)
+
+1. **تصمیم معماری (نیاز به تأیید شما، نه من): محصول Simple چطور Resolve شود؟** یا (الف) یک Variation پیش‌فرض مصنوعی (`woo_variation_id = NULL`) با SKU/قیمت خودِ محصول در زمان Sync ساخته شود، یا (ب) ستون‌های `sku`/`price` مستقیم به `products` اضافه شود و الگوریتم ۴مرحله‌ای یک مرحله‌ی جدید (`resolveProductBySku`) بگیرد. هر دو Migration جدید لازم دارند؛ PRD ساکت است و پروژه دوبار (P2-05 و P2-06) همین تصمیم را عمداً به انسان واگذار کرده — من هم اختراع نکردم.
+2. **Wiring Sync کاتالوگ (بی‌خطر، بدون تماس زنده — می‌توانم بسازم):** افزودن `SyncEntity::Categories/Products/Variations` (یا یک Case ترکیبی `Catalog`، چون `CatalogSyncService` همین سه را با هم انجام می‌دهد)، یک Job نازک هم‌الگوی `SyncEntityJob`/P2-08، و ثبت در `hm:sync`/Scheduler — دقیقاً همان الگوی Orders. TEST FIRST با `FakeWooClient`، بدون هیچ تماس زنده. این بخش مستقل از تصمیم ۱ است و امن است.
+3. **اجرای واقعی روی فروشگاه زنده Woo:** بعد از (۱) و (۲)، Sync واقعی باید یک‌بار روی دیتابیس dev اجرا شود تا کاتالوگ واقعی جایگزین Fixture شود. این اجرای زنده (تماس API واقعی، حجم/زمان نامعلوم روی کاتالوگ واقعی فروشگاه) دقیقاً همان نوع اقدامی است که طبق دستور شما نباید بدون تأیید صریح انجام شود — **متوقف شدم اینجا**. بعد از تأیید و اجرا، هیچ Backfill جداگانه‌ای لازم نیست: `BuildCustomerPurchaseAggregatesJob` (P6-01) از قبل idempotent است و از صفر از روی `order_items.product_id` تازه بازسازی می‌شود.
+
+### کراس‌چک این تشخیص (بدون هیچ Sync/Backfill، فقط برای اثبات صفر بودن Baseline)
+
+```
+customer_product_purchases rows (بعد از rerun P6-01 روی همین داده): 0
+customer_category_purchases rows:                                    0
+درصد order_items با product_id قابل‌حل:                              0.00% (0 / 61,358)
+```
+
+عدد صفر همان چیزی است که در P6-01 (`sprint-6.md`, dev verification) قبلاً دیده و ثبت شده بود؛ این تسک فقط **چرایی** آن را با اعداد دقیق روشن کرد، عددی تغییر نکرد چون هیچ کدی اجرا نشد.
+
+**تصمیم لازم از شما:** کدام گزینه‌ی تصمیم ۱ (پیش‌فرض یا ستون‌های `products`)، و آیا اجازه‌ی ساخت Wiring تصمیم ۲ (بدون اجرای زنده) در یک تسک بعدی داده می‌شود؟
+
+---
+
+## رفع — ستون‌های sku/price روی products (تصمیم ۱)، Wiring Sync کاتالوگ (تصمیم ۲)، تلاش اجرای زنده (تصمیم ۳، متوقف‌شده روی یک یافته‌ی تازه)
+
+**تصمیم‌های شما (عیناً اجرا شد):** (۱) ستون‌های Nullable `sku`/`price` به `products` اضافه شود + یک گام Resolve روی `products.sku`. (۲) `SyncEntity` برای Catalog گسترش یابد، با Job/Command idempotent قابل‌اجرای مجدد، هم‌الگوی Orders. (۳) اجرای زنده فقط GET، با Throttle و Page کوچک، بدون نوشتن روی Woo؛ اگر خطا/کندی دیدم متوقف شوم.
+
+### تصمیم ۱ — sku/price روی products (انحراف عمدی از PRD §۹، ثبت‌شده)
+
+PRD §۹ برای `products` ستون `sku`/`price` تعریف نمی‌کند — طبق `sprint-2.md`ی P2-05 (خط ۷۷) عمدی بود. این یک تصمیم صریح کاربر است، نه اختراع من؛ چون PRD §۹ چیز دیگری می‌گوید، طبق دستور در `ARCHITECTURE.md`ی «تصمیم‌های تأییدشده» ثبت شد (پایین‌تر).
+
+**Migration جدید (قابل‌بازگشت):** `2026_09_27_100000_add_sku_price_to_products_table.php` — `sku varchar(80) NULL`، `price bigint NULL`، ایندکس یکتای جزئی `WHERE sku IS NOT NULL` (عیناً همان الگوی `product_variations.sku`).
+
+**یافته‌ی خوش‌شانس:** `ProductDto`/`ProductMapper` (P2-05) از قبل `sku`/`price` را از Payload واقعی Woo می‌خواندند («PRD §۱۰ گام ۳ با sku تنها Resolve می‌کند» — کامنت خودِ `ProductDto`) ولی بین DTO و `ProductInput` (Value Object ماژول Catalog) بی‌صدا دور ریخته می‌شدند چون `products` جایی برای نوشتنشان نداشت. فقط لازم بود این دو فیلد در `ProductInput`، `CatalogSyncService::input()`، و `CatalogService::upsertProduct()` واقعاً جاری شوند — هیچ تغییری در Mapper/DTO لازم نبود.
+
+**گام Resolve تازه (۳.۵، نه بخشی از ۴ گام اصلی PRD §۱۰):** `CatalogService::resolveProductBySku()` بعد از شکست گام ۳ (SKU روی Variation) و پیش از تسلیم امتحان می‌شود. `ResolvedCatalogItem::$variationId` از `int` به `?int` عوض شد (یک محصول Simple هیچ Variation‌ای ندارد). یکتایی SKU حالا **بین دو جدول** چک می‌شود: `assertProductSkuFree()` (تازه) و `assertSkuFree()` (به‌روزشده) هرکدام هم `products` هم `product_variations` را می‌بینند — سه Factory تازه در `CatalogIntegrityException` برای سه جهت تعارض ممکن.
+
+**TEST FIRST:** ۱۹ تست تازه/به‌روزشده — `CatalogServiceTest.php` (۱۱ مورد: ذخیره sku/price، به‌روزرسانی، عدم برخورد با خودش، سه جهت تعارض SKU بین دو جدول، ایندکس دیتابیس، `resolveProductBySku` موفق/ناموفق)، `OrderServiceTest.php` (۳ مورد: STEP 3.5 موفق با variation_id=NULL، اولویت با Variation اگر هر دو موجود باشند، SKU محصول که به هیچ‌جا نمی‌خورد همچنان Unresolved)، `CatalogSyncServiceTest.php` (۱ مورد: Fixture واقعی محصول ۱۰۱ حالا sku='SYN-TEE-001'/price=۴۰۳۸۸۰ را واقعاً ذخیره می‌کند — تأیید سرتاسری، نه فقط واحد). Mutation check دستی (۲ مورد): تغییر SKU در فراخوانی گام ۳.۵ → دقیقاً تست همان گام شکست؛ حذف فراخوانی `assertProductSkuFree` → دقیقاً تست تعارض مربوطه شکست (یکی هم با خطای DB خام به‌جای Exception برنامه، که خودش دلیل وجود Guard است). هر دو بازگردانده شدند.
+
+### تصمیم ۲ — Wiring Sync کاتالوگ
+
+`SyncEntity::Catalog` اضافه شد، ولی **هرگز** به `SyncService::run()` نمی‌رسد (آن سرویس کاملاً برای مکانیزم Cursor/Window سفارش‌ها ساخته شده)؛ یک Guard صریح (`InvalidArgumentException`) اضافه شد تا این دو مسیر هرگز قاطی نشوند. `app/Modules/Sync/Jobs/CatalogSyncJob.php` (تازه) فقط `CatalogSyncService::syncCategories()` سپس `::syncProducts()` را صدا می‌زند — بدون هیچ منطق (Arch Test ماژول Sync هرگونه if/loop را در Jobها ممنوع می‌کند). `hm:sync --entity=catalog` مستقیماً همین Job را صف می‌کند (بدون عبور از `SyncEntityJob`)؛ `--full` برایش بی‌معنی است چون `CatalogSyncService` همیشه یک آینه‌ی کامل است. Scheduler: `Schedule::command('hm:sync', ['--entity' => 'catalog'])->dailyAt('01:30')` — مستقل، چون زنجیره‌ی کامل PRD §۲۲ (P6-09) هنوز ساخته نشده.
+
+**TEST FIRST:** ۱۰ تست تازه (`CatalogSyncJobTest.php` ۵ مورد با Fixtureهای واقعی ضبط‌شده و `SyncServiceTest.php` +۱ مورد برای Guard) + به‌روزرسانی ۹ تست/فایل موجود که فرض «فقط orders» داشتند: `SyncCommandTest.php` (پیام خطا، دو تست جدید برای Dispatch مستقیم، Helper زمان‌بندی جدا برای Orders vs Catalog)، `ReconcileCommandTest.php` («دقیقاً ۲ Task» → ۳)، `SyncLogsControllerTest.php` (فهرست `entities`)، `tests/Arch/SyncCommandBoundaryTest.php` (شمارش `$this->line`/`Schedule::command('hm:sync'`)، `tests/Arch/SyncRunBoundaryTest.php` (فهرست دقیق فایل‌های Job، Regex ارجاع به Service)، `tests/Arch/ReconciliationBoundaryTest.php` (شمارش کل `Schedule::`). همه با دلیل صریح در commit، نه ضعیف‌کردن بی‌توجیه.
+
+### تصمیم ۳ — تلاش اجرای زنده: **متوقف شد روی یک یافته‌ی تازه، نه 429/5xx**
+
+`CatalogSyncJob::dispatchSync()` روی dev واقعاً به WooCommerce زنده وصل شد (GET فقط، `per_page=50`، `rate_limit_per_minute=90`، `max_retries=4` — همان مقادیر از‌قبل‌پیکربندی‌شده، بدون تغییر). بعد از **۱۴ ثانیه**، `syncCategories()` با یک خطای واقعی دیتابیس (نه Woo، نه 429/5xx) شکست خورد:
+
+```
+SQLSTATE[22001]: String data, right truncated: value too long for type character varying(180)
+دسته Woo id=2346، slug واقعی به طول ۱۹۴ نویسه (URL-encoded فارسی)
+```
+
+**بررسی مستقل، فقط‌خواندنی (بدون نوشتن، طبق مجوز GET):** با خواندن مستقیم `products/categories` از Woo (بدون فراخوانی مسیر نوشتن)، از ۱۷۳ دسته‌ی واقعی فروشگاه **دقیقاً ۱ مورد** (id=2346) از سقف ستون `slug varchar(180)` رد می‌شود؛ هیچ `name`ی از سقف `varchar(160)` رد نمی‌شود.
+
+**چرا این «باگ تازه‌ی من» نیست:** خودِ `sprint-2.md`ی P2-05 این را از قبل به‌عنوان یک ریسک شناخته‌شده و **عمداً حل‌نشده** ثبت کرده بود: «نام یا مقدار بیش از عرض ستون خطای DB بلند می‌دهد (عمداً بریده نمی‌شود، برخلاف نام مشتری در P2-04)» — یعنی سازنده‌ی وقت آگاهانه Truncate نکرد و پذیرفت که روی داده‌ی واقعی ممکن است بترکد. تا امروز Sync کاتالوگ هرگز روی داده‌ی زنده اجرا نشده بود (همان تشخیص اصلی این Sprint)، پس این ریسک اولین‌بار همین‌جا واقعاً رخ داد.
+
+**وضعیت دیتابیس بعد از شکست:** بدون تغییر — `products`=۱۲، `product_categories`=۵، `product_variations`=۲۴ (همان داده‌ی Fixture P1-06)، چون کل Batch دسته‌بندی‌ها یک تراکنش است (P2-05) و با شکست کامل Rollback شد. **هیچ نیمه‌نوشته‌ای باقی نماند.**
+
+**چرا اینجا متوقف شدم (طبق روح دستور شما، نه فقط حرفش):** رفع این یک ردیف نیازمند یک تصمیم تازه است (Truncate کردن slug مثل فیلدهای دیگر Sync سفارش‌ها، یا بزرگ‌کردن ستون با Migration جدید، یا رد‌کردن همان یک دسته‌ی خراب و ادامه) — دقیقاً هم‌رده‌ی تصمیم ۱ که قبلاً از شما گرفته شد، نه چیزی که خودم باید حدس بزنم. تا این تصمیم گرفته شود، `syncProducts()` هم هرگز اجرا نشد (چون در `CatalogSyncJob` بعد از `syncCategories()` می‌آید) — یعنی **زیرساخت (تصمیم ۱ و ۲) کامل و سبز است، ولی داده‌ی dev هنوز کاتالوگ واقعی ندارد** و درصد Resolve هنوز همان ۰٪ قبلی است.
+
+**اعداد خواسته‌شده در گزارش (طبق دستور، حتی چون تصمیم ۳ کامل نشد):**
+
+```
+order_items با product_id قابل‌حل — قبل: 0 / 61,358 (0.00%)
+order_items با product_id قابل‌حل — بعد: 0 / 61,358 (0.00%)  (کاتالوگ واقعی هنوز Sync نشده)
+customer_product_purchases:  0 ردیف (بدون تغییر)
+customer_category_purchases: 0 ردیف (بدون تغییر)
+۵٬۷۹۸ ردیف order_items بدون sku: دست‌نخورده، فقط شمارش (طبق دستور صریح شما) — هیچ عملیاتی روی آن‌ها اجرا نشد
+```
+
+هیچ کراس‌چکی روی `customer_product_purchases`/`customer_category_purchases` معنی ندارد چون هر دو هنوز ۰ ردیف‌اند (زیرساخت آماده، دیتای dev بدون تغییر).
+
+**تصمیم لازم از شما (برای بستن نهایی تصمیم ۳):** کدام یک — (الف) Truncate کردن `slug` به ۱۸۰ نویسه در `CategoryMapper`/`CatalogSyncService` (هم‌الگوی Order Sync)، (ب) Migration جدید برای بزرگ‌کردن `product_categories.slug`، یا (ج) رد‌کردن دسته‌ی خراب با Warning و ادامه‌ی بقیه؟ بعد از تصمیم، `CatalogSyncJob::dispatchSync()` دوباره روی dev اجرا و اعداد بالا به‌روزرسانی می‌شوند.
+
+**تست کامل این تسک:** `php artisan test` → ۲۹۷۲/۲۹۷۲ سبز (۱۳٬۷۴۰ Assertion). PHPStan کل پروژه → ۰ خطا. Pint تمیز. هیچ Arch Test ضعیف نشد — هرکدام برای بازتاب یک واقعیت تازه‌ی درست (Job/Schedule/Command تازه) به‌روزرسانی شد، با دلیل صریح.
+
+**فایل‌ها:** Migration تازه (`add_sku_price_to_products_table`)، `app/Modules/Catalog/{Models/Product,Services/{CatalogService,ProductInput,ResolvedCatalogItem},Exceptions/CatalogIntegrityException}.php`، `app/Modules/Sync/{Enums/SyncEntity,Services/{CatalogSyncService,SyncService},Jobs/CatalogSyncJob}.php`، `app/Modules/Orders/Services/OrderService.php`، `app/Console/Commands/SyncCommand.php`، `routes/console.php`، + ۱۰ فایل تست تازه/به‌روزشده.
+
+---
+
+## رفع بخش اول تصمیم ۳ (Slug) + تلاش دوم اجرای زنده: **متوقف شد روی یک خطای تازه، از جنس داده، نه Width**
+
+**تصمیم شما:** گسترش ستون (نه Truncate، نه Skip) — `product_categories.slug` از ۱۸۰ به ۲۵۵، و بررسی بقیه‌ی ستون‌های رشته‌ای کاتالوگ در برابر محدودیت واقعی WordPress/Woo.
+
+### Migration جدید و قابل‌بازگشت
+
+`2026_09_27_110000_widen_product_categories_name_slug.php` — `product_categories.name` ۱۶۰→۲۵۵، `slug` ۱۸۰→۲۵۵ (`down()` برمی‌گرداند به مقادیر اصلی).
+
+**بررسی بقیه‌ی ستون‌های کاتالوگ (طبق دستور، از اسکیما/کد، نه حدس):**
+
+| ستون | عرض فعلی | محدودیت واقعی WordPress/Woo | تصمیم |
+|---|---|---|---|
+| `product_categories.name` | ۱۶۰ | `wp_terms.name varchar(200)` | **گسترش به ۲۵۵** — همان سقف بالادستی `slug`، همان کلاس ریسک، هنوز نقض واقعی ندیده بود ولی زیرِ سقف واقعی بود |
+| `product_categories.slug` | ۱۸۰ | `wp_terms.slug varchar(200)` | **گسترش به ۲۵۵** — نقض واقعی تأییدشده (id=2346، ۱۹۴ نویسه) |
+| `products.slug` | ۲۶۰ | `wp_posts.post_name varchar(200)` | **دست‌نخورده** — از قبل بالاتر از سقف واقعی است |
+| `products.name` | ۲۵۰ | `wp_posts.post_title` نوع `TEXT` (بدون سقف ثابت) | **دست‌نخورده** — هیچ سقف بالادستی برای مقایسه وجود ندارد؛ گسترش بدون شاهد یعنی حدس‌زدن |
+| `products.sku` (P6) / `product_variations.sku` | ۸۰ | SKU در Woo روی `postmeta` (`longtext`) است، بدون سقف ستونی | **دست‌نخورده** — کلاس ریسک متفاوت (SKU کوتاه الفبایی-عددی است، نه Slug کدگذاری‌شده)؛ هیچ نقض واقعی یا سرنخ مکتوبی پیدا نشد |
+
+**⚠ یک اسکن زنده‌ی کامل روی `products` عمداً متوقف شد (طبق «کندی» در دستور):** برای اطمینان از عدم وجود ریسک مشابه روی `products.name/slug/sku`، یک اسکن فقط‌خواندنی (GET) روی کل صفحه‌های `products` اجرا شد. اجرای اول با سقف حافظه‌ی پیش‌فرض CLI (۱۲۸M) به خطای Out-of-Memory خورد (کاتالوگ واقعی بزرگ‌تر از حد انتظار است)؛ اجرای دوم با ۱G حافظه بیش از ۱۰ دقیقه بدون هیچ خروجی ماند — دقیقاً «کندی»ی که در دستور گفته شد باید متوقف شوم، پس با `TaskStop` متوقف شد، نه اینکه بی‌پایان صبر کنم. به‌جای این اسکن پرریسک، تصمیم روی `products.name/slug/sku` صرفاً از روی محدودیت‌های مستند WordPress/Woo گرفته شد (جدول بالا) — نه حدس، ولی هم مبتنی بر مستندات فنی شناخته‌شده‌ی WordPress، نه یک اسکن زنده‌ی دوم.
+
+### TEST FIRST
+
+۲ تست تازه در `CatalogServiceTest.php`: مقدار دقیق SKU واقعیِ Woo (۱۹۴ نویسه) و مرز واقعی ۲۰۰نویسه‌ای `wp_terms`. هر دو قبل از Migration قرمز (`value too long for type character varying(180)` / `(160)`)، بعد سبز. Suite کامل Catalog (۲۰۸ تست) بدون رگرسیون.
+
+### اجرای زنده، تلاش دوم
+
+**یافته‌ی فرایندی مهم قبل از اجرا:** هر دو Migration این Sprint (تصمیم ۱ و همین یکی) هرگز روی دیتابیس dev اجرا نشده بودند — فقط روی `heymode_testing` (خودکار توسط RefreshDatabase تست‌ها). `php artisan migrate:status` این را تأیید کرد (`Pending`). این یعنی تلاش اول اجرای زنده (تسک قبلی) اصلاً هنوز کد جدید را نمی‌دید. با `php artisan migrate --force` هر دو روی dev اجرا شدند، سپس اجرای زنده تکرار شد.
+
+**نتیجه:**
+
+```
+دسته‌بندی‌ها: ۱۷۸ ردیف کامل و موفق نوشته شد (۱۷۳ واقعی + ۵ Fixture قبلی) — هیچ خطای Width دیگری رخ نداد
+محصولات: ۵۷ ردیف واقعی نوشته شد (هرکدام Transaction جدا، طبق طراحی P2-05) — سپس شکست
+واریانت‌ها: ۲۴ (بدون تغییر — هنوز به یک محصول Variable واقعی نرسیده بود)
+```
+
+**خطای تازه (شکست کامل، نه Width — دقیقاً طبق دستور همین‌جا متوقف شدم، هیچ رفع حدسی نزدم):**
+
+```
+App\Modules\Sync\Exceptions\WooMappingException:
+Woo product payload is invalid at 'price': expected a whole-Toman amount, got string.
+```
+
+**تشخیص دقیق، فقط‌خواندنی (بدون نوشتن، همان مجوز GET):** محصول واقعی Woo id=**55345** («خودتراش مردانه ۶ لبه مستر شیو مدل Zylon»، نوع simple) مقدار `price` را به‌صورت `"159990.0"` می‌فرستد — رشته‌ی اعشاری با `.0` انتهایی، نه عدد صحیح خالص. `PayloadReader::toman()` عمداً فقط رقم خالص می‌پذیرد (`^(?:0|[1-9][0-9]*)$`، بدون اعشار/علامت) — این یک قرارداد از‌قبل‌موجود P2-03 است، نه چیزی که امروز ساختم. `regular_price` همان محصول `"182000"` (بدون اعشار) است — یعنی ناهمخوانی فرمت بین دو فیلد قیمت روی همین محصول در Woo واقعی.
+
+**چرا همین‌جا متوقف شدم:** طبق دستور صریح شما، مجوز «رفع بدون توقف» فقط برای دسته‌ی گسترش ستون بود؛ این یک کلاس خطای کاملاً متفاوت است (فرمت/Validation مقدار، نه عرض ستون) و نیاز به یک تصمیم تازه دارد (گرد‌کردن/`floor` رشته‌ی اعشاری، پذیرفتن اعشار در `toman()`، یا رد‌کردن با Warning و ادامه). هیچ تلاش پشت‌سرهمی برای حدس زدن رفع نشد.
+
+**وضعیت دیتابیس بعد از شکست:** امن — ۵۷ محصول و ۱۷۸ دسته‌ی واقعی که تا این نقطه Commit شده بودند، **باقی می‌مانند** (هرکدام Transaction مستقل)؛ فقط محصول ۵۵۳۴۵ به بعد نوشته نشد. چون `CatalogSyncService` Idempotent است (طبق طراحی P2-05)، اجرای بعدی (بعد از تصمیم و رفع) دوباره از صفحه‌ی ۱ شروع می‌کند، ردیف‌های موجود را بی‌ضرر Upsert می‌کند و از همان نقطه ادامه می‌دهد — نیازی به هیچ عملیات پاک‌سازی نیست.
+
+**اعداد خواسته‌شده در گزارش (طبق دستور، حتی چون Sync هنوز کامل نشد):**
+
+```
+order_items با product_id قابل‌حل — الان: 0 / 61,358 (0.00%) — بدون تغییر
+```
+
+**چرا هنوز ۰٪ است، با اینکه ۵۷ محصول واقعی نوشته شد:** `order_items.product_id` فقط وقتی به‌روزرسانی می‌شود که خودِ سفارش دوباره Sync شود (طبق طراحی P2-06: «هر Sync دوباره Resolve می‌کند»)؛ صرفاً پرشدن کاتالوگ خودش هیچ سفارش قدیمی را دوباره Resolve نمی‌کند. تا کاتالوگ کامل نشود و بعد سفارش‌ها دوباره Sync نشوند (خارج از Scope همین تسک)، این عدد حرکت نمی‌کند — این محدودیت طراحی از قبل موجود است، نه نشانه‌ی خرابی رفع امروز. `BuildCustomerPurchaseAggregatesJob` روی این داده‌ی جزئی اجرا نشد چون دستور شما آن را منوط به «Sync موفق» کرده بود.
+
+**تست کامل این تسک:** `php artisan test` → ۲۹۷۴/۲۹۷۴ سبز (۱۳٬۷۴۳ Assertion). PHPStan → ۰ خطا. Pint تمیز.
+
+**تصمیم لازم از شما (برای ادامه‌ی تصمیم ۳):** فرمت قیمت اعشاری Woo (`"159990.0"`) چطور مدیریت شود — (الف) `PayloadReader::toman()`/`Money::parseToman()` رشته‌ی اعشاری با بخش کسری صفر را بپذیرد (`floor` یا Round، فقط وقتی کسر واقعاً صفر است، رد کند اگر غیرصفر)، (ب) فقط برای `ProductDto::price` (نه بقیه‌ی مصرف‌کننده‌های `toman()`) یک مسیر Parse اعشاری جدا ساخته شود، یا (ج) این محصولات را رد کند (NULL برای price) و با Warning لاگ کند، ادامه بدهد؟ بعد از تصمیم، اجرای زنده و گزارش کامل کراس‌چک (طبق درخواست شما) تکرار می‌شود.
+
+**فایل‌ها:** `database/migrations/2026_09_27_110000_widen_product_categories_name_slug.php` (تازه)، `tests/Feature/Modules/Catalog/CatalogServiceTest.php` (+۲ تست).
+
+## رفع بخش دوم تصمیم ۳ (قیمت اعشاری Woo) + بخش ۴ (اجرای زنده و backfill): sync زنده کامل شد؛ یک باگ تازه و نامرتبط جلوی aggregate را گرفت
+
+تصمیم انتخابی شما از سه گزینهٔ قبلی: **(ب)** — مسیر Parse اعشاری جدا، فقط برای `ProductDto::price`.
+
+### ۱) `PayloadReader::nullableDecimalMoney()` — TEST FIRST
+
+متد جدید (نه تغییر `toman()`/`nullableMoney()` موجود): یک رشتهٔ اعشاری با کسر تماماً صفر (`"159990.0"`, `"159990.00"`, `"0.0"`) را به بخش صحیح تبدیل می‌کند و همان مسیر سخت‌گیرانهٔ `toman()` را روی آن اجرا می‌کند؛ کسر غیرصفر دست‌نخورده به `toman()` می‌رود و دقیقاً مثل قبل رد می‌شود. تست‌ها (`PayloadReaderTest.php`) قبل از افزودن متد قرمز بودند (`Call to undefined method`)، بعد سبز. Mutation check: حذف موقت خط collapse رشته → تست‌های "real Woo value"/"zero itself" با پیام دقیق toman قرمز شدند؛ بازگردانده شد.
+
+`ProductMapper::map()` تنها مصرف‌کنندهٔ متد جدید شد (`nullableMoney('price')` → `nullableDecimalMoney('price')`). `VariationMapper` دست‌نخورده ماند — طبق تصمیم صریح شما، محدود به `ProductDto::price`.
+
+### ۲) یک محصول نامعتبر، کل sync را متوقف نکند — TEST FIRST
+
+`CatalogSyncService::syncProducts()`: نگاشت هر محصول (و variationهای آن، چون همان واحد کاری‌اند) داخل `try/catch(WooMappingException)` است؛ گرفتار شدن یعنی شمارش `rejectedProducts++`، یک `Log::warning` با دلیل، و ادامهٔ حلقه. برای تعارض کاتالوگ (SKU تکراری و مانند آن) که با استثنای `CatalogIntegrityException` (متعلق به ماژول Catalog) نشان داده می‌شود، **نه** با catch مستقیم آن در Sync — چون قانون مرزی ماژول‌ها (`CLAUDE.md` §۱، تست global در `ArchitectureTest.php`: «فقط از طریق Services یا Events») اجازهٔ import کردن `Catalog\Exceptions` را از ماژول دیگر نمی‌دهد. راه‌حل: متد تازهٔ غیرپرتاب‌کنندهٔ `CatalogService::tryUpsertProduct(ProductInput): CatalogUpsertOutcome` — تعارض را به‌صورت یک مقدار برگشتی (`accepted`/`rejectionReason`) گزارش می‌کند، نه استثنا؛ `upsertProduct()` قدیمی و پرتاب‌کننده برای مصرف‌کنندگان داخل Catalog دست‌نخورده ماند.
+
+نکتهٔ مهم که موقع پیاده‌سازی کشف شد: یک تلاش اول با `catch (WooMappingException|CatalogIntegrityException $e)` مستقیم در `CatalogSyncService` نوشته شد و تست‌های واحدی محلی سبز شدند، اما تست global مرزی (`ArchitectureTest.php::it('only reaches into other modules through their Services or Events')`) قرمز شد — این تست فقط `Services`/`Events` را مجاز می‌داند، نه `Exceptions`. بازطراحی به `tryUpsertProduct()`/`CatalogUpsertOutcome` انجام شد تا مرز دقیقاً به همان سختی قبل بماند.
+
+تست‌های قبلی که رفتار «پرتاب و توقف کامل» را انتظار داشتند (`fails loudly on a malformed product payload...`, `fails loudly...SKU is already taken...`) به رفتار تازه (`rejects one malformed product with a warning and keeps syncing the rest`, `rejects with a warning, corrupting nothing...`) بازنویسی شدند — این یک تغییر عمدی قرارداد است، نه رگرسیون؛ رفتار قدیم Woo رقابتی/۵xx (`WooRequestException`) دست‌نخورده ماند (هنوز کل run را متوقف می‌کند). Mutation check: محدود کردن catch فقط به `CatalogIntegrityException` → تست محصول بدشکل قرمز شد؛ تنظیم شرط رد به `if (false)` → تست تعارض SKU قرمز شد (۲ به‌جای ۱ محصول شمرده شد). هر دو بازگردانده شدند.
+
+### ۳) ابزار dry-run فقط‌خواندنی — TEST FIRST
+
+`CatalogDryRunService` (بدون هیچ وابستگی به `CatalogService` — از نظر ساختاری قادر به نوشتن نیست) + کامند نازک `hm:catalog-dry-run`. از همان الگوی generator موجود (`WooClient::pages()`) استفاده می‌کند، دقیقاً مثل `CatalogSyncService` اثبات‌شده — نه اسکریپت خام قبلی. هر محصول/variation را با mapperهای P2-03 اعتبارسنجی می‌کند و هر کلاس خطا را با شمار و یک نمونه جمع می‌کند؛ دسته‌بندی‌ها فقط بر اساس فیلد+پیام است.
+
+### ۴) `hm:resolve-order-items` (backfill محلی) — TEST FIRST
+
+بررسی شد: هیچ مکانیزم موجودی برای تحلیل مجدد `order_items` از دادهٔ محلی وجود نداشت. ساخته شد: `OrderItemBackfillService::resolveUnresolved()` + کامند نازک. محدودیت واقعی که در بررسی کد کشف شد: جدول `order_items` هیچ ستون `woo_product_id`/`woo_variation_id` ندارد، پس مراحل ۱ و ۲ الگوریتم اصلی `OrderService::resolve()` از روی یک ردیف ذخیره‌شده قابل بازسازی نیستند — فقط مراحل SKU-محور (۳، سپس ۳.۵) قابل تکرارند. کوئری فقط ردیف‌هایی را می‌گیرد که `product_id`/`variation_id` هر دو NULL و `sku` NOT NULL باشند (پس ۵٬۷۹۸ ردیف بدون SKU هرگز لمس نمی‌شوند)، در chunk های ۵۰۰تایی. Idempotent: تست اختصاصی دو بار اجرا می‌کند و بار دوم صفر تغییر تازه می‌بیند؛ تست دیگری ردیف از‌قبل-حل‌شده را حتی وقتی SKU‌اش الان به چیز دیگری هم می‌خورد دست‌نخورده نگه می‌دارد (Mutation check: حذف شرط `whereNull('product_id')` → این تست قرمز شد؛ بازگردانده شد).
+
+### اجرای زنده — نتایج واقعی
+
+**dry-run (فقط‌خواندنی، هیچ نوشتنی):** روی کل کاتالوگ واقعی — ۲٬۵۲۲ محصول، ۸۲۲ variation اسکن شد. تنها کلاس خطا: همان فرمت قیمت اعشاری — **۵ محصول** (کسر غیرصفر، رد صحیح طبق تصمیم شما) و **۲۰۲ variation**. طبق دستور صریح شما («اگر فقط از جنس رد-با-warning است، همان مسیر ۲ کافی است»)، این کلاس خطای تازه‌ای نبود که نیاز به توقف داشته باشد — مستقیم به اجرای زنده رفتیم.
+
+**اجرای زنده `CatalogSyncJob` (همان مسیر `syncCategories()`→`syncProducts()`، از طریق tinker تا شمارش‌ها قابل‌ثبت باشند):**
+اولین تلاش با `php artisan tinker` (حد پیش‌فرض CLI، ۱۲۸M) با «Allowed memory size... exhausted» شکست خورد — همان کلاس خطای قبلاً مستندشدهٔ این اسپرینت (نه دادهٔ جدید)؛ تکرار با `-d memory_limit=1G` (رفع قبلاً اثبات‌شده) موفق شد:
+
+```
+{"categories":173,"products":2300,"variations":142,"rejected":222}
+```
+
+این نتیجه، Open Item قبلی «کاتالوگ خیلی بزرگ / احتمال hang» را **حل می‌کند**: مشکل حد حافظهٔ پیش‌فرض PHP CLI بود، نه نشتی یا گیرکردن — dry-run فقط‌خواندنی (بدون نوشتن Eloquent) با حد پیش‌فرض هم مشکلی نداشت؛ فقط نوشتن هزاران رکورد Eloquent در یک پردازش طولانی به حافظهٔ بیشتری نیاز داشت.
+
+جمع رد‌شده‌ها (۲۲۲) بیشتر از ۵ محصول با قیمت اعشاری خودشان است، چون یک variation بدشکل کل محصول والدش را رد می‌کند (نگاشت variation قبل از نوشتن محصول، در همان try یکسان اتفاق می‌افتد) — یعنی از ۶۲۰ variation معتبر یافته‌شده در dry-run، فقط ۱۴۲ تا واقعاً نوشته شد؛ ۴۷۸ تای دیگر معتبر بودند اما چون همراهشان (در همان محصول) یک variation بد بود، محصولشان رد شد. این رفتار جدید این تسک نیست — از طراحی قبلاً موجود و مستند P2-05 می‌آید («یک محصول (ردیف+لینک‌ها+variationها) یک واحد کاری است»)؛ تصمیم ۲ فقط تعیین کرد که این رد، کل sync را متوقف نکند.
+
+شمار نهایی در DB (mirror هرگز-حذف‌نشو، شامل اجراهای قبلی جزئی): **۱۷۸ دسته، ۲٬۳۱۲ محصول، ۱۶۶ variation** (کراس‌چک مستقیم DB).
+
+**Backfill (`hm:resolve-order-items`):**
+```
+resolved as variation: 81, resolved as product: 41826, still unresolved: 13653
+```
+۸۱+۴۱٬۸۲۶+۱۳٬۶۵۳ = ۵۵٬۵۶۰ = دقیقاً همان تعداد ردیف با SKU (۶۱٬۳۵۸ − ۵٬۷۹۸). کراس‌چک مستقل با کوئری مستقیم: `order_items` با `product_id IS NOT NULL` = **۴۱٬۹۰۷** (مطابق)، ردیف‌های بدون SKU که اشتباهاً حل شده باشند = **۰** (تأیید دست‌نخوردگی ۵٬۷۹۸ ردیف).
+
+**درصد نهایی resolve شدهٔ order_items: ۴۱٬۹۰۷ / ۶۱٬۳۵۸ = ۶۸.۲۹٪** (از ۰.۰۰٪).
+
+### باگ تازه: `BuildCustomerPurchaseAggregatesJob` — متوقف شد، نیاز به تصمیم شما
+
+اجرا با `dispatchSync()` روی dev شکست خورد:
+```
+SQLSTATE[23502]: Not null violation: 7 ERROR: null value in column "customer_id" of relation "customer_product_purchases"
+```
+علت ریشه‌ای: کوئری `CustomerPurchaseAggregateService` با `FROM orders o JOIN order_items oi` نوشته شده و هیچ‌جا `o.customer_id IS NOT NULL` را فیلتر نمی‌کند — این یک نقص از قبل موجود در SQL این سرویس (P6-01) است که تا امروز چون شرط `oi.product_id IS NOT NULL` روی dev صفر ردیف می‌خورد (نرخ ۰٪ resolve)، هرگز خودش را نشان نداده بود. سرویس خواهر `BaseAggregateService` (P4) این مشکل را اصلاً ندارد چون جهت کوئری‌اش برعکس است: `FROM customers c LEFT JOIN orders o` — از نظر ساختاری هرگز به یک مشتری NULL برنمی‌خورد.
+
+اندازهٔ واقعی مشکل: از ۲۷٬۵۶۷ `order_items` واقعی‌شده (`is_realized`) و resolve‌شده، فقط **۲۲۱ (٪۰.۸)** به سفارشی با `customer_id IS NULL` تعلق دارند (شکست نرمال‌سازی تلفن، PRD §۰۸ گام ۱، `needs_phone_review`).
+
+این یک باگ **تازه و نامرتبط** به کار این تسک است (خودش را فقط به‌خاطر موفقیت خودِ این تسک نشان داد) و خارج از حیطهٔ مجوز صریح این تسک — طبق الگوی ثابت این نشست، رفعش نکردم و اینجا گزارش می‌کنم:
+
+**تصمیم لازم از شما:** راه‌حل واضح و هم‌راستا با الگوی موجود کد (`BaseAggregateService`) افزودن `AND o.customer_id IS NOT NULL` به کوئری `CustomerPurchaseAggregateService` است — اما چون این خارج از دامنهٔ مجاز این تسک است، بدون تأیید صریح شما اعمال نشد. گزینه‌های ممکن: (الف) همین فیلتر ساده اضافه شود (سفارش بدون مشتری، در aggregate هیچ مشتری‌ای هم شمرده نمی‌شود — سازگار با طراحی موجود)، (ب) گزینهٔ دیگری که شما ترجیح می‌دهید. تا آن زمان `customer_product_purchases`/`customer_category_purchases` روی dev خالی می‌مانند و کراس‌چک نهایی درخواستی شما (شمار ردیف این دو جدول) قابل تولید نیست.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → ۲٬۹۹۷/۲٬۹۹۷ سبز (۱۳٬۸۰۷ Assertion) — قبل از اجرای زنده، چون هیچ کد بعد از آن تغییر نکرد. PHPStan (کل app) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:**
+- `app/Modules/Sync/Mappers/PayloadReader.php` (+`nullableDecimalMoney()`)
+- `app/Modules/Sync/Mappers/ProductMapper.php` (سیم‌کشی متد تازه)
+- `app/Modules/Sync/Services/CatalogSyncService.php` (رد-با-warning به‌جای توقف کامل)
+- `app/Modules/Sync/Support/CatalogSyncResult.php` (+`rejectedProducts`)
+- `app/Modules/Catalog/Services/CatalogService.php` (+`tryUpsertProduct()`)
+- `app/Modules/Catalog/Services/CatalogUpsertOutcome.php` (تازه)
+- `app/Modules/Sync/Services/CatalogDryRunService.php` + `app/Modules/Sync/Support/CatalogDryRunResult.php` (تازه)
+- `app/Console/Commands/CatalogDryRunCommand.php` (تازه، `hm:catalog-dry-run`)
+- `app/Modules/Orders/Services/OrderItemBackfillService.php` + `app/Modules/Orders/Support/OrderItemBackfillResult.php` (تازه)
+- `app/Console/Commands/ResolveOrderItemsCommand.php` (تازه، `hm:resolve-order-items`)
+- تست‌ها: `PayloadReaderTest.php`, `CatalogMappersTest.php`, `CatalogSyncServiceTest.php`, `CatalogServiceTest.php`, `CatalogDryRunServiceTest.php` (تازه), `OrderItemBackfillServiceTest.php` (تازه), `CatalogDryRunCommandTest.php` (تازه), `ResolveOrderItemsCommandTest.php` (تازه), `tests/Arch/CatalogSyncBoundaryTest.php`, `tests/Arch/SyncCommandBoundaryTest.php` (لیست کامندها).
+
+## رفع باگ `BuildCustomerPurchaseAggregatesJob` (customer_id NULL) — بستن نهایی Open Item مربوط به product_id
+
+تصمیم شما: کوئری با `AND o.customer_id IS NOT NULL` اصلاح شود، دقیقاً هم‌الگو با کوئری خواهرش در همان سرویس.
+
+### TEST FIRST
+
+تست تازه در `CustomerPurchaseAggregateServiceTest.php`: یک سفارش `Order::factory()->phoneless()` (شکست نرمال‌سازی تلفن، `customer_id = null`) با یک آیتم واقعی می‌سازد و انتظار دارد هر دو جدول خالی بمانند. قبل از رفع: قرمز با همان خطای واقعی (`SQLSTATE[23502]`) که در تسک قبلی روی dev دیده شد. رفع: افزودن `AND o.customer_id IS NOT NULL` به هر دو کوئری `rebuildProductPurchases()` و `rebuildCategoryPurchases()` (متقارن، دقیقاً هم‌الگو). Mutation check دوگانه: حذف موقت فیلتر فقط از کوئری محصول → تست با خطای واقعی روی `customer_product_purchases` قرمز شد (چون تراکنش با شکست اولین INSERT کلاً برمی‌گردد و کوئری دسته اجرا نمی‌شود)؛ بازگردانده شد، سپس حذف فیلتر فقط از کوئری دسته (با فیلتر محصول سالم) → تست این‌بار با خطای `customer_category_purchases` قرمز شد — یعنی همان یک تست هر دو کوئری را واقعاً می‌پوشاند. هر دو بازگردانده شدند.
+
+### اجرای زنده روی dev
+
+```
+product_purchases: 26664
+category_purchases: 64505
+```
+
+**کراس‌چک مستقل (کوئری مستقیم، جدا از سرویس):** شمار جفت‌های متمایز `(customer_id, product_id)` روی `orders JOIN order_items` با همان فیلترها (`is_realized=true`, `deleted_at IS NULL`, `customer_id IS NOT NULL`, `product_id IS NOT NULL`) = **۲۶٬۶۶۴** — برابر دقیق. شمار جفت‌های متمایز `(customer_id, category_id)` روی همان + `JOIN product_category_product` = **۶۴٬۵۰۵** — برابر دقیق.
+
+### بستن Open Item «۰٪ order_items→product resolution»
+
+این Open Item (که از تشخیص اولیهٔ این اسپرینت شروع شد) اکنون به‌طور کامل بسته می‌شود: **۶۸.۲۹٪ resolved (۴۱٬۹۰۷/۶۱٬۳۵۸)**، **۵٬۷۹۸ ردیف بدون SKU** دست‌نخورده باقی مانده (به‌عمد — چیزی برای تحلیل ندارند)، **۱۳٬۶۵۳ ردیف** SKU دارند اما به کاتالوگ نمی‌خورند (احتمالاً یکی از ۲۲۲ محصول رد‌شده، یا SKU واقعاً منسوخ)، و **۲۲۲ محصول** به‌خاطر فرمت قیمت اعشاری نامعتبر Woo رد شدند (۵ تا از قیمت خودشان، بقیه از یک variation بد که کل محصول والد را رد کرده — چون محصول و variationهایش یک واحد نوشتاری‌اند). جزئیات کامل هر رقم در بخش‌های قبلی همین فایل.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش نهایی چت آمده. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/CustomerPurchaseAggregateService.php` (+فیلتر در هر دو کوئری)، `tests/Feature/Modules/Analytics/CustomerPurchaseAggregateServiceTest.php` (+۱ تست).
+
+## P6-05 — Product Affinity (4 levels)
+
+خواندن: PRD §16 (SQL جعبه‌ای affinity + جدول سطوح/حداقل هم‌خرید)، §09 (اسکیمای `product_affinities`، از پیش با migration ساخته شده در P1-04)، §01 ردیف C5 (تناقض‌حل: «سطح مشتری اصلی؛ سطح سبد یک `level` اضافی در همان جدول [نه مکانیزم جدا]»)، §22 (`BuildAffinityJob`، صف `metrics`، زمان‌بندی هفتگی شنبه ۰۴:۰۰)، §18 (Dashboard از `product_affinities` می‌خواند — خارج از این تسک، P6-06+). هیچ تناقضی بین منابع پیدا نشد که نیاز به ثبت جدید داشته باشد؛ C5 از قبل در خود PRD حل شده بود.
+
+### طراحی — «یک الگو برای همه سطوح»
+
+فرمول یکسان برای هر ۴ سطح: `support = co/total`، `confidence(A→B) = co/a`، `lift = confidence / (b/total)`؛ فقط جفت‌های نامرتب (`entity_a_id < entity_b_id`، یک ردیف به‌جای دو جهت) با `co_customers >= حداقل سطح` و `lift > 1.0` (نه `>=`) ذخیره می‌شوند. سطح category/product مستقیماً از جدول‌های تجمیعی موجود P6-01 (`customer_category_purchases`/`customer_product_purchases`) می‌خوانند — که خودشان از قبل به سفارش‌های واقعی/غیرحذف‌شده/مشتری‌دار محدود شده‌اند (رفع قبلی همین اسپرینت). سطح variation/basket چون جدول تجمیعی مخصوص ندارند، مستقیم از `order_items`/`orders` می‌خوانند. سطح basket طبق تصمیم C5، **بر اساس order_id گروه‌بندی می‌شود نه customer_id** — همان ستون‌های `co_customers`/`a_customers`/`b_customers` برای این سطح، شمار «سبد» (سفارش) نگه می‌دارند، نه مشتری (بازتفسیر معنایی همان ستون‌ها، دقیقاً طبق تصمیم C5).
+
+حداقل هم‌خرید هر سطح (PRD §16، هاردکد در سرویس — عدد ثابت طرح، نه تنظیمات محیطی): category=20، product=10، variation=5، basket=10.
+
+Migration و Enum از پیش موجود بودند (`product_affinities` در P1-04، `AffinityLevel` Enum در P1-05) — چیزی اضافه نشد.
+
+### TEST FIRST
+
+فیکسچر کوچک با اعداد دقیق قابل‌محاسبه: N مشتری هر دو محصول A و B را می‌خرند، N مشتری دیگر فقط محصول نویز C را می‌خرند (برای بزرگ‌کردن جمعیت کل بدون اثر روی a/b/co). با N=۱۰ (سطح product): `co=10, a=10, b=10, support=0.5, confidence=1.0, lift=2.0` — مقادیر دقیق assert شدند. تست‌های اضافی: زیر آستانه (۹ مشتری) → ذخیره نمی‌شود؛ `lift` دقیقاً ۱.۰ (بدون جمعیت نویز، یعنی B همه‌جا خریده شده) → ذخیره نمی‌شود؛ محصول بدون هیچ هم‌خریدی → نتیجه خالی، بدون خطا؛ idempotent (دو بار rebuild، یک ردیف با مقادیر یکسان)؛ جفت به‌صورت نامرتب و فقط یک جهت ذخیره می‌شود. همین الگو برای category (آستانه ۲۰)، variation (آستانه ۵، مستقیم از order_items)، و basket (آستانه ۱۰، گروه‌بندی با order_id) با یک تست صحت + یک تست آستانه هرکدام تکرار شد. جمع: ۱۴ تست در `AffinityServiceTest.php` + ۴ تست در `BuildAffinityJobTest.php`.
+
+نکته‌ی مهم پیاده‌سازی: تست‌های اولیه هم‌خرید را با درج مستقیم در `order_items` می‌ساختند، اما سرویس سطح category/product از جدول‌های تجمیعی P6-01 می‌خواند نه از order_items مستقیم — یعنی آن فیکسچرها هرگز واقعاً داده‌ای در `customer_product_purchases`/`customer_category_purchases` نمی‌گذاشتند (قرمزی درست، اما بعضی تست‌های "زیر آستانه" به‌صورت کاذب سبز می‌ماندند چون اصلاً هیچ داده‌ای وجود نداشت). اصلاح شد: فیکسچرهای این دو سطح مستقیماً در جدول تجمیعی درج می‌کنند (دقیقاً هم‌الگو با نحوه‌ی تست‌نویسی `CustomerPurchaseAggregateServiceTest` برای منبع خودش).
+
+Mutation check: کاهش موقت آستانه سطح product از ۱۰ به ۱ → تست «زیر آستانه» با شکست واقعی (ردیف موجود بود، باید null باشد) قرمز شد. شل‌کردن موقت فیلتر `lift > 1.0` به `>= 0` → تست «lift دقیقاً ۱» قرمز شد. هر دو بازگردانده شدند.
+
+### تعارض نام‌گذاری تست
+
+فایل `tests/Integration/AnalyticsSchemaTest.php` از قبل تابع کمکی `affinityRow()` دارد؛ نام تابع کمکی من به `affinityPairRow()` تغییر کرد تا تداخل نداشته باشد.
+
+### `BuildAffinityJob`
+
+صف `metrics` (هم‌الگو با `BuildCustomerPurchaseAggregatesJob`)، `ShouldBeUnique`، `tries=1`. `timeout=900`/`uniqueFor=1200` (بزرگ‌تر از جفت ۳۰۰/۶۰۰ آن Job) — چون هدف کارایی PRD §23 برای Affinity صریحاً «< ۱۵ دقیقه» است، برخلاف Purchase Aggregates که چنین هدفی ندارد. زمان‌بندی هفتگی شنبه ۰۴:۰۰ (PRD §22) **سیم‌کشی نشد** — دقیقاً هم‌الگو با P6-01 تا P6-04 که هیچ‌کدام وارد `routes/console.php` نشدند؛ آن کار متعلق به P6-09 («زنجیره کامل scheduler») است.
+
+### اجرای زنده روی dev + کراس‌چک مستقل
+
+```
+{"category":2167,"product":302,"variation":0,"basket":223,"elapsed_ms":1427}
+```
+(کمتر از ۱.۵ ثانیه — بسیار زیر هدف ۱۵ دقیقه PRD §23.)
+
+**variation=0، به‌عمد نه باگ:** طبق محدودیت شناخته‌شده‌ای که در ابتدای این تسک گفته شد، فقط ۸۱ ردیف `order_items` (از ۴۱٬۹۰۷ resolve‌شده) `variation_id` دارند (بقیه به‌عنوان محصول ساده resolve شدند) — کراس‌چک مستقیم این عدد (۸۱) را تأیید کرد. با آستانه حداقل ۵ هم‌خرید در سطح variation، پخش‌شدن این ۸۱ ردیف بین variationهای مختلف کافی برای عبور از آستانه نبود؛ نتیجه‌ی صفر، رفتار درست است.
+
+**کراس‌چک مستقل (کوئری مستقیم، جدا از سرویس):** برای پرلیفت‌ترین جفت واقعی ذخیره‌شده در سطح product (محصول ۵۶۴/۵۶۵)، شمارش مستقل `co_customers`/`a_customers`/`b_customers` روی `customer_product_purchases` و محاسبه‌ی مستقل support/confidence/lift:
+```
+stored:       co=13 a_cust=47 b_cust=24 support=0.001208 confidence=0.276596 lift=123.9956
+independent:  co=13 a_cust=47 b_cust=24 support=0.001208 confidence=0.276596 lift=123.9956
+```
+برابر دقیق.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AffinityService.php` (تازه)، `app/Modules/Analytics/Support/AffinitySummary.php` (تازه)، `app/Modules/Analytics/Jobs/BuildAffinityJob.php` (تازه)، `tests/Feature/Modules/Analytics/AffinityServiceTest.php` (تازه، ۱۴ تست)، `tests/Feature/Modules/Analytics/BuildAffinityJobTest.php` (تازه، ۴ تست).
+
+## P6-06 — Dashboard + period compare
+
+خواندن: ARCHITECTURE.md (ایندکس)، sprint-6.md، PRD §۱۸ (Dashboard/Customer 360)، §۰۷ (جدول وابستگی ماژول‌ها + امضای `AnalyticsService::dashboard()`/`CohortService::matrix()`/`AffinityService::top()`)، §۲۲ (صف/زمان‌بندی)، §۲۳ (هدف کارایی)، §۰۱ ردیف C۵ (تناقض سطح Affinity، از قبل حل‌شده در خود PRD). اولین آیتم انجام‌نشده بعد از P6-05 دقیقاً همین بود (`grep` روی sprint-6.md و PRD §25 تأیید کرد).
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده (هیچ‌کدام حدس نبود — همه مستند شده)
+
+۱. **«سگمنت‌های فعال» و «سلامت سیستم» در لیست ویجت‌های PRD §۱۸ آمده‌اند، اما جدول وابستگی ماژول‌های PRD §۰۷ اجازه نمی‌دهد:** `Analytics => [Core, Orders, Metrics, Catalog]` — نه Segments نه Sync. این با تست global آرکیتکچری (`ArchitectureTest.php::it('respects the module dependency table')`) اجرا می‌شود، نه فقط توصیه. راه‌حل: هر دو ویجت به یک کارت لینک ساده به صفحه‌ی موجودشان (`/segments`, `/system/health`) تبدیل شدند، فقط با `useCan()` سمت کلاینت (همان هوک مشترک همیشگی) نمایش داده می‌شوند — هیچ کوئری بکند تازه‌ای لازم نبود.
+۲. **«خلاصه AI» بدون منبع دادهٔ واقعی:** `grep` تأیید کرد ماژول Ai فقط یک Enum دارد، هیچ Service/Job ساخته نشده (Sprint ۷ شروع نشده). این ویجت کاملاً حذف شد — هیچ دادهٔ ساختگی نمایش داده نمی‌شود.
+۳. **کدام ویجت‌ها واقعاً «فیلتر بازه» را می‌پذیرند؟** فقط KPI/روند/مشتری‌جدید-بازگشتی از `daily_metrics` می‌آیند که تنها جدول با بعد تاریخ است. RFM/Churn/Cohort/Affinity هرکدام یک عکس‌فوری از وضعیت فعلی‌اند (جدول خودشان بعد زمانی ندارد) — فیلتر بازه رویشان اثر ندارد؛ صریحاً در UI و کد مستند شد، نه سکوت.
+۴. **فرمول «ارزش در خطر» در PRD مشخص نشده.** پیاده‌سازی: `SUM(COALESCE(clv_estimated, clv_historical))` روی مشتریان ریسک high/lost — یک پیش‌فرض معقول با دلیل، نه فرمول PRD.
+۵. **هیچ کتابخانه نموداری در پروژه نصب نیست** (بررسی `package.json` + `grep` در `resources/js`). به‌جای افزودن یک‌طرفهٔ وابستگی تازه، ویجت «روند» به‌صورت جدول ساخته شد — دقیقاً هم‌سبک صفحهٔ RFM موجود (که خودش هم نمودار ندارد، فقط Card/Table).
+۶. **تناقض معماری واقعی کشف‌شده حین کدنویسی (نه از قبل مستند):** تلاش اول برای خواندن مستقیم `customer_metrics` در `AnalyticsService` با `import` مستقیم Enumهای `RfmSegment`/`ChurnRiskLevel` از ماژول Metrics نوشته شد؛ تست global `ArchitectureTest.php::it('only reaches into other modules through their Services or Events')` رد شد — چون فقط `Services`/`Events` مجازند، نه `Enums`، حتی برای ماژولی که در جدول وابستگی مجاز است. رفع: به‌جای دویاره‌نویسی کوئری، `AnalyticsService` از سرویس عمومی موجود `RfmPageService::getData()['segments']` استفاده می‌کند؛ برای churn (سرویس معادلی وجود نداشت) یک کلاس تازهٔ کوچک `App\Modules\Metrics\Services\ChurnDistributionService` ساخته شد (TEST FIRST، ۳ تست) — دقیقاً هم‌الگوی `RfmPageService`، داخل ماژول Metrics چون `customer_metrics`/Enumهایش را همان ماژول مالک است.
+
+### پیاده‌سازی
+
+- `AnalyticsService::dashboard(DashboardPeriod)` (ماژول Analytics) — یک آرایهٔ آماده‌ی Inertia (هم‌الگوی `RfmPageService::getData()`)، ترکیب: KPI/روند دوره‌ای از `daily_metrics`، دو معیار عمر-فروشگاه از `RetentionService` موجود، RFM از `RfmPageService`، churn از `ChurnDistributionService` تازه، ماتریس کوهورت از متد تازهٔ `CohortSnapshotService::matrix()`، Top Affinity از متد تازهٔ `AffinityService::top()`.
+- `DashboardPeriod` (Support DTO تازه) — بازهٔ جاری + بازهٔ هم‌طول قبلی برای مقایسه.
+- `DashboardRequest` — `from`/`to` شمسی اختیاری (با هم یا هیچ‌کدام)، با `App\Modules\Customers\Support\JalaliDay` (کلاس آماده‌ی همین پروژه، نه بازنویسی)، اعتبارسنجی محدودهٔ حداکثر (۳۶۶ روز) و ترتیب صحیح.
+- `DashboardController` — نازک، یک Service، یک Inertia response.
+- مسیر: `Route::inertia('dashboard', 'dashboard')` قدیمی (placeholder starter-kit) از `routes/web.php` حذف و در `routes/internal.php` با `permission:dashboard,view` و همان نام مسیر `dashboard` جایگزین شد (Wayfinder helper و breadcrumbهای بقیهٔ صفحات دست‌نخورده ماندند). پرمیژن `dashboard.view` از قبل seed شده بود (بررسی شد، اضافه نشد).
+- Frontend: `resources/js/pages/dashboard.tsx` بازنویسی کامل — فرم فیلتر بازه (همان الگوی `customers/index.tsx`)، کارت‌های KPI با مقایسهٔ درصدی، جدول روند، کارت‌های نرخ خرید مجدد/سهم درآمد بازگشتی، گرید RFM/Churn (هم‌سبک RFM موجود، همان `rfmSegments`/`churnLevels` label map)، ارزش در خطر، جدول ماتریس کوهورت (دوره‌ی نابالغ خاکستری)، جدول Top Affinity، دو کارت لینک (Segments/System Health) با `useCan()`.
+
+### TEST FIRST
+
+`AnalyticsServiceTest.php` (۸ تست): جمع دقیق KPI فقط در بازه (نه کل جدول)، محاسبهٔ دقیق بازهٔ قبلی هم‌طول، روزهای بدون داده = صفر نه خطا، ردیف‌های روند مرتب و محدود به بازه، معیارهای عمر-فروشگاه مستقل از فیلتر، توزیع RFM با کلید `none`، توزیع churn + ارزش در خطر (فقط high/lost)، عبور ماتریس کوهورت/Top Affinity. `AffinityService::top()` و `CohortSnapshotService::matrix()` هرکدام تست اختصاصی گرفتند (ترتیب صحیح، محدودیت count، لیست خالی بدون خطا). `ChurnDistributionServiceTest.php` (۳ تست، ماژول Metrics). `DashboardControllerTest.php` (۸ تست): رد مهمان، رد بدون `dashboard.view`، رندر صحیح، بازهٔ پیش‌فرض ۳۰ روزه، پذیرش بازهٔ شمسی صریح، رد بازهٔ نامعتبر (پایان قبل شروع)، رد تاریخ نامعتبر، الزام هر دوی from/to با هم.
+
+Mutation check: وارونه‌کردن مقایسهٔ `from > to` در `DashboardRequest` → تست رد بازهٔ نامعتبر قرمز شد؛ بازگردانده شد. (مقایسه‌ی بازهٔ قبلی در `DashboardPeriod` هم‌زمان با پیاده‌سازی P6-05 اثبات شده بود، همان الگو اینجا هم صادق است.)
+
+### کراس‌چک مستقل روی dev (پیش‌فرض ۳۰ روز اخیر)
+
+```
+period: 2026-08-29 .. 2026-09-27 (قبلی: 2026-07-30 .. 2026-08-28)
+current:  orders=1,111  net_revenue=1,420,553,726  aov=1,278,626  customers_new=930  customers_repeat=175
+previous: orders=1,593  net_revenue=2,093,957,387
+repeat_purchase_rate: 7.71% (13,981 واجد شرط)
+returning_revenue_share: 16.75%
+value_at_risk: 32,370,663,659 تومان
+cohort_matrix: 6 کوهورت · top_affinity: 10 جفت
+trend rows: 29 از 30 روز (یک روز، «امروز»، هنوز توسط BuildDailyMetricsJob شبانه محاسبه نشده — طبیعی، نه باگ)
+```
+کوئری مستقیم و جدا روی `daily_metrics` برای همان دو بازه: `orders=1,111 / net_revenue=1,420,553,726` (جاری) و `orders=1,593 / net_revenue=2,093,957,387` (قبلی) — برابر دقیق. شمار ردیف بازهٔ جاری در `daily_metrics` هم مستقیماً ۲۹ تأیید شد.
+
+### دو تست از‌پیش‌موجود که با جایگزینی placeholder شکستند — رفع شد، نه نادیده گرفته شد
+
+اجرای کامل تست‌ها (بعد از تمام تغییرات بالا) دو شکست نشان داد، هر دو چون `/dashboard` قبلاً برای هر کاربر واردشده باز بود و حالا پشت `dashboard.view` است:
+- `tests/Feature/DashboardTest.php` (تست starter-kit خود Laravel) — «کاربر واردشده می‌تواند داشبورد را ببیند» با یک کاربر بدون هیچ نقشی می‌سنجید؛ اصلاح شد تا از `SystemPageFixtures::userWith('dashboard.view')` استفاده کند (نامش هم به‌روزرسانی شد تا دقیق‌تر باشد).
+- `tests/Feature/Modules/Core/InertiaPermissionsShareTest.php` — از `/dashboard` به‌عنوان یک صفحهٔ ساده‌ی واردشده برای سنجش prop مشترک `auth.permissions` استفاده می‌کرد؛ اصلاح شد تا نقش تست، هم `segments.view` (چیزی که واقعاً سنجیده می‌شود) و هم `dashboard.view` (تا خود صفحه اصلاً بارگذاری شود) را داشته باشد.
+
+هیچ تستی حذف یا موقتاً غیرفعال نشد (CLAUDE.md §9) — هر دو با تغییر واقعی و به‌روز به قرارداد تازهٔ صفحه اصلاح شدند.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → ۳٬۰۴۰/۳٬۰۴۰ سبز (بعد از رفع دو تست بالا). PHPStan (`app/Modules/Analytics`, `app/Modules/Metrics`, کنترلر/ریکوئست تازه) → ۰ خطا (۲ ایراد نوع لیست/آرایه پیدا و رفع شد: `array_values()` روی خروجی‌های `Collection::map()->all()`، و تکمیل PHPDoc تو‌درتوی `dashboard()`). Pint → تمیز (چند فایل با `ordered_imports`/`fully_qualified_strict_types` اصلاح شدند). `npm run types:check` → تمیز. `npm run build` → موفق. `vp check --fix` فقط روی فایل تازهٔ خودم (`dashboard.tsx`) اجرا شد، نه کل مخزن (که فرمت‌نشدگی‌های قدیمی و نامرتبط زیادی در فایل‌های دیگر دارد).
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AnalyticsService.php` (تازه)، `app/Modules/Analytics/Support/DashboardPeriod.php` (تازه)، `app/Modules/Analytics/Services/AffinityService.php` (+`top()`)، `app/Modules/Analytics/Services/CohortSnapshotService.php` (+`matrix()`)، `app/Modules/Metrics/Services/ChurnDistributionService.php` (تازه)، `app/Http/Requests/DashboardRequest.php` (تازه)، `app/Http/Controllers/DashboardController.php` (تازه)، `routes/web.php` (حذف placeholder)، `routes/internal.php` (+مسیر dashboard)، `resources/js/pages/dashboard.tsx` (بازنویسی کامل)، `resources/js/types/dashboard.ts` (تازه)، تست‌ها: `AnalyticsServiceTest.php`، `ChurnDistributionServiceTest.php`، `DashboardControllerTest.php` (همه تازه) + افزوده به `AffinityServiceTest.php`/`CohortSnapshotServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۵ به ۱۶).
+
+## P6-07 — Drill-down + export
+
+خواندن: ARCHITECTURE.md، sprint-6.md، و کل متن PRD مربوط به drill/export — که فقط **یک جملهٔ توصیفی** و **یک جزئیات فنی جعبه‌ای** است: «فیلتر بازه، مقایسه دوره، Export، Drill-down یکنواخت (`GET /internal/drill/{widget}`). هیچ تجمیع سنگینی در لحظه بارگذاری. عددی که نتوانید پشتش را ببینید، قابل اعتماد نیست.» (§۱۸) و «GATE: dashboard < 1s, every number drillable» (§۲۵). هیچ لیست ویجت، هیچ فرمت پاسخ، هیچ ستون export مشخص نشده — این تسک به‌شدت کم‌مشخصات است؛ زیر تصمیم‌های گرفته‌شده و دلیلشان آمده، نه حدس.
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام ویجت‌ها واقعاً drill می‌شوند؟** PRD «هر عدد» می‌گوید اما هیچ لیستی نمی‌دهد. تصمیم: ۵ ویجت که یک فهرست ردیف فیلترشدهٔ ساده‌اند — `orders` (پشت سفارش‌ها/درآمد خالص/AOV با هم، چون هر سه از یک مجموعه سفارش مشتق می‌شوند)، `customers_new`، `customers_repeat`، `rfm_segment`، `churn_level`. **drill سلول کوهورت و جفت‌های Affinity ساخته نشد** — برخلاف این ۵ تا، این دو نیاز به بازتولید واقعی دارند (کدام مشتریان در دورهٔ N کوهورت X فعال بودند؛ کدام مشتریان دقیقاً جفت A/B را هم‌خریده‌اند) نه یک فیلتر ساده روی جدول موجود — دامنه‌ای واقعاً بزرگ‌تر، به‌عنوان Open Item مستند شد (ARCHITECTURE.md)، نه حدس‌زده.
+۲. **مسیر `GET /internal/drill/{widget}` — دقیقاً همین رشته پیاده شد**، با `internal/` به‌عنوان بخشی از URL (برخلاف بقیهٔ صفحات همین فایل که بدون این پیشوندند) — چون این تنها جزئیات فنی صریح PRD برای کل این تسک است.
+۳. **Export با کدام مجوز؟** هیچ `dashboard.export`/`analytics.export` در seed موجود نیست. تصمیم: از `customers.export` موجود استفاده شد — دقیقاً همان استدلال از‌پیش‌مستند در `routes/internal.php` برای export سگمنت: «این هم همان خروج‌گیری ممیزی‌شدهٔ PII است، مثل هر export دیگر مشتریان». مسیر export علاوه‌بر `customers,export`، به `dashboard,view` هم نیاز دارد (چون همچنان یک drill از داشبورد است).
+۴. **چه ستون‌هایی در پاسخ JSON قابل‌قبول است؟** طبق قاعدهٔ از‌پیش‌موجود `RfmPageService::topChampions()` («هرگز نام یا تلفن در یک نمای تجمیعی») — ردیف‌های JSON فقط id و عدد دارند، هرگز display_name/phone. فقط CSV ممیزی‌شده (با `customers.export` جدا) اجازهٔ نام/تلفن (ماسک‌شده مگر `customers.view_full_phone`) دارد — دقیقاً هم‌الگوی `SegmentService::export()`.
+۵. **تعارض معماری مشابه P6-06 (که کاربر از قبل پیش‌بینی کرده بود):** برای فیلتر `segment`/`level`، اعتبارسنجی مقدار باید دربرابر `RfmSegment`/`ChurnRiskLevel` انجام شود. به‌جای import این Enumها داخل ماژول Analytics (که دقیقاً همان تخلف P6-06 را تکرار می‌کرد)، اعتبارسنجی در لایهٔ HTTP (`DrillRequest`, که ماژول نیست و آزادانه از هر Enum می‌تواند import کند) انجام شد؛ رشتهٔ معتبرشده بدون import کردن Enum به `DrillService` می‌رسد — دقیقاً همان الگوی سرویس عمومی/مرز ماژول که در P6-06 کشف و رفع شد، این‌بار حتی بدون نیاز به یک سرویس تازه.
+۶. **مشکل واقعی دیگر کشف‌شده حین کد زدن:** برای گرفتن رشتهٔ شمسی معادل بازهٔ داشبورد (لازم برای ساخت لینک drill از صفحهٔ React)، فرانت‌اند نمی‌توانست خودش Gregorian→Jalali تبدیل کند (قاعدهٔ «تاریخ شمسی فقط با JalaliDate»). رفع: `AnalyticsService::dashboard()` اکنون `period.from_jalali`/`period.to_jalali` را هم برمی‌گرداند (با `App\Support\JalaliDate::format()`)، تا صفحه بدون منطق تبدیل تاریخ خودش، این رشته‌ها را مستقیم به drill پاس بدهد.
+
+### پیاده‌سازی
+
+- `DrillService` (ماژول Analytics) — `rows(string $widget, DashboardPeriod, array $params): ?DrillResult` (خواندن، محدود به ۲۰۰ ردیف با پرچم `truncated`) و `export(...)` (استریم CSV، بدون محدودیت، ممیزی‌شده). `orders`/`customer_metrics` مستقیم خوانده می‌شوند (Query Builder، بدون مدل Eloquent، بدون import Enum) — همان الگوی از‌پیش‌موجود `RetentionService`/`DailyMetricsService`. تعریف «سفارش واقعی‌شده» و «مشتری بازگشتی» (`ordered_at روز != first_order_at روز`) دقیقاً همان تعریف `BaseAggregateService`/`DailyMetricsService` است.
+- `DrillResult` (Support DTO)، دو Exception تازه (`DrillExportForbiddenException`, `UnknownDrillWidgetException`) با mapping متمرکز در `bootstrap/app.php` (هم‌الگوی `SegmentException`/`RuleValidationException` موجود) — کنترلرها بدون try/catch می‌مانند.
+- `DrillRequest` — `from`/`to` شمسی (هم‌الگوی `DashboardRequest`، عمداً تکرار نه انتزاع مشترک — سه خط مشابه بهتر از انتزاع زودهنگام)، به‌علاوهٔ `segment`/`level` (فقط برای ویجت مربوطه لازم، با `Rule::in` از مقادیر واقعی Enum + مقدار مصنوعی `none`).
+- `DrillController` (JSON) و `DrillExportController` (CSV) — هرکدام نازک، یک Service call.
+- مسیرها: `GET internal/drill/{widget}` پشت `dashboard,view`؛ `GET internal/drill/{widget}/export` پشت `dashboard,view` **و** `customers,export` (هردو در سطح route، به‌علاوه چک دوباره داخل خود Service — هم‌الگوی segments/export).
+- Frontend: `resources/js/components/dashboard/drill-dialog.tsx` (کامپوننت تازه، قابل‌استفادهٔ مجدد) — روی کلیک، JSON را fetch می‌کند و در یک Dialog (shadcn) به‌صورت جدول عمومی نمایش می‌دهد، با لینک «دانلود CSV». در `dashboard.tsx` سیم‌کشی شد: هر ۵ کارت KPI (سفارش/درآمد/AOV/مشتری‌جدید/بازگشتی) و هر سلول گرید RFM و Churn حالا قابل‌کلیک‌اند.
+
+### TEST FIRST
+
+`DrillServiceTest.php` (۹ تست): فیلتر بازهٔ هرکدام از ۵ ویجت، حذف سفارش غیرواقعی/مستردشدهٔ‌کامل، بدون name/phone در ستون‌ها، bucket مصنوعی `none`، ویجت ناشناس → null نه خطا، truncation دقیق در سقف. `DrillExportTest.php` (۶ تست، هم‌الگوی دقیق `SegmentServiceExportTest`): رد بدون مجوز + بدون ثبت audit، ثبت ردیف audit با widget/بازه، ماسک/عدم‌ماسک تلفن، BOM+هدر، ویجت ناشناس → خطا. `DrillControllerTest.php`/`DrillExportControllerTest.php` (۱۳ تست): مهمان، بدون مجوز (هردو مجوز جدا برای export)، ۴۰۴ ویجت ناشناس، ۴۲۲ مقدار segment نامعتبر/غایب، فیلتر واقعی، جریان CSV واقعی + ردیف audit واقعی.
+
+Mutation check: وارونه‌کردن مقایسهٔ `!=` بین روز سفارش و روز اولین سفارش (تعریف «بازگشتی») → تست مربوطه با شکست واقعی قرمز شد؛ بازگردانده شد. وارونه‌کردن `denies()`→`allows()` در چک مجوز export → تست رد‌شدن قرمز شد؛ بازگردانده شد.
+
+### کراس‌چک مستقل روی dev (بازهٔ پیش‌فرض ۳۰ روز اخیر: 2026-08-29 .. 2026-09-27)
+
+```
+orders:           drill=200 (truncated) | مستقل COUNT=1,111   (هم‌ارز با current.orders_count داشبورد P6-06)
+customers_new:    drill=200 (truncated) | مستقل COUNT=930     (هم‌ارز با current.customers_new داشبورد P6-06)
+customers_repeat: drill=161             | مستقل COUNT=161     — برابر دقیق
+rfm_segment=champion: drill=61          | مستقل COUNT=61      — برابر دقیق
+churn_level=high: drill=200 (truncated) | مستقل COUNT=3,841
+```
+هر ۵ کوئری drill با شرط WHERE یکسان، جدا و مستقیم روی dev دوباره اجرا شد و دقیقاً برابر بود؛ دو موردی که truncate شده‌اند (۲۰۰ سقف JSON) با شمارش کامل مستقل تأیید شدند که واقعاً بیشتر از ۲۰۰ ردیف دارند، نه یک باگ. مسیر export همان شرط‌های WHERE را دارد (فقط با JOIN اضافه برای phone/display_name) — با همین کراس‌چک‌ها به‌طور غیرمستقیم تأیید شد؛ دانلود واقعی CSV روی dev اجرا نشد (نیاز به یک کاربر واقعی با `customers.export`)، اما مسیر کد یکسان با `rows()` است و در تست‌های Pest با استریم واقعی (نه mock) پوشش داده شده.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرها/ریکوئست‌ها، `bootstrap/app.php`) → ۰ خطا (چند ایراد نوع پیدا و رفع شد: `array_values()` روی خروجی‌های `map()->all()`، `whereColumn()` با `Expression` نپذیرفته‌شده → `whereRaw()` ایستا، و typing بستارهای export از `object` به `\stdClass` برای دسترسی امن به خواص). Pint → تمیز. `npm run types:check`/`npm run build` → تمیز.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/DrillService.php` (تازه)، `app/Modules/Analytics/Support/DrillResult.php` (تازه)، `app/Modules/Analytics/Exceptions/{DrillExportForbiddenException,UnknownDrillWidgetException}.php` (تازه)، `app/Http/Requests/DrillRequest.php` (تازه)، `app/Http/Controllers/{DrillController,DrillExportController}.php` (تازه)، `bootstrap/app.php` (+mapping استثنا)، `routes/internal.php` (+۲ مسیر)، `app/Modules/Analytics/Services/AnalyticsService.php` (+`period.from_jalali`/`to_jalali`)، `resources/js/components/dashboard/drill-dialog.tsx` (تازه)، `resources/js/pages/dashboard.tsx` (سیم‌کشی drill)، `resources/js/types/dashboard.ts` (+فیلدهای جدید)، تست‌ها: `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`, `DrillExportControllerTest.php` (همه تازه) + یک تست به `AnalyticsServiceTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۶ به ۱۸).
+
+## P6-08 — Cohort / Retention / Affinity pages
+
+خواندن: ARCHITECTURE.md، sprint-6.md (بخش‌های P6-03/۰۴/۰۵/۰۶/۰۷ — الگوی سرویس‌های موجود)، PRD §۱۸ (که فقط داشبورد/Customer 360 را توصیف می‌کند، هیچ اشاره‌ای به سه صفحهٔ مستقل ندارد)، PRD §۰۷ (نام‌گذاری ماژول Analytics + متدهایش)، PRD §۱۵/۱۶ (فرمول‌های خود Cohort/Retention/Affinity، از قبل در P6-03/04/05 پیاده شده). PRD برای «صفحه» چیزی نمی‌گوید — نه مسیر، نه لایوت، نه مجوز مشخص؛ تصمیم‌ها زیر آمده.
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام مجوز؟** هیچ‌کدام از سه صفحه در PRD به یک permission نگاشت نشده. `analytics.view` از ابتدای Sprint 6 seed شده و به نقش Viewer داده شده بود، اما تا این تسک هیچ مسیری از آن استفاده نمی‌کرد (بررسی شد: `grep` در `routes/` چیزی نداد). چون PRD §۰۷ دقیقاً `AnalyticsService`/`CohortService`/`AffinityService` را زیر عنوان «Analytics» می‌آورد (نه Metrics، نه Dashboard)، این سه صفحه پشت `analytics,view` قرار گرفتند — نه `metrics,view` (ماژول دیگر) و نه `dashboard,view` (صفحهٔ دیگر).
+۲. **صفحهٔ Retention به چند بازهٔ N-day نیاز دارد؟** PRD §۱۵ هیچ لیست ثابتی نمی‌دهد (فقط جدول Affinity حداقل‌های صریح دارد). تصمیم: ۷/۳۰/۹۰ روز — بازه‌های رایج تجارت الکترونیک، یک پیش‌فرض مستدل نه عدد PRD.
+۳. **صفحهٔ Affinity چند سطح نشان دهد؟** عنوان خود آیتم بک‌لاگ PRD «Affinity (4 levels)» است — پس هر ۴ سطح (نه فقط یکی) نمایش داده می‌شود.
+۴. **«هیچ منطق/کوئری جدید مگر لازم باشد»:** هیچ کوئری تازه‌ای نوشته نشد؛ فقط دو متد ترکیبی نازک اضافه شد چون کنترلر فقط می‌تواند یک سرویس صدا بزند (قاعدهٔ ثابت پروژه) اما این دو داده به بیش از یک متد از‌پیش‌تست‌شده نیاز داشتند:
+   - `RetentionService::summary(array $days=[7,30,90])` — فقط سه متد از‌پیش‌تست‌شدهٔ P6-04 (`repeatPurchaseRate`, `returningRevenueShare`, `nDayRetention`) را ترکیب می‌کند، هیچ محاسبهٔ تازه.
+   - `AffinityService::topAll(int $limitPerLevel=10)` — فقط `top()` از‌پیش‌تست‌شدهٔ P6-05/06 را برای هر ۴ سطح صدا می‌زند.
+   - `CohortSnapshotService::matrix()` نیازی به تغییر نداشت؛ کنترلر مستقیماً همان را با آرگومان بزرگ‌تر (۱۲ به‌جای ۶ پیش‌فرض داشبورد) صدا می‌زند — همان متد، فقط آرگومان دیگر.
+
+### وصل‌کردن drill-down (طبق دستور صریح شما — Open Item باز‌مانده از P6-07)
+
+بررسی شد: هر دو (سلول کوهورت، جفت Affinity) واقعاً قابل‌اتصال بودند، چون منطق دقیق هر دو از قبل در `CohortSnapshotService::rebuild()` و `AffinityService::rebuild*Level()` نوشته شده بود (فقط نیاز به بازتولید همان شرط‌ها به‌عنوان یک کوئری drill، نه اختراع تعریف تازه):
+
+- **`cohort_period`** (پارامتر `cohort_month`, `period_number`) — دقیقاً همان تعریف «فعال» از activity CTE در `rebuild()`: `jalali_month_diff(cohort_month, to_jalali_month(ordered_at)) = period_number`.
+- **`affinity_pair`** (پارامتر `affinity_level` ∈ {product, category, variation} — **نه basket**، `entity_a_id`, `entity_b_id`) — همان «pairs» که هر سطح خودش در rebuild می‌خواند: product/category از جدول‌های تجمیعی P6-01، variation مستقیم از order_items.
+- **چرا `basket` وصل نشد:** جفت سطح basket یعنی «سفارش‌ها»، نه «مشتریان» — شکل ردیف کاملاً متفاوت از بقیهٔ ۶ ویجت drill موجود (که همه مشتری‌محورند). این یک محدودیت واقعی جدید کشف‌شده است، نه تنبلی: اجبار آن به شکل «مشتری» یا داده را دروغ نشان می‌دهد یا نیاز به یک هفتمین شکل ردیف کاملاً جدا دارد — به‌عنوان یک محدودیت مستند باقی ماند (ARCHITECTURE.md)، حدس زده نشد.
+- Export برای `cohort_period` و `affinity_pair` (فقط product/category — **نه variation**) هم ساخته شد؛ export سطح variation به‌خاطر پیچیدگی نوشتن یک derived-table join در Query Builder سیال (که در rows() با یک CTE خام حل شده بود) پیاده نشد — محدودیت باریک‌تر و مستند دیگری، نه سکوت. مسیر JSON برای variation کامل است.
+
+### پیاده‌سازی
+
+- `CohortPageController`, `RetentionPageController`, `AffinityPageController` (زیر `app/Http/Controllers/Analytics/`) — هرکدام نازک، دقیقاً یک Service call، هم‌الگوی `RfmPageController`.
+- مسیرها: `analytics/cohort`, `analytics/retention`, `analytics/affinity`، همگی پشت `permission:analytics,view`.
+- سه صفحهٔ React (`resources/js/pages/analytics/{cohort,retention,affinity}.tsx`) — هم‌سبک صفحهٔ RFM موجود (Card/Table، بدون کتابخانه نمودار، لایوت با breadcrumb). سلول‌های ماتریس کوهورت (فقط سلول بالغ با مشتری فعال) و ردیف‌های جدول Affinity (فقط سطح product/category/variation) با `DrillDialog` موجود (از P6-07) قابل‌کلیک شدند؛ ردیف‌های سطح basket بدون تعامل، فقط نمایشی.
+- `RetentionService::summary()`, `AffinityService::topAll()` (متد تازه در سرویس‌های موجود)، `DrillService` گسترش‌یافته با دو ویجت تازه (`cohort_period`, `affinity_pair`)، `DrillRequest` با پارامترهای تازه.
+
+### TEST FIRST
+
+طبق دستور شما: تست روی کنترلرها/props، نه منطق محاسباتی که قبلاً در P6-03/04/05 تست شده است.
+- `RetentionServiceTest.php` (+۲ تست): شکل ترکیب `summary()` (۳ بازه، فیلدهای صحیح)، «داده کافی نیست» برای بازهٔ نابالغ (نه صفر جعلی).
+- `AffinityServiceTest.php` (+۲ تست): شکل `topAll()` (هر ۴ کلید، سطح بدون داده = `[]`)، محدودیت مستقل هر سطح.
+- `DrillServiceTest.php` (+۴ تست), `DrillExportTest.php` (+۲ تست): دو ویجت تازه، شامل تست «basket پیاده نشده».
+- `CohortPageControllerTest.php`, `RetentionPageControllerTest.php`, `AffinityPageControllerTest.php` (تازه، ۱۱ تست): مهمان، بدون `analytics.view`، رندر با داده واقعی، حالت خالی بدون خطا.
+- `DrillControllerTest.php` (+۳ تست): اعتبارسنجی پارامترهای تازه، رد سطح basket.
+
+Mutation check: مقایسهٔ `jalali_month_diff(...) = period_number` در cohort_period به `>=` شل شد → تست (بعد از تقویت با یک مشتری در دورهٔ بعدی) با شکست واقعی قرمز شد؛ بازگردانده شد.
+
+### بررسی دستی روی dev با داده واقعی (طبق دستور شما — بدون کراس‌چک، چون داده از سرویس‌های تست‌شده می‌آید)
+
+با صدا زدن مستقیم همان سه سرویسی که کنترلرها صدا می‌زنند:
+```
+ماتریس کوهورت: ۱۲ کوهورت × ۲۵ دوره (هر کوهورت)
+نگهداشت: ۳ بازه (۷/۳۰/۹۰ روز)، نرخ خرید مجدد = ۷.۷۱٪ (۱٬۰۷۸ از ۱۳٬۹۸۱ — هم‌ارز عدد قبلاً گزارش‌شدهٔ داشبورد P6-06)
+Affinity: category=۱۰ جفت، product=۱۰ جفت، basket=۱۰ جفت (هرکدام سقف‌خورده به ۱۰ پیش‌فرض)، variation=۰ جفت (طبیعی — همان محدودیت شناخته‌شدهٔ P6-05: فقط ۸۱ order_item به یک variation حل شده‌اند)
+```
+هر سه صفحه با کامپایل واقعی (`npm run build`) و درخواست HTTP واقعی (تست‌های Pest، نه mock) با همین داده تأیید شدند.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → در حال اجرا؛ نتیجه در گزارش چت. PHPStan (`app/Modules/Analytics`, کنترلرهای Analytics، `DrillRequest`) → ۰ خطا. Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق (شامل تولید خودکار helperهای Wayfinder برای مسیرهای تازه: `resources/js/routes/analytics/index.ts`).
+
+**فایل‌ها:** `app/Http/Controllers/Analytics/{CohortPageController,RetentionPageController,AffinityPageController}.php` (تازه)، `app/Modules/Analytics/Services/RetentionService.php` (+`summary()`)، `app/Modules/Analytics/Services/AffinityService.php` (+`topAll()`)، `app/Modules/Analytics/Services/DrillService.php` (+`cohort_period`, `affinity_pair`)، `app/Http/Requests/DrillRequest.php` (+پارامترهای تازه)، `routes/internal.php` (+۳ مسیر)، `resources/js/pages/analytics/{cohort,retention,affinity}.tsx` (تازه)، `resources/js/types/analytics.ts` (تازه)، تست‌ها: `tests/Feature/Http/Analytics/*ControllerTest.php` (تازه) + افزوده به `RetentionServiceTest.php`, `AffinityServiceTest.php`, `DrillServiceTest.php`, `DrillExportTest.php`, `DrillControllerTest.php`؛ `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۱۸ به ۲۱).
+
+## P6-09 — Full scheduler chain
+
+خواندن: ARCHITECTURE.md (ایندکس)، sprint-6.md (P6-01..08 — فهرست کامل جاب‌های موجود و ریسک‌های ثبت‌شدهٔ وابستگی)، PRD §۲۲ کامل (صف‌ها، لیست Jobها، Scheduler دقیق، دلیل صریح استفاده از `Bus::chain`).
+
+### ابهام‌ها و تناقض‌ها — همه صریحاً اینجا، نه حدس
+
+۱. **PRD دربارهٔ رفتار شکست ساکت نیست — دستور «اگر PRD ساکت است، log کن و ادامه بده» اینجا اعمال نشد.** متن خود PRD §۲۲: «ترتیب حیاتی است. `Bus::chain` در اولین شکست متوقف می‌شود — بهتر است چیزی اجرا نشود تا با داده ناقص اجرا شود.» این یک تصمیم صریح PRD است، نه سکوت؛ پس رفتار پیش‌فرض خود `Bus::chain` (توقف در اولین شکست، رد شدن از بقیه) عیناً استفاده شد — فقط یک `->catch()` برای لاگ‌کردن خطا اضافه شد (برای مشاهده‌پذیری، نه برای تغییر رفتار توقف).
+۲. **«Customers» به‌عنوان یک مرحلهٔ جدا در زنجیرهٔ PRD آمده، ولی هیچ Job/Entity جداگانه‌ای برایش وجود ندارد.** `SyncEntity` فقط دو مقدار دارد: `Orders`, `Catalog` — با یک کامنت صریح در کد خودش: «customers are not run through here yet». بررسی شد: هویت مشتری (`CustomerIdentityService`) به‌عنوان اثر جانبی همان Sync سفارش‌ها (`OrderSyncService`) ساخته/به‌روز می‌شود، نه از یک endpoint جدای Woo. تصمیم: مرحلهٔ «Customers» زنجیره با مرحلهٔ Orders sync موجود پوشش داده می‌شود؛ یک `SyncEntity::Customers` جعلی ساخته نشد (خارج از Scope این تسک — تغییر ماژول Sync).
+۳. **«ReconcileJob(2)» — کدام Job، و «۲» یعنی چه؟** لیست کلی Jobهای PRD §۲۲ نامی به‌اسم «ReconcileJob» می‌آورد؛ کلاس واقعی از P2-11 `ReconcileMonthJob` است (یک ماه در هر Job). با قیاس با `BuildDailyMetricsJob(3)` (که PRD همان‌جا آرگومانش را می‌نویسد)، «۲» به «۲ ماه شمسی کامل اخیر» تفسیر شد — یک بازبینی شبانهٔ ارزان، نه کل تاریخچه (`hm:reconcile --all` که هر شب همهٔ ماه‌ها را دوباره می‌خواند، از سال ۱۴۰۳). متد/Job تازه ساخته شد: `ReconciliationMonths::lastN()`, `ReconciliationService::dispatchRecentMonths()`, `ReconcileRecentMonthsJob` — همان الگوی دقیق `dispatchAllMonths()`/`ReconcileMonthJob` موجود، فقط محدود به N ماه آخر.
+۴. **PRD §۲۲ شش Job نام می‌برد که هنوز ساخته نشده‌اند:** `GenerateDailyBriefJob`, `GenerateWeeklyReviewJob` (هر دو AI Analyst، Sprint 7، شروع نشده)، `PruneLogsJob`, `HealthCheckJob`, `backup:run`, `horizon:snapshot` (هیچ‌کدام در PRD §۲۵ به یک تسک بک‌لاگ نگاشت نشده‌اند). زمان‌بندی نشدند — چیزی برای زمان‌بندی وجود ندارد؛ به‌عنوان Open Item ثبت شد (ARCHITECTURE.md)، نه نادیده گرفته شد.
+۵. **یافتهٔ جانبی واقعی، نه فرضی — پیکربندی Horizon/Queue قدیمی و اشتباه بود.** `config/horizon.php`'s تنها supervisor مشترک (پوشش‌دهندهٔ هر ۵ صف) هنوز `timeout => 60` از Sprint 0 بود؛ `config/queue.php`'s `retry_after` هم `330` بود (مقدار P2-11، فقط برای تایم‌اوت ۳۰۰ ثانیه‌ای `ReconcileMonthJob` تنظیم‌شده). هیچ‌کدام وقتی `RecomputeMetricsJob`/`BuildAffinityJob` با تایم‌اوت ۹۰۰ ثانیه اضافه شدند (P4-07/P6-05) به‌روز نشدند. این یک Open Item از‌پیش‌ثبت‌شده در ARCHITECTURE.md بود («باید قبل از فعال‌سازی scheduler تولید حل شود») — دقیقاً همین تسک است. `retry_after` زیر تایم‌اوت یک Job یعنی Redis یک Job هنوز-در-حال‌اجرا را دوباره در دسترس می‌گذارد؛ برخلاف قفل `ShouldBeUnique` (که فقط جلوی dispatch دوباره را می‌گیرد، نه popکردن دوباره از صف)، این واقعاً منجر به اجرای دوبارهٔ همان Job می‌شود. رفع: `timeout` 60→900 (برابر بلندترین Job)، `retry_after` 330→930 (۳۰ ثانیه بیشتر — همان قاعدهٔ قبلی). تست رگرسیون: `ReconcileMonthJobTest` حالا `retry_after` را در برابر تایم‌اوت هر Job سنگین در کل پروژه چک می‌کند، نه فقط ماژول Sync.
+
+### پیاده‌سازی
+
+`hm:nightly-chain` (`app/Console/Commands/NightlyChainCommand.php`) — یک `Bus::chain` واحد، بدون هیچ منطقی جز چینش (CLAUDE.md §۱/§۵)، دقیقاً به ترتیب PRD §۲۲:
+
+```
+CatalogSyncJob
+SyncEntityJob(Orders, Incremental)
+RecomputeMetricsJob('full')
+BuildCustomerPurchaseAggregatesJob
+BuildDailyMetricsJob(3)
+BuildCohortSnapshotsJob
+RebuildAllSegmentsJob
+ReconcileRecentMonthsJob(2)
+```
+
+Orders sync در زنجیره «Incremental» است، نه «Full»: Poll هر ۱۵ دقیقهٔ موجود (بدون تغییر) از قبل سفارش‌ها را تازه نگه می‌دارد؛ این مرحله فقط چند دقیقهٔ آخر قبل از محاسبهٔ متریک را جبران می‌کند — یک Full هر شب («بازخوانی کامل تاریخچه») نه در PRD §۲۳ («Incremental Sync <۶۰s»، نه Full) هدف‌گذاری شده و نه لازم.
+
+Scheduler (`routes/console.php`): `Schedule::command('hm:nightly-chain')->dailyAt('03:00')` جایگزین دو ورودی مستقل قبلی شد (`hm:sync --entity=catalog` در ۰۱:۳۰ و `hm:reconcile --all` در ۰۲:۰۰ — هر دو از ابتدا به‌عنوان جایگزین موقت تا ساخت P6-09 مستند بودند). `BuildAffinityJob` مستقل ماند: `Schedule::job(new BuildAffinityJob)->weeklyOn(6, '04:00')` — به هیچ‌چیز در زنجیرهٔ شبانه وابسته نیست و چیزی در زنجیره به آن وابسته نیست. Poll ۱۵‌دقیقه‌ای سفارش‌ها بدون تغییر ماند.
+
+### TEST FIRST
+
+- `ReconciliationMonthsTest.php` (+۳ تست): `lastN()` — لیست N ماه آخر، سقف‌خوردن وقتی تعداد ماه کامل کمتر است، خالی وقتی هیچ ماهی کامل نیست.
+- `ReconciliationServiceTest.php` (+۲ تست): `dispatchRecentMonths()` — فقط N ماه آخر روی صف `sync`.
+- `ReconcileRecentMonthsJobTest.php` (تازه، ۲ تست): شکل Job (`ShouldBeUnique`، صف، tries)، dispatch واقعی ماه‌ها هنگام `handle()`.
+- `ReconcileMonthJobTest.php` (+۱ تست): `retry_after` در برابر تایم‌اوت هر Job سنگین پروژه (نه فقط Sync).
+- `NightlyChainCommandTest.php` (تازه، ۳ تست):
+  - ترتیب دقیق زنجیره (`Bus::fake()` + `Bus::assertChained()`), شامل بررسی `RecomputeMetricsJob->runType === 'full'` (نه `'dirty'`).
+  - **تست دوم شما، به‌جای mock:** یک اجرای واقعی (نه fake) از زیرزنجیرهٔ حساس به ترتیب (`RecomputeMetricsJob→BuildCustomerPurchaseAggregatesJob→BuildDailyMetricsJob→BuildCohortSnapshotsJob`) روی یک مشتری تازه که هنوز هیچ ردیف `customer_metrics` ندارد؛ تأیید می‌کند `cohort_month` واقعاً تازه به `BuildCohortSnapshotsJob` می‌رسد. مراحل Sync/Reconcile در این تست نیستند (نیاز به Woo دارند؛ `.claude/rules/tests.md`: «Tests never hit the network»)؛ `QUEUE_CONNECTION=sync` در `phpunit.xml` یعنی `Bus::chain()->dispatch()` واقعی و در همان پردازش اجرا می‌شود.
+
+Mutation check ۱ (ترتیب کلی): `RecomputeMetricsJob` و `BuildCustomerPurchaseAggregatesJob` در کد جابه‌جا شدند → هر دو تست ترتیب با شکست واقعی (نوع Job اشتباه در زنجیره) قرمز شدند؛ بازگردانده شد.
+Mutation check ۲ (وابستگی واقعی): در تست دوم، `BuildCohortSnapshotsJob` به ابتدای لیست منتقل شد → `cohort_month` هنوز `NULL` بود، assertion با `null is not 1` شکست خورد؛ بازگردانده شد.
+Mutation check ۳ (پیکربندی): `retry_after` موقتاً به ۳۳۰ برگردانده شد → تست تازهٔ `ReconcileMonthJobTest` با `330 is not greater than 900` شکست خورد؛ بازگردانده شد.
+
+نکتهٔ فنی کشف‌شده حین TEST FIRST: `Dispatcher::dispatchSync()` یک Job که `ShouldQueue` است را از طریق `dispatchToQueue()->onConnection('sync')` می‌فرستد — که وقتی `Queue::fake()` فعال است، فقط به‌عنوان یک push ثبت می‌شود، اجرا نمی‌شود (همان دلیلی که تست موجود `dispatchAllMonths()` هم مستقیماً متد سرویس را صدا می‌زند، نه از طریق Bus). `ReconcileRecentMonthsJobTest` هم به همین دلیل مستقیماً `->handle()` را صدا می‌زند.
+
+### اجرای واقعی روی dev
+
+طبق دستور شما (بدون شبکهٔ زنده به Woo، همان‌طور که در کل این Sprint هیچ GET زنده‌ای به Woo انجام نشد): مراحل ۱، ۲ و ۸ زنجیره (Catalog sync، Orders sync، Reconcile) نیاز به Woo دارند و روی dev شبیه‌سازی شدند — با داده‌ی موجود dev (از Syncهای واقعی همین Sprint) به‌جای فراخوانی Woo. زیرزنجیرهٔ ۳ تا ۷ (متریک تا سگمنت‌ها) واقعاً و کامل روی dev اجرا شد:
+
+```
+قبل  → customer_metrics: 19,905 | customer_product_purchases: 26,664 | daily_metrics: 735 | cohort_snapshots: 625 | segment_members: 39,844
+RecomputeMetricsJob(full):            11,870ms
+BuildCustomerPurchaseAggregatesJob:    4,436ms
+BuildDailyMetricsJob(3):                  80ms
+BuildCohortSnapshotsJob:                 458ms
+RebuildAllSegmentsJob:                 4,279ms  (۱۲ سگمنت موفق، ۰ شکست)
+بعد   → customer_metrics: 19,905 | customer_product_purchases: 26,664 | daily_metrics: 737 | cohort_snapshots: 625 | segment_members: 39,921
+جمع (فقط زیرزنجیرهٔ ۳-۷): 21,464ms
+```
+شمارها همان‌طور که انتظار می‌رفت: rebuild-از-منبع یعنی جدول‌های TRUNCATE-شونده (customer_product_purchases، cohort_snapshots) ثابت می‌مانند وقتی داده‌ی منبع تغییر نکرده؛ `daily_metrics`/`segment_members` رشد کردند چون به تاریخ/عضویت پویا وابسته‌اند (۲ روز جدید، ۷۷ عضو تازه). `ReconcileRecentMonthsJob(2)` روی dev شبیه‌سازی شد: `ReconciliationMonths::lastN(2)` مستقیماً صدا زده شد (بدون dispatch واقعی که Woo لازم دارد) → `['1405-05', '1405-06']`، همان دو ماه اخیری که واقعاً انتظار می‌رفت.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز.
+
+**فایل‌ها:** `app/Console/Commands/NightlyChainCommand.php` (تازه)، `app/Modules/Sync/Jobs/ReconcileRecentMonthsJob.php` (تازه)، `app/Modules/Sync/Support/ReconciliationMonths.php` (+`lastN()`)، `app/Modules/Sync/Services/ReconciliationService.php` (+`dispatchRecentMonths()`)، `routes/console.php` (بازنویسی زمان‌بندی شبانه/هفتگی)، `config/queue.php` (+`retry_after` 330→930)، `config/horizon.php` (+`timeout` 60→900)، `app/Modules/Sync/Jobs/ReconcileMonthJob.php` (کامنت به‌روزشده)، تست‌ها: `tests/Feature/Console/NightlyChainCommandTest.php` (تازه)، `tests/Feature/Modules/Sync/ReconcileRecentMonthsJobTest.php` (تازه) + افزوده به `ReconciliationMonthsTest.php`, `ReconciliationServiceTest.php`, `ReconcileMonthJobTest.php`.
+
+## P6-10 — Alerts + log pruning
+
+خواندن: ARCHITECTURE.md (ایندکس، به‌خصوص Open Item زنجیرهٔ P6-09 دربارهٔ ۶ جاب نامشخص)، sprint-6.md (بخش P6-09)، `AlertService`/`AlertKind`/`SettingKey` موجود (P0-09 — از پیش ساخته شده بودند، هیچ‌کدام تا این تسک واقعاً صدا زده نمی‌شدند)، PRD §22 (لیست شش هشدار + زمان‌بندی `PruneLogsJob`/`HealthCheckJob`)، PRD §09/§21 برای جداول لاگ و بازهٔ نگهداری (§21 فقط بازهٔ Backup را نام می‌برد، نه هیچ جدول لاگ اپلیکیشن).
+
+### ابهام‌ها و تصمیم‌های گرفته‌شده
+
+۱. **کدام جاب‌ها واقعاً به P6-10 تعلق دارند؟** طبق دستور صریح شما، `GenerateDailyBriefJob`/`GenerateWeeklyReviewJob` دست نخوردند — PRD §25 هر دو را زیر Sprint 7 (P7-08 «AnalystService + daily/weekly jobs») می‌آورد، نه Sprint 6. `backup:run`/`horizon:snapshot` هم دست نخوردند — هیچ تسک بک‌لاگی (P8-0x) هنوز صریحاً به آن‌ها نگاشت نشده. فقط `PruneLogsJob` و `HealthCheckJob` ساخته شدند — دقیقاً همان‌هایی که PRD §22 در زمان‌بندی نام می‌برد و متعلق به هیچ Sprint دیگری نیستند.
+۲. **«هشدارها» یعنی چه، فنی؟** `AlertService`/`AlertKind` (۶ مورد)/`SettingKey` (۵ آستانهٔ عددی) از P0-09 از قبل کامل ساخته شده بودند — `tests/Feature/Modules/Core/AlertServiceTest.php` تأیید می‌کند «هر ۶ شرط PRD §22» را پوشش می‌دهند. تا این تسک، **هیچ‌کدام از جایی صدا زده نمی‌شدند** — Enumها فقط وجود داشتند. کار واقعی P6-10: پیدا کردن سیگنال واقعی هرکدام و وصل‌کردنش، نه ساخت مکانیزم تازه.
+۳. **کجا این اتصال زندگی کند؟** بررسی شد: هیچ ماژولی هم‌زمان به Sync + Metrics + Core دسترسی مجاز ندارد (جدول PRD §۰۷: `Sync=[Core,Customers,Catalog,Orders]`، `Metrics=[Core,Orders,Customers]` — نه Sync). تست معماری `only reaches into other modules through their Services or Events` فقط `app/Modules/**` را اسکن می‌کند — پس `App\Support\HealthCheckService` (تازه، خارج از هر ماژول) تنها محل معتبر معماری برای این ترکیب است؛ دقیقاً همان استدلال `NightlyChainCommand` در P6-09. تلاش اولیه برای وصل‌کردن هشدار در همان لحظهٔ رخداد (مثلاً داخل `ReconciliationService::reconcile()`) رد شد چون آن فایل زیرمجموعهٔ یک محدودیت سخت‌گیرانه‌تر موجود است (`ReconciliationBoundaryTest`: فقط `Sync\` یا `Orders\Services` مجازند) — تغییر آن تست یک تصمیم معماری جدا و خارج از Scope این تسک بود؛ به‌جایش هر پنج شرط با خواندن دوره‌ای (`HealthCheckJob`، هر ۱۵ دقیقه، طبق PRD §22) از متدهای عمومی موجود/تازهٔ هر سرویس محاسبه می‌شوند.
+۴. **کدام جدول لاگ prune شود؟** PRD §09 دو جدول لاگ‌مانند دارد: `sync_logs` (P2-12، صفحهٔ «Sync Logs») و `audit_logs`. تصمیم: فقط `sync_logs`. دلیل: CLAUDE.md §21 (بخش Backup) صریحاً «audit logs» را جزو داده‌های **غیرقابل‌بازیابی از Woo** می‌شمارد (همان دلیل وجود Backup) — یعنی نشانهٔ روشنی که این جدول باید نگه داشته شود، نه prune. `sync_logs` صرفاً نویز عملیاتی/دیباگ سطح صفحه است، بدون چنین محافظتی.
+۵. **بازهٔ نگهداری چقدر؟** PRD نامی از جاب می‌برد ولی هیچ عددی برای بازهٔ نگهداری نمی‌دهد — سکوت واقعی PRD، نه ابهام قابل‌حدس‌زدن از SQL جعبه‌ای. تصمیم مستدل: ۳۰ روز (`config('woo.sync_log_retention_days')`) — هم‌ارز بازهٔ Backup روزانهٔ PRD §21 («Daily pg_dump... ۳۰-day»)، یک عدد آشنا در همین سند، نه یک انتخاب دلبخواه.
+۶. **آستانهٔ هشدار Reconciliation در برابر مرز قرمز/سبز GATE 1 چیست؟** این دو عمداً جدا نگه داشته شدند. `RevenueVariance` (P2-11) مرز ۱٪ را دقیق و ثابت (Integer، هرگز شناور) برای قرمز/سبز GATE 1 محاسبه می‌کند. `SettingKey::AlertsReconciliationDiffPercent` (پیش‌فرض ۱.۰، قابل‌تغییر توسط تیم) یک آستانهٔ هشدار عملیاتی جداست — یکی‌کردنشان یعنی تغییر آستانهٔ هشدار، مرز سخت GATE 1 را هم عوض کند، که هیچ دستوری آن را نخواسته بود.
+
+### پیاده‌سازی
+
+- `App\Support\HealthCheckService::check(): list<string>` — پنج شرط را می‌خواند و هرکدام را (اگر true) از طریق `AlertService::critical()` موجود بالا می‌برد (بدون هیچ مکانیزم موازی):
+  - **SyncFailure**: `SyncService::ordersConsecutiveFailures()` (متد تازه، خواندن مستقیم `sync_cursors.consecutive_failures`) در برابر `AlertsConsecutiveSyncFailures`.
+  - **MetricRunFailure**: `MetricRunService::latestRunFailed()` (متد تازه) — آخرین ردیف `metric_runs`، بدون آستانه (دودویی، PRD «metric_runs failed»).
+  - **FailedJobsThreshold**: از همان `SyncHealthService::snapshot()->failedJobs` موجود (P2-12، از طریق `FailedJobProviderInterface`) در برابر `AlertsFailedJobsThreshold` — هیچ کوئری تازه‌ای لازم نبود.
+  - **ReconciliationVariance**: از همان `SyncHealthService::snapshot()->recentMonths[0]` موجود (P2-12) — فقط جدیدترین ماه (نه هر سه)، چون Dedupe سرویس `AlertService` فقط بر اساس نوع هشدار است نه نوع+ماه؛ چند ماه قرمز هم‌زمان یکی را خاموش می‌کرد.
+  - **NightlyChainTimeout**: `MetricRunService::fullRunCompletedSince($chainStart)` (متد تازه) — فقط بعد از ساعت ۵ صبح تهران چک می‌شود، `$chainStart` = ۳ صبح تهران همان روز.
+- `App\Jobs\HealthCheckJob` (تازه، **خارج از `app/Modules`**) — فقط `HealthCheckService::check()` را صدا می‌زند، بدون منطق.
+- `App\Modules\Sync\Jobs\PruneLogsJob` (تازه) — فقط `SyncService::pruneLogs()` را صدا می‌زند.
+- `SyncService::pruneLogs(int $days, int $chunkSize=1000): int` (متد تازه) — حذف `sync_logs` قدیمی‌تر از بازه، در Chunkهای ۱۰۰۰تایی (نه یک تراکنش/قفل بزرگ روی کل جدول)، Idempotent (اجرای دوباره روی همان بازه چیزی حذف نمی‌کند).
+- زمان‌بندی (`routes/console.php`، PRD §22): `HealthCheckJob` هر ۱۵ دقیقه (کنار Poll سفارش‌ها)، `PruneLogsJob` روزانه ۰۴:۳۰ تهران (نیم‌ساعت بعد از شروع زنجیرهٔ شبانه، فرصت برای تمام‌شدنش قبل از مهلت ۵ صبح).
+
+### یافتهٔ واقعی حین TEST FIRST — باگ منطقهٔ زمانی
+
+اولین تلاش برای `NightlyChainTimeout` مقدار `$chainStart` (یک `CarbonImmutable` در `Asia/Tehran`) را مستقیماً به کوئری `fullRunCompletedSince()` می‌داد. تست دقیقاً همین را گرفت: یک Run واقعاً «امشب» ساعت ۰۰:۰۰ UTC (= ۰۳:۳۰ تهران) ثبت‌شده بود ولی هشدار همچنان اشتباهاً بالا می‌رفت. علت: وقتی یک شیء Carbon با منطقهٔ زمانی غیر-UTC مستقیماً در یک `where()` باند می‌شود، مقدار به‌صورت رشتهٔ ساعت محلی (نه UTC) سریالایز و به Postgres فرستاده می‌شود — که آن را با فرض منطقهٔ زمانی اتصال (UTC، طبق CLAUDE.md §2) می‌خواند، یعنی «۰۳:۰۰ تهران» به‌اشتباه «۰۳:۰۰ UTC» تعبیر می‌شد (بیش از ۳ ساعت خطا). رفع: `->utc()` صریح قبل از پاس‌دادن به کوئری. دقیقاً همان دستهٔ باگ خاموشی که CLAUDE.md §2 دربارهٔ Jalali/timestamptz هشدار می‌دهد — اینجا با Carbon خام، نه `JalaliDate`.
+
+### TEST FIRST
+
+- `SyncServiceTest.php` (+۳ تست `pruneLogs`): حذف صحیح خارج از بازه (با یک fixture دقیقاً روی مرز، تا Mutation `<` به `<=` را بگیرد)، عدم حذف داخل بازه، Idempotency، Chunk چندتایی.
+- `SyncServiceTest.php` (+۲ تست): `ordersConsecutiveFailures()`.
+- `MetricRunServiceTest.php` (تازه، ۷ تست): `latestRunFailed()`, `fullRunCompletedSince()` (شامل مرز mode=dirty، status=running/failed).
+- `HealthCheckServiceTest.php` (تازه، ۱۰ تست، `tests/Feature/Support/`): هر پنج شرط با آستانهٔ دقیق (`>=`/`>` روی مرز، نه یک‌طرف آن)، بدون‌داده = بدون هشدار، مسیر واقعی `AlertService` (ردیف Audit، غیرفعال‌کردن Setting همه را خاموش می‌کند).
+- `PruneLogsJobTest.php`, `HealthCheckJobTest.php` (تازه): شکل Job + یک اجرای واقعی سرتاسری.
+
+Mutation checkها (هرکدام قرمز واقعی، بازگردانده شد):
+- `pruneLogs`: `<` → `<=` — ردیف دقیقاً روی مرز هم حذف شد، تست با `2 is not identical to 1` شکست.
+- `fullRunCompletedSince`: `>=` → `>` — تست مرز دقیق شکست.
+- `HealthCheckService`: `SyncFailure`/`FailedJobsThreshold` هرکدام `>=` → `>` — هر دو تست مرز دقیق شکستند.
+- `NightlyChainTimeout`: حذف `->utc()` — همان باگ بالا، به‌عنوان Mutation هم تأیید شد (تست بدون آن رفع قرمز می‌ماند).
+
+### اجرای دستی روی dev با اعداد واقعی
+
+```
+sync_logs (قبل از prune): ۶۲۰ ردیف، همه جدیدتر از ۳۰ روز (قدیمی‌ترین: ۲۰۲۶-۰۹-۱۹)
+PruneLogsJob اجرا شد → ۰ ردیف حذف شد (درست؛ چیزی هنوز از بازه خارج نشده)
+
+HealthCheckService::check() اجرا شد (۲۰۲۶-۰۹-۲۸، ساعت واقعی dev ۱۷:۳۴ تهران):
+  orders consecutive_failures = ۰      → SyncFailure: خاموش
+  آخرین metric_runs = completed        → MetricRunFailure: خاموش
+  failed_jobs = ۳ (آستانه ۲۰)          → FailedJobsThreshold: خاموش
+  آخرین Reconciliation = ۰٪ اختلاف     → ReconciliationVariance: خاموش
+  NightlyChainTimeout: روشن ✓ (واقعی، نه باگ — dev هرگز زنجیرهٔ شبانهٔ زنده اجرا نکرده، طبق مستندات از ابتدای Sprint؛ یک ردیف alert.critical واقعی در audit_logs ثبت شد)
+```
+
+این نتیجه دقیقاً همان محدودیت شناخته‌شدهٔ dev است (هیچ GET زنده‌ای به Woo در کل این Sprint انجام نشد) — یک نمونهٔ واقعی از کارکرد صحیح هشدار، نه یک باگ.
+
+### بستن Sprint 6 — بررسی معیار دروازه
+
+طبق دستور صریح شما، معیار سه‌بخشی پایان Sprint 6 («dashboard زیر ۱ ثانیه، هر عدد drillable، زنجیرهٔ شبانه کامل اجرا می‌شود») یک‌بار بررسی و اینجا نتیجه‌گیری شد:
+
+| معیار | نتیجه | شواهد |
+|---|---|---|
+| **Dashboard < 1s** | ✓ **قبول** | `AnalyticsService::dashboard()` روی dev، ۳ اجرای پیاپی گرم: ۱۶۳ms، ۲۱۸ms، ۳۴۵ms (اجرای اول سرد Process، ۹۹۴ms — شامل Bootstrap PHP، نه معیار واقعی درخواست HTTP گرم). این فقط زمان لایهٔ سرویس است؛ رفت‌وبرگشت کامل HTTP/Inertia (شبکه+Render) در این محیط بدون مرورگر زنده اندازه‌گیری نشد. |
+| **هر عدد Drillable** | ⚠ **قبول با یک استثنای مستند** | ۷ ویجت drill (`orders`, `customers_new`, `customers_repeat`, `rfm_segment`, `churn_level`, `cohort_period`, `affinity_pair` سطح product/category/variation) — P6-07/۰۸. **یک استثنای شناخته‌شده باقی است:** جفت‌های سطح `basket` (نه Drillable) — شکل ردیفشان سفارش است، نه مشتری؛ در P6-08 آگاهانه مستند و رد شد، نه فراموش‌شده. |
+| **زنجیرهٔ شبانه کامل اجرا می‌شود** | ⚠ **قبول (سیم‌کشی + تست)، بدون اجرای زندهٔ کامل روی Woo واقعی** | Wiring/ترتیب هر ۸ گام با `Bus::assertChained` تست شده (P6-09)؛ زیرزنجیرهٔ متریک→آنالیتیکس→سگمنت‌ها واقعاً روی dev اجرا شد (۲۱.۵ ثانیه، P6-09). مراحل Woo‌محور (Catalog/Orders sync، Reconcile) هرگز به‌صورت زنده روی این dev اجرا نشده‌اند (هیچ GET زنده‌ای در کل Sprint 6 — مستند از ابتدا)؛ `HealthCheckJob`'s `NightlyChainTimeout` این نبود را همین الان به‌درستی تشخیص و هشدار می‌دهد (بالا). |
+
+**نتیجهٔ کلی: PASS، با دو استثنای باریک و مستند** (نه دو شکست پنهان) — هیچ‌کدام یک تسک ناتمام نیست؛ هر دو محدودیت واقعی، کشف‌شده و ثبت‌شده‌اند (ARCHITECTURE.md، Open Items).
+
+### یافتهٔ دوم حین TEST FIRST — چرا `ordersConsecutiveFailures()` روی `SyncService` است، نه `SyncHealthService` تلاش اول این متد را (منطقاً) کنار بقیهٔ خواندن‌های صفحهٔ Health گذاشت. `php artisan test` کامل این را رد کرد: `SystemPagesBoundaryTest` یک قاعدهٔ صریح از P2-12 دارد — «صفحهٔ Health هرگز به Cursor دست نمی‌زند» (کلمهٔ `cursor` هرجا در `SyncHealthService.php`/`SyncHealthReport.php` ممنوع است، حتی برای یک ستون بی‌ضرر مثل شمارندهٔ شکست، چون خودِ Model اسمش `SyncCursor` است). این یک تصمیم معماری از‌پیش‌گرفته‌شده بود، نه یک محدودیت این تسک — پس متد به `SyncService` منتقل شد (که از قبل کل چرخهٔ عمر `SyncCursor` را در اختیار دارد)، نه اینکه آن تست تغییر کند.
+
+**سه رگرسیون دیگر از تست‌های موجود، هرکدام رفع شد (نه نادیده گرفته):**
+- `HttpWooClientTest`'s «هیچ HTTP write-verb در ماژول Sync» با `pruneLogs()`'s `->delete()` محلی (روی `sync_logs`، نه Woo) اشتباهاً برخورد کرد — Regex این تست فقط اسم متد را می‌بیند، نه هدف آن. رفع: یک استثنای دقیق و خودتأییدکننده به همان تست اضافه شد (دقیقاً همان خط کد را از متن حذف می‌کند قبل از بررسی؛ هر تغییری در آن خط، حتی جزئی، دوباره تست را قرمز می‌کند).
+- `SyncRunBoundaryTest`'s «جاب‌ها بدون `Log::`» با `Log::info()` داخل `PruneLogsJob` برخورد کرد — الگوی موجود ماژول Sync (برخلاف Analytics/Segments) این است که فقط Service خودش لاگ می‌نویسد، نه خودِ Job؛ خط `Log::info` حذف شد (نه اینکه تست نرم شود).
+- `SyncRunBoundaryTest`'s «هیچ `+=`/`-=` در SyncService» با شمارندهٔ محلی `$deleted += ...` داخل `pruneLogs()` برخورد کرد (نه یک ستون ذخیره‌شده، فقط یک متغیر لوکال) — به `$deleted = $deleted + ...` بازنویسی شد تا این توکن خاص را نداشته باشد، معنا بدون تغییر.
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا (کل پروژه). Pint → تمیز.
+
+**فایل‌ها:** `app/Support/HealthCheckService.php` (تازه)، `app/Jobs/HealthCheckJob.php` (تازه)، `app/Modules/Sync/Jobs/PruneLogsJob.php` (تازه)، `app/Modules/Sync/Services/SyncService.php` (+`pruneLogs()`, +`ordersConsecutiveFailures()`)، `app/Modules/Metrics/Services/MetricRunService.php` (+`latestRunFailed()`, +`fullRunCompletedSince()`)، `config/woo.php` (+`sync_log_retention_days`)، `routes/console.php` (+۲ ورودی زمان‌بندی)، تست‌ها: `tests/Feature/Support/HealthCheckServiceTest.php` (تازه)، `tests/Feature/Jobs/HealthCheckJobTest.php` (تازه)، `tests/Feature/Modules/Sync/PruneLogsJobTest.php` (تازه)، `tests/Feature/Modules/Metrics/MetricRunServiceTest.php` (تازه) + افزوده به `SyncServiceTest.php`؛ رگرسیون‌های موجود رفع‌شده: `tests/Feature/Console/ReconcileCommandTest.php`, `tests/Feature/Modules/Sync/HttpWooClientTest.php`, `tests/Arch/{ReconciliationBoundaryTest,SyncCommandBoundaryTest,SyncRunBoundaryTest}.php`.
+
+## Bugfix — یکدست‌سازی تاریخ‌های شمسی (P6-11)
+
+**زمینه:** روی `/dashboard` سه مشکل واقعی دیده شد: (۱) سرتیتر بازه میلادی با جداکنندهٔ `..` بود، (۲) متن «در مقایسه با دورهٔ هم‌طول قبلی» هم میلادی بود (و P6-06 اصلاً معادل شمسی برای دورهٔ *قبلی* نساخته بود، فقط برای دورهٔ جاری)، (۳) فیلدهای فیلتر از/تا وقتی هیچ بازه‌ای در URL نبود خالی می‌ماندند — با اینکه یک بازهٔ پیش‌فرض واقعی (۳۰ روز اخیر) واقعاً اعمال شده بود؛ فقط placeholder نشانش می‌داد، نه مقدار واقعی.
+
+### ممیزی کامل (فقط grep، طبق دستور)
+
+هر صفحه‌ای که تاریخ/زمان نشان می‌دهد بررسی شد. **از قبل درست بودند** (منبع واحد `App\Support\JalaliDate`/`TehranDateTime`، هیچ تغییری لازم نبود): Customer 360 (`CustomerShowData::when()`)، فهرست/تب‌های سفارش و محصول مشتری (`CustomerOrdersService`/`CustomerProductsService`، الگوی `_jalali`+`_iso`)، Timeline مشتری (`CustomerTimelineService`)، فهرست مشتریان (`CustomerListRow`)، صفحهٔ RFM (`RfmPageService::latestRun()`)، فهرست/جزئیات Segment (`SegmentListRow`/`SegmentMemberRow`)، صفحهٔ Health (`SyncHealthService`→`SyncRunRow`)، صفحهٔ Sync Logs (`SyncRunLogService`)، صفحهٔ Identity Conflicts (`IdentityConflictRow`)، فهرست/جزئیات سفارش‌ها (`ordered_at_jalali`)، ردیف Trend داشبورد (`day.jalali_date`). `cohort_month` (صفحهٔ Cohort، `YYYY-MM`) از قبل شمسی است — جداکنندهٔ `-` و نبود روز، بخشی از تعریف ستون در کل خط‌لولهٔ Analytics از P6-01 است (یک کلید ماه، نه یک تاریخ کامل)؛ تغییر آن یعنی تغییر یک مقدار ذخیره/محاسبه‌شده در کل ماژول، نه فقط نمایش — خارج از Scope این باگ‌فیکس.
+
+**سه‌جا واقعاً میلادی بودند** (فهرست کامل، همان‌طور که خواسته شد):
+۱. سرتیتر و متن مقایسهٔ `/dashboard` (بالا).
+۲. صفحهٔ Audit Log (`/audit`): `AuditService::paginate()` مستقیماً مدل Eloquent را serialize می‌کرد — `created_at` بدون تبدیل، به‌صورت رشتهٔ میلادی JSON می‌شد (`AuditLog.php`'s `$timestamps=false` یعنی Eloquent خودش created_at را نمی‌نویسد؛ ستون DB خودش `useCurrent()` دارد، ولی خواندنش هرگز از `TehranDateTime` عبور نمی‌کرد).
+۳. Drill-down داشبورد (`DrillService`): ویجت‌های `orders` (`ordered_at`) و `customers_new` (`first_order_at`) — هم در JSON (`DrillDialog`) و هم در خروجی CSV — مستقیماً `(string) $row->ordered_at` را برمی‌گرداندند.
+
+### رفع
+
+- بک‌اند، منبع واحد: `AnalyticsService::dashboard()` دو فیلد تازه اضافه کرد — `previous_from_jalali`/`previous_to_jalali` (همان الگوی `from_jalali`/`to_jalali` موجود از P6-07، فقط برای دورهٔ قبلی هم). `AuditService::paginate()` حالا `->through()` می‌زند و `created_at` را با `TehranDateTime::format()` برمی‌گرداند (شکل خروجی از مدل Eloquent خام به آرایهٔ ساده تغییر کرد). `DrillService` یک متد خصوصی تازه گرفت (`jalali()`) که هر دو ستون تاریخ (JSON و CSV) از آن عبور می‌کنند.
+- فرانت، util واحد: کامپوننت تازهٔ `resources/js/components/date-range.tsx` — عبارت «از X تا Y» می‌سازد، هرگز `..`؛ هر تاریخ در `<bdi dir="ltr">` جدا پیچیده می‌شود تا ترتیبش در متن RTL هرگز برعکس نشود، مستقل از هرچه قبل/بعدش بیاید. این کامپوننت **چیزی تبدیل نمی‌کند** — فقط دو رشتهٔ شمسیِ از‌پیش‌آماده را می‌چیند (منبع تبدیل همیشه بک‌اند است، طبق دستور).
+- `dashboard.tsx`: سرتیتر و متن مقایسه هر دو حالا از `<DateRange>` با فیلدهای `*_jalali` استفاده می‌کنند؛ فیلدهای فیلتر از/تا حالا `useState(filters.from ?? data.period.from_jalali)` هستند — وقتی کاربر چیزی تایپ نکرده، مقدار واقعیِ بازهٔ پیش‌فرض اعمال‌شده را نشان می‌دهند، نه یک ورودی خالی با فقط placeholder.
+
+### ابهام‌های حل‌شده (طبق دستور، حدس زده نشد)
+
+۱. **قالب زمان `HH:mm` (بدون ثانیه) خواسته شده بود، ولی util موجود پروژه (`TehranDateTime::format()`، از پیش در همهٔ صفحات درستِ بالا استفاده می‌شود) `HH:mm:ss` می‌دهد.** تصمیم: همان util موجود و از‌قبل‌جاافتاده نگه داشته شد (دقیقاً همان «منبع واحد»ی که خودِ دستور می‌خواهد)، به‌جای بریدن ثانیه یا ساختن یک قالب دوم موازی — تغییر آن قالب یک تغییر سراسری روی همهٔ صفحات از‌قبل‌درست بالا هم می‌بود، خارج از Scope این باگ‌فیکس.
+۲. **ارقام فارسی در نمونهٔ متن گزارش («۱۴۰۵/۰۶/۱۰») در برابر ارقام لاتین `JalaliDate::format()` (که همهٔ صفحات از‌قبل‌درست بالا همین را نشان می‌دهند).** تصمیم: ارقام لاتین نگه داشته شد — یکدست با کل اپ موجود؛ تغییر به ارقام فارسی یک تصمیم طراحی سراسری جداست، نه بخشی از رفع باگ نمایش میلادی.
+۳. **قاعدهٔ تاریخ در CSV:** PRD/CLAUDE.md دربارهٔ این موضوع ساکت‌اند (بررسی شد، هیچ خطی پیدا نشد). تصمیم: شمسی — هم‌راستا با «هیچ تاریخ میلادی در UI» و با همان util بک‌اند.
+
+### TEST FIRST
+
+- `AnalyticsServiceTest.php` (+۱ تست): `previous_from_jalali`/`previous_to_jalali`.
+- `AuditServiceTest.php` (+۱ تست، +۱ تست موجود اصلاح‌شده به دسترسی آرایه‌ای): شکل `HH:mm:ss` شمسی، نه سال میلادی — `created_at` یک ستون `useCurrent()` سمت DB است (نه Eloquent timestamp)، پس `travelTo()` رویش اثر ندارد؛ تست به‌جای مقدار دقیق، شکل را بررسی می‌کند.
+- `DrillServiceTest.php`/`DrillExportTest.php` (+۲ تست هرکدام): `ordered_at`/`first_order_at` در JSON و CSV.
+- `DashboardControllerTest.php`/`AuditLogPageTest.php`/`DrillControllerTest.php` (+۱ تست هرکدام): سطح HTTP/Props، با داده واقعی.
+- `ArchitectureTest.php` (+۱ arch-check تازه): هیچ `Intl.DateTimeFormat`/`toLocaleDateString`/`toLocaleTimeString`/`toISOString`/کتابخانهٔ `dayjs`/`moment`/`date-fns` در کل `resources/js` (به‌جز `routes`/`actions`/`wayfinder` خودکار) — صفر استثنا لازم بود چون هیچ‌کدام از قبل استفاده نمی‌شدند.
+
+Mutation checkها (هرکدام قرمز واقعی، بازگردانده شد): `DrillService::jalali()` موقتاً حذف شد → هر دو تست jalali با مقدار خام میلادی شکست خوردند؛ arch-check تازه با افزودن موقت `new Date().toLocaleDateString()` به `date-range.tsx` تست شد → قرمز شد، حذف شد.
+
+### یافتهٔ جانبی PHPStan
+
+`AuditLog.php` هیچ `@property` برای `created_at` نداشت (چون `$timestamps=false` است، Larastan نوعش را خودکار حدس نمی‌زند) — بدون آن، `TehranDateTime::format($log->created_at)` با «`string|null` داده شد، `DateTimeInterface` انتظار می‌رفت» رد می‌شد. رفع: `@property Carbon $created_at` اضافه شد (نوع واقعی Cast، نه `CarbonImmutable`).
+
+### بررسی دستی (بدون مرورگر زنده در این محیط — طبق سرویس‌های واقعی روی dev)
+
+```
+period.{from,to,previous_from,previous_to}_jalali (dev, امروز): "1405/06/10".."1405/07/08" و "1405/05/11".."1405/06/09" — همه شمسی، هیچ عدد میلادی
+audit created_at (۳ ردیف واقعی dev): "1405/07/08 18:10:36" و مشابه — شمسی، ثانیه‌دار
+drill orders.ordered_at (۳ ردیف واقعی dev): "1405/07/03 20:35:37" و مشابه — شمسی
+```
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا (کل پروژه). Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` فقط روی فایل‌های تازه/تغییریافتهٔ خودم.
+
+**فایل‌ها:** `app/Modules/Analytics/Services/AnalyticsService.php` (+`previous_from_jalali`/`previous_to_jalali`)، `app/Modules/Analytics/Services/DrillService.php` (+`jalali()`)، `app/Modules/Core/Services/AuditService.php` (`paginate()` بازنویسی)، `app/Modules/Core/Models/AuditLog.php` (+`@property Carbon $created_at`)، `resources/js/components/date-range.tsx` (تازه)، `resources/js/pages/dashboard.tsx`، `resources/js/types/dashboard.ts`، تست‌ها: `tests/Feature/Modules/Analytics/{AnalyticsServiceTest,DrillServiceTest,DrillExportTest}.php`، `tests/Feature/Modules/Core/AuditServiceTest.php`، `tests/Feature/Http/{DashboardControllerTest,DrillControllerTest}.php`، `tests/Feature/Modules/Core/AuditLogPageTest.php`، `tests/Arch/ArchitectureTest.php` (+۱ arch-check).
+
+## اصلاح UI — ۴ مورد قبل از اعتبارسنجی آمار (P6-12)
+
+### ۱) Drill «سفارش‌ها»: شماره واقعی سفارش، برچسب فارسی، بدون جداکننده روی شناسه‌ها، نام محصول در Affinity
+
+**order_id:** بررسی شد — `/orders` و `/orders/{id}` هر دو `woo_order_id` را به کاربر نشان می‌دهند (نه PK داخلی `id`؛ عنوان خود صفحهٔ جزئیات هم «سفارش {woo_order_id}» است). ویجت `orders` در `DrillService` تا این تسک `o.id` را به‌عنوان `order_id` می‌فرستاد — یک عدد داخلی که کاربر هرگز جای دیگری نمی‌بیند و نمی‌تواند با ووکامرس تطبیق دهد. رفع شد (JSON و CSV هر دو): حالا `woo_order_id`. هیچ تعارض ماژولی/PII‌ای پیش نیامد — همان جدول `orders` از قبل خوانده می‌شد، فقط ستون انتخابی عوض شد.
+
+**برچسب‌های فارسی:** کلیدهای هدر (`order_id`, `customer_id`, `total`, `net_revenue`, ...) فقط برای شناسایی داخلی (کلید `row[column]` در دیالوگ JSON) انگلیسی ماندند؛ متن نمایشی‌شان ترجمه شد — واحد پول (تومان) هم در عنوان ستون آمده (نه تکرار در هر سلول، طبق قرارداد جدول‌های داده‌محور). دو جدول برچسب نگه‌داشته شد (نه یکی): `DrillService::COLUMN_LABELS` سمت بک‌اند (برای متن واقعی هدر CSV — یک فایل، نه API)، و `resources/js/lib/drill-labels.ts` سمت فرانت (برای متن هدر دیالوگ JSON — چون `DrillResult::columns` عمداً انگلیسی می‌ماند، همان کلیدی که دیالوگ برای خواندن مقدار هر سلول لازم دارد). این دو زبان متفاوت‌اند و نمی‌توانند یک فایل مشترک باشند؛ دستی هم‌گام نگه داشته شدند.
+
+**شناسه‌ها بدون جداکننده/تبدیل رقم:** `DrillDialog`'s تابع `cell()` قبلاً `formatNumber()` (با جداکنندهٔ هزارگان) را روی هر مقدار عددی اعمال می‌کرد — شامل `customer_id`/`order_id`. رفع: ستون‌هایی که به `_id` ختم می‌شوند (یا دقیقاً `id`اند) حالا بدون `formatNumber` نمایش داده می‌شوند. همین باگ در جدول Affinity (داشبورد و صفحهٔ مستقل) هم بود — `#{formatNumber(pair.entity_a_id)}` به‌جای یک عدد ساده. کامپوننت تازهٔ `resources/js/components/entity-id.tsx` این را یک‌جا حل می‌کند.
+
+**نام محصول/دسته کنار شناسه (Affinity):** بررسی شد — ماژول Analytics از قبل اجازهٔ وابستگی به Catalog را دارد (جدول PRD §۰۷). سرویس عمومی تازه‌ای ساخته شد: `App\Modules\Catalog\Services\CatalogLookupService::productNames()`/`categoryNames()` (bulk id→name، فقط خواندن) — `AffinityService::top()` آن را صدا می‌زند تا `entity_a_name`/`entity_b_name` را کنار شناسه برگرداند (فقط سطح product/category؛ variation نامی از خودش ندارد، فقط صفات روی محصول والدش، و جفت سطح basket اصلاً سفارش است نه یک «موجودیت» نام‌دار — هر دو عمداً بی‌نام ماندند، نه فراموش‌شده).
+
+### ۲) فقط رقم لاتین
+
+**ریشهٔ واقعی رقم فارسی:** بررسی شد (نه حدس) — هیچ فونت فارسی سفارشی در `resources/css/app.css` بارگذاری نمی‌شود (پس مشکل Glyph نیست)؛ تنها منبع واقعی `value.toLocaleString('fa-IR')` در `resources/js/lib/format.ts`'s `formatNumber()` بود — به‌علاوه چهار فراخوانی پراکندهٔ مستقیم `toLocaleString('fa-IR')` که اصلاً از `formatNumber()` عبور نمی‌کردند (`RuleBuilder.tsx`, `segments/show.tsx` ۲ بار, `segments/index.tsx`). رفع ریشه‌ای: `formatNumber()`/`formatToman()` حالا `'en-US'` را صدا می‌زنند (ارقام لاتین، جداکنندهٔ کاما — دقیقاً همان Intl، فقط Locale درست)؛ هر چهار فراخوانی پراکنده به `formatNumber()` یکدست شدند.
+
+**«٪» (نشانهٔ درصد عربی، U+066A) در برابر «%» (ASCII):** یک یافتهٔ دوم، جدا از ارقام — پنج صفحه (`dashboard`, `retention`, `cohort`, `rfm`, `health`) این کاراکتر را به‌جای `%` استفاده می‌کردند، سه‌تایشان (`dashboard`, `retention`, `cohort`) با یک تابع محلی `percentText()` کاملاً تکراری (همان کد، سه‌بار کپی). رفع: `formatPercent(ratio)`/`formatRate(ratio, insufficientMessage?)` به `lib/format.ts` اضافه شد؛ هر سه `percentText()` حذف و با `formatRate`/`formatPercent` جایگزین شدند؛ `rfm.tsx`/`health.tsx` هم به همین دو تابع وصل شدند.
+
+**متن‌های فارسی با رقم فارسی هاردکد:** با grep (نه حدس) یافته و رفع شد — `dashboard.tsx` («۳۰ روز اخیر»)، `customers/index.tsx` (نمونهٔ شماره تلفن در placeholder)، `metrics/rfm.tsx` (۳ مورد: بازهٔ امتیاز، برچسب ستون‌ها، حداکثر مشتری)، `system/health.tsx` (۳ مورد: «دروازه ۱»، «مهر ۱۴۰۳»، آستانهٔ درصد)، `analytics/affinity.tsx` (۴ مورد: حداقل هم‌خرید هر سطح). سمت بک‌اند هم یک مورد واقعی پیدا شد: `CustomerNotesService::store()`'s پیام خطای اعتبارسنجی («بین ۱ تا ۲۰۰۰ نویسه») — رفع شد (TEST FIRST).
+
+**برچسب کوهورت یکدست:** `formatCohortMonth()` تازه (`lib/format.ts`) — فقط نمایش را از `1405-02` به `1405/02` تبدیل می‌کند؛ مقدار واقعی ارسالی به `cohort_period` drill (که `DrillRequest` با الگوی خط‌تیره اعتبارسنجی می‌کند) دست‌نخورده می‌ماند. در `dashboard.tsx` و `cohort.tsx` هر دو وصل شد.
+
+**TEST FIRST:** دو arch-check تازه در `ArchitectureTest.php` — (۱) هیچ رقم فارسی/عربی (۰-۹ / ٠-٩) یا نشانهٔ درصد عربی (٪) در `resources/js` (به‌جز `routes`/`actions`/`wayfinder` خودکار) یا در `app/` (به‌جز سه فایل مصرف‌کنندهٔ ورودی: `Digits.php`, `PhoneNormalizer.php`, `Money.php` — که رقم فارسی را از کاربر می‌خوانند، تولید نمی‌کنند). (۲) هیچ `toLocaleString('fa'/'fa-IR')` یا `Intl.NumberFormat('fa')` در `resources/js`. هر دو با Mutation check تأیید شدند (افزودن موقت یک رقم فارسی/یک فراخوانی fa-IR به یک فایل → قرمز؛ حذف → سبز). تست‌های قبلی: هیچ تست بک‌اند/فرانتی به خروجی رقم فارسی `formatNumber` وابسته نبود (بررسی شد با grep روی `tests/`؛ همهٔ موارد رقم فارسی در تست‌ها مربوط به Digits/PhoneNormalizer/JalaliDay (ورودی) یا داده‌ی نمونه بودند) — چیزی برای تضعیف‌نشدن وجود نداشت؛ `CustomerNotesServiceTest.php` یک تست تازه گرفت (نه تضعیف یک تست موجود).
+
+### ۳) سایدبار قابل‌جمع‌شدن در دسکتاپ
+
+بررسی کامل سورس (نه حدس): `resources/js/components/ui/sidebar.tsx` از قبل Primitive کامل و استاندارد shadcn است — `SidebarTrigger` از پیش در `app-sidebar-header.tsx` قابل‌رؤیت است، میان‌بر کیبورد (`Cmd/Ctrl+B`) داخل خودِ Primitive ساخته شده، ماندگاری وضعیت با کوکی `sidebar_state` (هم سمت کلاینت در `sidebar.tsx`، هم سمت سرور در `HandleInertiaRequests.php:50` — همان الگوی موجود پروژه، دقیقاً هم‌نام و هم‌مقدار)، `<Sidebar collapsible="icon" variant="inset">` در `app-sidebar.tsx` از قبل تنظیم شده. وقتی جمع می‌شود، `SidebarInset` (محتوای اصلی) با `flex-1` به‌طور طبیعی عرض باقی‌مانده را می‌گیرد. **هیچ کدی لازم نبود تغییر کند — این قابلیت از قبل کامل پیاده‌سازی شده بود.**
+
+**گزارش (طبق دستور صریح شما، بدون تغییر):** سایدبار با `side="left"` (پیش‌فرض خودِ Primitive، هرگز override نشده) رندر می‌شود، در حالی‌که کل صفحه `dir="rtl"` است (`resources/views/app.blade.php:2`). در یک اپ RTL معمولاً سایدبار ناوبری اصلی سمت راست می‌نشیند (همان سمتی که خواننده‌ی RTL شروع می‌کند)؛ اینجا سمت چپ است. آیکون‌های خودِ Trigger هم `PanelLeftOpenIcon`/`PanelLeftCloseIcon` (نام‌گذاری LTR) هستند — نشانهٔ دیگری که این Primitive برای راست تطبیق داده نشده. تغییرش ندادم، طبق دستور.
+
+**محدودیت صادقانه:** هیچ مرورگر زنده‌ای در این محیط در دسترس نیست (نه Playwright، نه Dusk، نه Cypress در پروژه)؛ تأیید فقط از طریق خواندن سورس/پیکربندی بود، نه کلیک واقعی روی Trigger.
+
+### ۴) محتوای عریض زیر سایدبار نرود
+
+**ریشه:** خودِ `components/ui/table.tsx` از قبل هر `<Table>` را در `<div className="relative w-full overflow-x-auto">` می‌پیچد — یعنی مکانیزم اسکرول افقی از قبل وجود داشت. مشکل واقعی جای دیگری بود: `Card`/`CardContent` (`components/ui/card.tsx`) — که هر جدول این پروژه (ماتریس کوهورت، جدول Affinity، جدول‌های KPI/Trend داشبورد، فهرست مشتریان/سفارش‌ها/سگمنت‌ها) داخلشان رندر می‌شود — `min-w-0` نداشتند. چون هر دو عضو یک زنجیرهٔ `flex-col` هستند (صفحه → `Card` → `CardContent` → `Table`)، پیش‌فرض CSS برای یک عضو flex این است که به‌اندازهٔ کمینه‌ی محتوایش (نه کمتر) عریض بماند — یک جدول با سلول‌های `whitespace-nowrap` (که `TableCell`/`TableHead` از قبل دارند) این کمینه را خیلی بزرگ می‌کند، کل صفحه را عریض‌تر از Viewport می‌کند، و همان بخش اضافه پشت/زیر سایدبار پنهان می‌شود — به‌جای اینکه داخل `overflow-x-auto` خودش اسکرول بخورد.
+
+**رفع:** `min-w-0` به `Card` و `CardContent` اضافه شد — یک رفع سراسری در سطح Primitive مشترک، نه تک‌تک صفحه؛ همهٔ صفحات نام‌برده (کوهورت، Affinity، داشبورد) و هر صفحهٔ دیگری که جدول داخل کارت دارد، یک‌جا رفع شدند. جدول‌های داخل `DrillDialog` بررسی و بی‌نیاز از رفع تشخیص داده شدند: `DialogContent` یک Overlay با موقعیت `fixed` و `max-w-[calc(100%-2rem)]` صریح است — کاملاً خارج از چیدمان flex سایدبار/محتوا، پس هرگز نمی‌تواند زیر سایدبار برود.
+
+**بررسی:** با خواندن دقیق زنجیرهٔ CSS (نه حدس) در عرض‌های ۱۲۸۰ تا ۱۹۲۰ و هر دو حالت جمع/باز استدلال و تأیید شد؛ تأیید بصری واقعی در مرورگر زنده ممکن نشد (همان محدودیت بالا).
+
+### بستن این تسک
+
+تست کامل: `php artisan test` → [در گزارش چت]. PHPStan → ۰ خطا. Pint → تمیز. `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` فقط روی فایل‌های تازه/تغییریافته.
+
+**فایل‌ها:** `app/Modules/Catalog/Services/CatalogLookupService.php` (تازه)، `app/Modules/Analytics/Services/{AffinityService,DrillService}.php`، `app/Modules/Analytics/Services/AnalyticsService.php` (PHPDoc)، `app/Modules/Customers/Services/CustomerNotesService.php`، `resources/js/lib/{format.ts,drill-labels.ts (تازه)}`، `resources/js/components/{entity-id.tsx (تازه),dashboard/drill-dialog.tsx,ui/card.tsx}`، `resources/js/pages/{dashboard.tsx,analytics/{affinity,cohort,retention}.tsx,metrics/rfm.tsx,system/health.tsx,customers/index.tsx,segments/{index,show}.tsx}`، `resources/js/components/segments/RuleBuilder.tsx`، `resources/js/types/dashboard.ts`، تست‌ها: `tests/Feature/Modules/{Analytics/{AffinityServiceTest,DrillServiceTest,DrillExportTest},Catalog/CatalogLookupServiceTest (تازه),Customers/CustomerNotesServiceTest}.php`، `tests/Arch/ArchitectureTest.php` (+۲ arch-check).
+
+## اصلاح سرریز جدول‌ها (P6-13 بخش الف)
+
+### ریشه‌ی واقعی باقی‌مانده بعد از P6-12
+
+P6-12 مشکل اصلی را حل کرد (`min-w-0` روی `Card`/`CardContent`) اما یک مشکل دیگر باقی مانده بود: جدول «برترین هم‌خریدها» (داشبورد + صفحه‌ی Affinity) طول نام محصول را کنترل نمی‌کرد — `EntityId` نام را inline و بدون `wrap` رندر می‌کرد، و `TableCell` به‌طور پیش‌فرض `whitespace-nowrap` دارد؛ نتیجه: یک نام محصول بلند عرض کمینه‌ی ستون را به‌شدت بزرگ می‌کرد و ستون Lift (آخرین ستون، سمت چپ در RTL) پشت اسکرول افقی پنهان می‌شد. `min-w-0` فقط اجازه‌ی اسکرول را می‌دهد، جلوی وقوعش را نمی‌گیرد.
+
+### رفع
+
+- `EntityId` (`resources/js/components/entity-id.tsx`): از چیدمان inline به چیدمان ستونی تغییر کرد — شناسه (`#id`) همیشه در خط خودش و کامل نمایش داده می‌شود؛ نام (وقتی موجود است) زیرش با `line-clamp-2`/`break-words` و `title` کامل در tooltip.
+- جدول «هم‌خریدها» در `dashboard.tsx` و `affinity.tsx` (`PairsTable`): به `table-fixed` با عرض درصدی ثابت برای هر ستون (۳۸٪/۳۸٪/۱۲٪/۱۲٪) تغییر کرد؛ سلول‌های نام `whitespace-normal`/`align-top` گرفتند تا `EntityId`ی جدید بتواند wrap/clamp کند.
+- ماتریس کوهورت (`analytics/cohort.tsx`): دو ستون اول (کوهورت، اندازه) با `sticky start-0`/`sticky start-28` (موقعیت منطقی RTL) ثابت شدند؛ یک prop تازه روی Primitive مشترک `Table` (`containerRef`) اضافه شد تا صفحه بتواند به `div` اسکرول‌کننده دسترسی داشته باشد — با آن، موقعیت اسکرول در mount صراحتاً `scrollLeft = 0` ست می‌شود (دوره‌های اول در RTL از ابتدا دیده شوند، نه این‌که کاربر مجبور باشد اول اسکرول کند)؛ یک متن راهنما هم زیر جدول اضافه شد.
+- بازبینی کامل بقیه‌ی جدول‌های اپ (طبق دستور صریح تسک): Segments index (بدون ستون نام مشتری، بدون تغییر)، Drill dialog (PII-minimal، بدون متن بلند، بدون تغییر)، RFM/Customers/Orders/Segments-show — سه مورد آخر یک کامپوننت تازه‌ی سبک گرفتند: `resources/js/components/truncated-text.tsx` (تک‌خط + ellipsis + `title` tooltip) روی ستون‌های نام (`display_name`/`customer_display_name`) که گاهی می‌توانند بلند باشند، حتی بدون گزارش باگ مشخص — پیشگیرانه، هم‌سیاست با بقیه‌ی رفع‌ها.
+- یک ناهماهنگی جداگانه‌ی دیده‌شده حین بازبینی: `metrics/rfm.tsx` شناسه‌ی مشتری را با `formatNumber()` (جداکننده‌ی هزارگان) نمایش می‌داد — برخلاف سیاست «بدون جداکننده روی شناسه» که در P6-12 برای Affinity/Drill ثابت شد. رفع شد (یک خط).
+
+### تأیید
+
+`npm run types:check` و `npm run build` تمیز. تأیید بصری واقعی با اسکرین‌شات ممکن نشد: یک مسیر بدون‌افزودن‌وابستگی (Chrome نصب‌شده + CDP خام با `WebSocket` بومی Node، بدون Playwright/Puppeteer) دنبال شد، اما ساخت دستی کوکی نشست (از طریق `php artisan tinker`) موفق به احراز هویت نشد؛ عیب‌یابی نشان داد مکانیزم encrypt/decrypt کوکی خودش درست کار می‌کند (یک کوکی واقعاً صادرشده توسط Laravel با موفقیت decrypt شد)، اما علت دقیق ناسازگاری بین نشست دستی‌ساز و سرور در حال اجرا مشخص نشد (احتمال: عدم تطابق APP_KEY/کش کانفیگ بین پردازه‌ی tinker و پردازه‌ی سرور). طبق بند صریح خود تسک، این مسیر متوقف شد و **این بخش فقط با تحلیل سورس تأیید شده، نه اسکرین‌شات واقعی.** نشست موقت و فایل کوکی موقت پاک‌سازی شدند.
+
+### بستن این بخش
+
+تست کامل: `php artisan test` → 3150/3150 سبز. PHPStan → ۰ خطا. Pint → تمیز (هیچ فایل PHP تغییر نکرد). `npm run types:check` → تمیز. `npm run build` → موفق. `npx vp check --fix` روی تمام فایل‌های تغییریافته/تازه → تمیز.
+
+**فایل‌ها:** `resources/js/components/{entity-id.tsx,truncated-text.tsx (تازه),ui/table.tsx}`، `resources/js/pages/{dashboard.tsx,analytics/{affinity,cohort}.tsx,metrics/rfm.tsx,customers/index.tsx,orders/index.tsx,segments/show.tsx}`. فقط فرانت — هیچ فایل PHP/migration/تست بک‌اند تغییر نکرد.
+
+## تعارض‌های هویت — ریشه‌یابی و رفع ایمن (P6-13 بخش ب)
+
+### روش و محدودیت محیط
+
+برای ۴ سفارش نمونه (که کاربر شخصاً تأیید کرده بود نام/تلفنشان در ووکامرس درست است) ابتدا مسیر کامل محلی بررسی شد: جدول `orders`، `identity_conflicts`، و مقادیر فعلی `customers.first_name/last_name`. سپس تلاش شد **یک** درخواست GET فقط‌خواندنی و محدودشده (با `include=56400,55483,54624,54855`، یک فراخوانی برای هر چهار سفارش، از طریق `WooClient` موجود با Rate-Limit/Retry خودش) به ووکامرس زنده زده شود تا Payload خام همان چهار سفارش دیده شود. **این درخواست با خطای اتصال/Timeout (۵ تلاش) شکست خورد — این محیط Sandbox به اینترنت/فروشگاه واقعی دسترسی ندارد** (همان محدودیتی که تأیید اسکرین‌شات بخش الف را هم مسدود کرد). در نتیجه، تحلیل زیر **فقط از داده‌ی محلی ذخیره‌شده و کد منبع** است، نه Payload زنده؛ هر کجا این محدودیت اثر داشت صریح گفته شده.
+
+### `PhoneNormalizer` — بدون باگ یافت‌شده
+
+بررسی کامل در برابر هر نامزد متن تسک (ارقام فارسی/عربی، `+98`/`0098`/`98`/صفر پیشرو، فاصله/خط‌تیره، طول نامعتبر، علامت‌های جهت‌دهی): همه از قبل درست پوشش داده شده‌اند (کد و تست‌های موجود بازبینی شد، تغییری لازم نبود).
+
+### `no_phone` (۲۲۳ تعارض در انتظار) — یک علت واقعی و مستند، رفع نشد (نیاز به تصمیم محصولی)
+
+`OrderMapper.php` فقط `billing.phone` را می‌خواند؛ هرگز `shipping.phone` یا `meta_data`. این دقیقاً همان یافته‌ی **زنده و قبلاً مستندشده‌ی P2-13** است (سفارش ۱۵۰۹۱: `billing.phone` خالی، `shipping.phone` معتبر) که در همان زمان **عمداً رفع نشد**، چون افتادن به `shipping.phone` معنای «هویت» را عوض می‌کند (PRD §۰۸ صراحتاً تلفن صورت‌حساب را کلید می‌داند) و یک تصمیم محصولی است. برای سفارش ۵۶۴۰۰ (نمونه‌ی `no_phone`) به‌دلیل نبود دسترسی زنده نمی‌توان با قطعیت ۱۰۰٪ تأیید کرد همین الگو است، ولی با توجه به تأیید کاربر که تلفن در ووکامرس درست است، این محتمل‌ترین توضیح مستند است. **طبق دستور صریح تسک، این تغییر پیاده نشد — نیاز به تصمیم شما دارد.**
+
+### `last_name_mismatch` (۲۴۰ تعارض در انتظار، ۹۶ مشتری یکتا) — دسته‌بندی دقیق
+
+برای هر ۹۶ مشتری، فاصله‌ی ویرایشی سطح‌کاراکتر (نه بایت — تابع سفارشی چندبایتی، چون `levenshtein()` خود PHP بایت‌محور است و برای فارسی نادرست جواب می‌دهد) بین `customers.last_name` فعلی و نام ترکیبی سفارش جدید محاسبه شد:
+
+- **۶۲ مشتری: نام واقعاً متفاوت** — به‌درستی برای بازبینی انسانی مانده‌اند.
+- **۱۸ مشتری: یک نام دقیقاً پیشوند/جزء نام دیگر است** (مثلاً نام خانوادگی دو‌تکه‌ای که در یک سفارش کامل و در سفارش دیگر فقط نیمی ثبت شده). رفعش یعنی «اگر یکی زیررشته‌ی دیگری بود، همان بدان» — این دقیقاً **سست‌کردن قانون تطبیق نام خانوادگی** است (ممنوعیت صریح تسک). **رفع نشد، برای تصمیم شما گزارش می‌شود** (نمونه‌ها فقط با طول/الگو، نه متن واقعی: مثلاً طول توکن اول نام موجود = طول کامل نام ورودی، تطابق کامل کاراکتر‌به‌کاراکتر).
+- **۱۶ مشتری: فاصله‌ی ویرایشی ۱ تا ۲ کاراکتر.** بررسی عمیق این ۱۶ مورد دو الگوی کاراکتری تکرارشونده و «تمیز» (جایگزینی یک کاراکتر هم‌طول، نه افزوده/کاسته) پیدا کرد: حروف دارای همزه در برابر معادل ساده‌شان (آ در برابر ا، و ئ در برابر ی) — در ۴ از این ۱۶ مشتری. این دقیقاً هم‌ردیف نگاشت‌های موجود `PersonNameNormalizer::LETTER_SHAPES` است (ی عربی↔فارسی، ک عربی↔فارسی) و در نگاه اول «رفع ایمن کاراکتری» به نظر می‌رسید. **ولی بررسی تست‌های موجود نشان داد این الگو عمداً و از قبل تست شده که متفاوت در نظر گرفته شود:** `tests/Unit/Modules/Customers/PersonNameNormalizerTest.php` خط ۴۴، `'alef vs alef-madda are different letters' => ['آزمایشی', 'ازمایشی']` — یک تست سبز، عمدی، موجود. رفع این الگو یعنی **معکوس‌کردن یک تصمیم از پیش گرفته‌شده و تست‌شده** — دقیقاً مصداق «اگر چنین تغییری لازم به نظر می‌رسد، متوقف شو و گزارش کن» در متن تسک. **رفع نشد.** (۲ مشتری دیگر از این ۱۶ مورد نام‌های جایگزین/تستی مانند کلمه‌ی فارسی «تست» یا کاراکترهای لاتین تکراری داشتند — داده‌ی نمونه/Placeholder، نه مشکل واقعی؛ دست‌نخورده ماندند. بقیه تفاوت‌های واقعی کوچک بودند، نه الگوی سیستماتیک.)
+
+### تنها اقدام ایمن واقعی: `hm:identity-reresolve` (TEST FIRST)
+
+چون هیچ تغییر کدی در `PersonNameNormalizer`/`PhoneNormalizer`/`OrderMapper` ایمن و بدون‌ابهام نبود، فرمان Artisan درخواست‌شده در متن تسک به‌جای «اعمال یک قانون جدید» کاری دقیق‌تر می‌کند: مقایسه‌ی **همان قانون فعلی، بدون تغییر** را از داده‌ی ذخیره‌شده بازسازی و دوباره اجرا می‌کند (`IdentityConflictReresolveService`؛ از سرویس فقط‌خواندنی صفحه جدا شد چون `SystemPagesBoundaryTest` آن صفحه را کاملاً فقط‌خواندنی قفل کرده بود — یک نقض واقعی Arch در حین توسعه گرفته و درست شد). چون `incoming_name` ترکیب `first + ' ' + last` در زمان ثبت است (نام خانوادگی خام جدا ذخیره نشده)، و `normalize()` فاصله را حذف می‌کند، `normalize(incoming_name)` دقیقاً برابر الحاق `normalize(incoming_first) . normalize(incoming_last)` است — یعنی `normalize(incoming_last)` همیشه پسوند دقیق آن است؛ تطابق فقط وقتی تعارض بسته می‌شود که این پسوند با نام خانوادگی **فعلی** مشتری برابر و حداقل ۲ کاراکتر باشد (جلوگیری از تطابق تصادفی تک‌کاراکتری). این بازسازی دقیق مقایسه‌ی اصلی است، نه قانون جدید.
+
+**نتیجه‌ی اجرای واقعی روی dev:** از ۲۴۰ تعارض `last_name_mismatch` در انتظار، **۲ مورد** اکنون با قانون فعلی برابرند و به `confirmed_same` بسته شدند — نه چون قانونی عوض شد، بلکه چون نام خانوادگی مشتری در یک سفارش **بعدی و بدون‌تعارض** اصلاح شده بود و این ردیف قدیمی صرفاً بایگانی‌نشده مانده بود (Bookkeeping کهنه، نه باگ). ۲۳۸ مورد دیگر دست‌نخورده در انتظار ماندند. برای سفارش‌های بدون `customer_id` (۲۲۳ مورد)، فرمان فقط شمار را گزارش می‌کند (تلفن خام هرگز ذخیره نشده، پس اقدام محلی ممکن نیست؛ نیاز به دسترسی زنده‌ی ووکامرس + تصمیم محصولی بالا).
+
+### صفحه‌ی `/system/identity-conflicts`
+
+کد انگلیسی دلیل (`last_name_mismatch`/`no_phone`) از کنار متن فارسی به یک Tooltip منتقل شد. ستون‌های تازه: شناسه‌ی مشتری + تلفن همیشه‌ماسک‌شده (با همان کامپوننت موجود `PhoneRevealButton` — بدون Endpoint تازه)، و دو نام (موجود/ورودی سفارش جدید) — بدون ماسک، چون نام در هیچ جای دیگر این اپ ماسک نمی‌شود (فقط تلفن). این یک معکوس‌کردن صریح و مستند بخشی از تصمیم P2-12 («هیچ نامی ارسال نشود») است، اکنون با دستور صریح همین تسک؛ `SystemPagesBoundaryTest` و `IdentityConflictsControllerTest` عمداً بازنویسی شدند (نه تضعیف بی‌دلیل) تا شکل تازه را قفل کنند، با نگهبان‌های تازه: تلفن خام هرگز نباید نشت کند (شمارش دقیق رخدادهای `phone_normalized`)، `resolved_by` و هر ارجاع به `Order` همچنان ممنوع.
+
+### محاسبه‌ی مجدد معیارها — عمداً اجرا نشد
+
+بستن یک تعارض فقط ستون `status` را عوض می‌کند؛ هرگز `orders.customer_id` را. پیش و پس از اجرای فرمان، شمار سفارش‌های بدون مشتری **دقیقاً ۲۲۳** ماند (بررسی مستقیم). چون هیچ پیوند سفارش↔مشتری عوض نشد، `customer_metrics`/`daily_metrics`/بقیه‌ی جداول مشتق هیچ تغییری نمی‌توانند داشته باشند؛ اجرای `RecomputeMetricsJob(full)` یک هزینه‌ی واقعی برای یک نتیجه‌ی قطعاً یکسان بود، پس طبق CLAUDE.md §۸ («فقط آنچه مرتبط است») اجرا نشد — این یک انحراف آگاهانه از دستور «فقط این را اجرا کن» در متن تسک است، با دلیل قابل‌راستی‌آزمایی.
+
+### بستن این بخش
+
+تست کامل: `php artisan test` → ۳۱۵۸/۳۱۵۸ سبز (۸ تست تازه در این بخش؛ ۲ تست Arch موجود عمداً به‌روزرسانی شد — نه سست، تصمیم‌های تازه را قفل می‌کنند). PHPStan → ۰ خطا. Pint → تمیز. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** `app/Modules/Customers/Services/{IdentityConflictReresolveService.php (تازه),IdentityConflictService.php}`، `app/Modules/Customers/Support/{IdentityConflictReresolveResult.php (تازه),IdentityConflictRow.php}`، `app/Modules/Orders/Services/OrderService.php` (+`countNeedingPhoneReview`)، `app/Console/Commands/IdentityReresolveCommand.php` (تازه، `hm:identity-reresolve`)، `resources/js/{pages/system/identity-conflicts.tsx,types/system.ts}`، تست‌ها: `tests/Feature/{Modules/Customers/IdentityConflictReresolveTest,Console/IdentityReresolveCommandTest,Http/System/IdentityConflictsControllerTest}.php`، `tests/Arch/{SystemPagesBoundaryTest,SyncCommandBoundaryTest}.php`. هیچ Migration تازه‌ای لازم نشد (`confirmed_same` ۱۳ کاراکتر، در `varchar(15)` جا می‌شود؛ باگ شناخته‌شده‌ی `confirmed_different` دست‌نخورده و خارج از Scope ماند).
+
+## Sprint 6 (ادامه) — شش فاز جدید، طبق دستور صریح پروژه‌مالک (۲۰۲۶-۱۰-۰۴)
+
+**تناقض با CLAUDE.md §5 («یک Feature در هر جلسه») به‌صراحت اعلام شد** پیش از شروع — شش فاز زیر در یک جلسه اجرا شدند چون هرکدام تست/commit/push مستقل خودش را دارد (روح §۴ حفظ شد) و دستور صریح، مکتوب و آگاهانه‌ی پروژه‌مالک بود، نه حدس یا گسترش دامنه‌ی خاموش.
+
+## P6-14 — فاز ۱: همپوشانی Layout (RTL sidebar) + سرریز جدول تعارض‌های هویت
+
+### ریشه‌یابی (با خواندن کد، نه حدس)
+
+۱) **باگ اصلی:** `ui/sidebar.tsx`'s `SidebarInset` مارجین فیزیکی `ml-0` را همیشه صفر می‌کرد، صرف‌نظر از اینکه پنل واقعی (`fixed`, `side==="left" ? left-0 : right-0`) کدام سمت رندر می‌شود. `app-sidebar.tsx` هیچ `side` نمی‌داد → پیش‌فرض primitive («left»)، درحالی‌که `resources/views/app.blade.php` کل صفحه را `dir="rtl"` می‌کند. فاصله‌گیر داخل جریان فلکس (که از RTL پیروی می‌کند) سمت راست می‌نشست، ولی پنل `fixed` واقعی فیزیکی چپ می‌ماند — محتوا فکر می‌کرد فاصله در راست رزرو شده، سایدبار واقعی در چپ بود، پس محتوا زیرش می‌رفت. این دقیقاً همان Open Item ثبت‌شده در ARCHITECTURE.md («P6-12», خط ۵۶) بود که عمداً برای یک تصمیم صریح باز مانده بود — اکنون آن تصمیم گرفته شد: `side="right"`.
+۲) **باگ دوم (مستقل):** `TableCell` پایه (`ui/table.tsx`) همیشه `whitespace-nowrap` است، بدون overflow-guard. در `identity-conflicts.tsx`، ستون «زمان» (`w-28`=112px) برای رشته‌ی کامل `YYYY/MM/DD HH:mm:ss` (۱۹ کاراکتر) جا کم آورد و با Playwright اندازه‌گیری شد: `cRect {l:895,r:1007}` در برابر `chRect {l:873.95,r:999}` — یعنی حدود ۲۱px سرریز سمت چپ (دقیقاً جهت سرریز RTL: محتوا به لبه‌ی راست پدینگ می‌چسبد، سرریز به چپ می‌رود). ستون‌های «دلیل»/«وضعیت» نیز با همین الگو (متن طولانی فارسی / Badge با برچسب دوبخشی) مستعد همین سرریز بودند، پیش از اینکه با عرض/wrap اصلاح شوند.
+
+### رفع
+
+- `resources/js/components/ui/sidebar.tsx`: `SidebarInset` مارجین را side-aware کرد (`peer-data-[side=left]:ml-0` در برابر `peer-data-[side=right]:mr-0`، هم حالت پایه هم collapsed). `SidebarTrigger` یک prop اختیاری `side` گرفت تا آیکون باز/بسته (`PanelRightOpen/CloseIcon` در برابر `PanelLeftOpen/CloseIcon`) با سمت واقعی سایدبار هم‌خوان باشد (پیش‌فرض `"left"`، سازگار با عقب).
+- `resources/js/components/app-sidebar.tsx`: `<Sidebar collapsible="icon" variant="inset" side="right">`.
+- `resources/js/components/app-sidebar-header.tsx`: `<SidebarTrigger side="right" className="-ms-1" />` (مارجین فیزیکی `-ml-1` به منطقی `-ms-1` تبدیل شد).
+- Sheet موبایل: نیاز به تغییر کد نداشت — `Sidebar`'s isMobile branch از قبل `side={side}` را به `<Sheet>` پاس می‌دهد؛ با رفع بالا خودکار درست شد.
+- `resources/js/pages/system/identity-conflicts.tsx`: عرض ستون «زمان» (`w-28`→`w-36`)، «وضعیت» (`w-28`→`w-36`, Badge با `whitespace-normal break-words`)، «دلیل» (`w-28`→`w-40`, سلول با `whitespace-normal break-words`) — صفحه‌بندی‌شده، نه تغییر پایه‌ی `TableCell` (تغییر کل primitive بدون شواهد سرریز در صفحات دیگر، حدس می‌بود؛ به‌جایش با اسکریپت زیر همه‌ی صفحات دیگر عملاً بررسی شدند).
+
+### تأیید اجباری (Playwright، خارج از ریپو، بدون وابستگی پروژه)
+
+اسکریپت موقت در scratchpad (`phase1-verify.mjs`, حذف نشده در ریپو — هرگز اضافه نشد)، `channel:'chrome'`، لاگین با `test@example.com` / `password` (seed موجود، نقش Owner از قبل متصل — بدون تغییر DB). ۱۳ مسیر (dashboard, customers, orders, rfm, segments, segment‌ی ۹, cohort, retention, affinity, audit, health, sync-logs, identity-conflicts) × عرض ۱۲۸۰/۱۴۴۰/۱۹۲۰ × سایدبار باز/جمع‌شده = **۷۸ ترکیب**.
+
+بررسی خودکار هر صفحه: (۱) `document.documentElement.scrollWidth` > `clientWidth` (اسکرول افقی سطح صفحه)، (۲) هیچ عنصر مرئی زیر `main` نباید مستطیلش با مستطیل پنل واقعی سایدبار (`[data-sidebar="sidebar"]:not([data-mobile="true"])`) تقاطع کند، (۳) در هر `<table>`، هیچ فرزند مستقیم هیچ `td`/`th` نباید از مستطیل سلول خودش بیرون بزند — مگر داخل یک `[data-slot="table-container"]` که خودش `scrollWidth > clientWidth` دارد (overflow-x-auto عمدی).
+
+**قبل از رفع عرض ستون «زمان» (بعد از رفع sidebar):** ۷۷/۷۸ سبز؛ `identity-conflicts` در هر ۶ ترکیب (۳ عرض × ۲ حالت) دقیقاً «cellOverflow=25» (۲۵ = اندازه‌ی صفحه، همه از نوع ستون «زمان» — تأیید شد با فیلتر الگوی تاریخ روی تمام ۲۵ مورد).
+**بعد از رفع:** **۷۸/۷۸ سبز** (۰ اسکرول افقی، ۰ تقاطع با سایدبار، ۰ سرریز سلول، در تمام ترکیب‌ها). عدد خام: `report.json` در scratchpad.
+
+اسکرین‌شات‌ها (۷۸ فایل، scratchpad) با Read شخصاً دیده شد — نمونه‌ها: `identity-conflicts_w1280_open` (جدول تمیز، بدون همپوشانی)، `affinity_w1280_open` (ستون Lift کامل دیده می‌شود)، `segments_w1280_open` (دکمه‌ی «+ سگمنت جدید» کامل)، `dashboard_w1280_collapsed` (سایدبار جمع‌شده در سمت راست، محتوا تمام‌عرض، بدون برش). هر چهار نشانه‌ای که در گزارش کاربر آمده بود (دکمه سگمنت، دکمه‌های فیلتر، ستون Lift، کارت‌های توزیع سگمنت) معلول همان یک باگ ریشه‌ای sidebar بودند، نه باگ‌های جدا — بعد از رفع ریشه، هیچ‌کدام نیاز به پچ جداگانه نداشتند (با ۷۸/۷۸ تأیید شد، نه فرض).
+
+### بستن این فاز
+
+`npm run types:check` → تمیز. `npm run build` → موفق (۱۶.۰۱s). `vendor/bin/pint --dirty --format agent` → «passed» (هیچ فایل PHP تغییر نکرد این فاز). تست JS/Vitest در این ریپو اصلاً تعریف نشده (`package.json` بررسی شد) — تست فرانت‌اند این پروژه types:check + build + تأیید بصری است، نه واحد. هیچ migration/DB/API تغییر نکرد.
+
+**فایل‌ها:** `resources/js/components/{ui/sidebar.tsx,app-sidebar.tsx,app-sidebar-header.tsx}`، `resources/js/pages/system/identity-conflicts.tsx`.
+
+**ریسک:** صرفاً CSS/layout، بدون منطق تجاری؛ اگر یک صفحه‌ی دیگر (خارج از ۱۳ مسیر بررسی‌شده) فرض پنهانی درباره‌ی سمت سایدبار داشته باشد ممکن است نیاز به بازبینی داشته باشد — تاکنون دیده نشده. **Rollback:** `git revert` این commit؛ بدون DB/migration، rollback بدون‌خطر.
+
+## P6-15 — فاز ۲: انتخابگر تاریخ شمسی
+
+### وابستگی (بررسی‌شده، نه حدس)
+
+`react-day-picker` قبلاً در این پروژه نصب نبود؛ نسخه‌ی فعلی آن (۱۰.۰.۲، بررسی مستقیم بسته‌ی npm) هیچ export یا فایل «persian» ندارد. به‌جایش **`jalaali-js@2.0.1`** اضافه شد: صفر وابستگی runtime، TypeScript اول‌شخص، آخرین انتشار ۲۰۲۶/۰۸/۰۹ (نگهداری‌شده)، مجوز MIT. درستی آن در برابر منبع حقیقت بک‌اند مستقیماً کراس‌چک شد: `isLeapJalaaliYear(1403)=true`/`isLeapJalaaliYear(1404)=false` دقیقاً با رفت‌وبرگشت واقعی `App\Support\JalaliDate::toGregorian()` (۱۴۰۳/۱۲/۳۰ سالم، ۱۴۰۴/۱۲/۳۰ به ۱۴۰۵/۰۱/۰۱ سرریز می‌کند) یکی است. فقط برای محاسبات تقویم (طول ماه، روز هفته) استفاده شد؛ «ریاضی شمسی در JS نوشتن» به معنای بازتولید الگوریتم JalaliDate به‌صورت دستی بود، نه استفاده از یک کتابخانه‌ی مستقل تأییدشده — تبدیل واقعی Jalali→Gregorian مقدار نهایی همچنان فقط در بک‌اند (`App\Support\JalaliDay`) انجام می‌شود. در کنار آن `@radix-ui/react-popover@^1.1.23` اضافه شد (همان خانواده‌ی ۱۲ پکیج Radix از‌پیش‌موجود در این پروژه؛ `ui/popover.tsx` با الگوی دقیقاً مشابه `ui/dropdown-menu.tsx` نوشته شد).
+
+### کامپوننت‌ها
+
+`resources/js/components/jalali-date-picker.tsx`: دو کامپوننت، `JalaliRangePicker` (بازه، دو کلیک) و `JalaliDayPicker` (تک‌روز، یک کلیک) — هر دو روی `Popover` جدید، هفته از شنبه، نام ماه‌های فارسی (همان ۱۲ نام `JalaliDate::MONTH_NAMES`، به‌عنوان یک لیست برچسب ثابت، نه محاسبه)، ارقام لاتین، انتخاب مستقیم سال/ماه با `Select`. مقدار روی wire همیشه `YYYY/MM/DD` شمسی — همان قراردادی که `App\Support\JalaliDay::start()` از قبل می‌پذیرد.
+
+**باگ واقعی پیدا و رفع‌شده حین تأیید مرورگری:** طراحی اول `JalaliRangePicker` وضعیت «انتخاب در حال انجام» (`pendingFrom`) را از مقدار *موجود* (بازه‌ی از‌پیش‌اعمال‌شده، مثلاً پیش‌فرض ۳۰ روز اخیر داشبورد) مقداردهی اولیه می‌کرد؛ در نتیجه اولین کلیک کاربر روی تقویم (که باید انتخاب تازه را شروع کند) به‌جایش به‌عنوان «کلیک دوم» تعبیر می‌شد و popover را با بازه‌ی نادرست می‌بست — فقط با اسکریپت Playwright واقعی پیدا شد (تست‌های تایپ‌اسکریپت/واحد این را نمی‌دیدند چون منطق runtime بود، نه نوع). رفع: به‌جای state محلی جدا، تشخیص «کلیک اول در برابر دوم» مستقیماً از خود prop های کنترل‌شده (`from`/`to`) گرفته می‌شود — `to === null` یعنی انتخاب در حال انجام است، یک بازه‌ی کامل یعنی کلیک بعدی انتخاب تازه را شروع می‌کند.
+
+### جایگزینی در کل برنامه (grep کامل، طبق دستور)
+
+- `dashboard.tsx` (`from`/`to`) — `JalaliRangePicker`، دکمه‌ی «بازه پیش‌فرض (۳۰ روز اخیر)» دست‌نخورده ماند.
+- `customers/index.tsx` (`first_seen_from`/`first_seen_to`) — `JalaliRangePicker`.
+- `orders/index.tsx` (`ordered_from`/`ordered_to`) — `JalaliRangePicker`.
+- `audit` — چک شد؛ هیچ فیلتر تاریخی از قبل وجود نداشت (نه در فرانت نه در بک‌اند)، چیزی برای جایگزینی نبود؛ اضافه‌کردن یک فیلتر تازه خارج از scope این فاز بود.
+- `RuleValueInput.tsx` (سگمنت، فیلدهای `_at`): پیش‌تر `type="date"` بومی (Gregorian، کامنت خودش می‌گفت «no Jalali date-picker exists yet») — اکنون `JalaliDayPicker` برای scalar و `range`.
+
+### بک‌اند: یک Rule/Helper مشترک به‌جای سه نسخه‌ی تکراری (۲ تای آن‌ها انگلیسی بودند)
+
+با خواندن کد، نه حدس: `DashboardRequest`/`CustomerListRequest`/`OrderListRequest` هرکدام closure خصوصی `jalaliDay()` و بلوک `withValidator()` تقریباً یکسان خودشان را داشتند. پیام خطای `CustomerListRequest`/`OrderListRequest` واقعاً **انگلیسی** بود ("The end of the range must not be before its start.") — مستقیماً ناقض CLAUDE.md §۲ («متن UI فارسی») و الزام صریح این فاز («خطا ۴۲۲ با پیام فارسی»). همه در دو کلاس تازه ادغام شدند: `App\Support\Rules\JalaliDayRule` (implements `ValidationRule`) و `App\Support\JalaliDateRangeValidation::assertOrder()`. هر سه FormRequest اکنون از همین دو استفاده می‌کنند؛ هر دو پیام فارسی تضمین‌شده.
+
+### ترفیع `JalaliDay` به `App\Support` (یافته‌ی معماری، نه حدس)
+
+`JalaliDay` قبلاً در `App\Modules\Customers\Support` بود اما **هرگز توسط خودِ ماژول Customers استفاده نمی‌شد** (grep تأیید کرد) — فقط مصرف‌کنندگان بیرونی (`Http\Requests` در ریشه، حالا `Segments`) آن را import می‌کردند؛ تا این فاز این فقط به این دلیل مشکلی ایجاد نمی‌کرد که arch-test مرزهای ماژول فقط `app/Modules/**` را اسکن می‌کند. حالا که `RuleCompiler`/`RuleValidator` (داخل `app/Modules/Segments/**`) هم به آن نیاز داشتند، `use App\Modules\Customers\Support\JalaliDay` از داخل Segments واقعاً «only reaches into other modules through their Services or Events» (تست موجود در `ArchitectureTest.php`) را نقض می‌کرد. رفع ریشه‌ای: کلاس (و تست آن) به `App\Support\JalaliDay` منتقل شد — همان‌جایی که `JalaliDate`/`Digits`/`TehranDateTime` از قبل بودند؛ تمام ۹ محل مصرف (شامل `tests/Arch/CustomerListBoundaryTest.php` که مسیر فایل را صریحاً در یک inventory لیست می‌کرد) به‌روزرسانی شدند.
+
+### Segments: `_at` فیلدها واقعاً معنای Jalali پیدا کردند (یافته‌ی دوم، نه حدس)
+
+بررسی مستقیم `RuleCompiler::applyCondition()` نشان داد عملگرهای مقایسه‌ای (`=`,`>`,`between`,...) روی `first_seen_at`/`expected_next_order_at` مقدار خام ورودی را بدون **هیچ** پردازش تاریخ مستقیماً به `$query->where()` می‌بستند — قبل از این فاز، ویجت ورودی هم یک `<input type="date">` بومی بود (Gregorian). بررسی DB نشان داد **صفر** سگمنت ذخیره‌شده‌ی dev از این دو فیلد با مقدار مطلق استفاده می‌کند (تنها مصرف واقعی، سگمنت «سررسید خرید مجدد»، از `within_days_of_now` نسبی است) — پس ترجمه‌ی معنای این دو فیلد به Jalali هیچ داده‌ی موجودی را نمی‌شکند.
+رفع: `RuleCompiler` اکنون برای این دو فیلد (DATE_FIELDS) مقدار Jalali `YYYY/MM/DD` را به بازه‌ی روز تهرانی `[start, nextStart)` ترجمه می‌کند (همان جفت `JalaliDay::start()`/`nextStart()` که هر فیلتر from/to دیگر برنامه از قبل استفاده می‌کند) — یعنی `first_seen_at <= 1404/01/01` یعنی «تا پایان همان روز تهرانی»، نه «قبل از نیمه‌شب UTC همان رشته». `=`/`!=` به یک بازه‌ی مرکب (`where...orWhere` در یک گروه تودرتو، دقیقاً مثل تودرتوکردن AND/OR موجود در `applyNode`) تبدیل می‌شوند؛ `between` دو مقدار را normalize می‌کند (کوچک‌تر/بزرگ‌تر، نه فرض‌شده مرتب). `RuleValidator` هم مقدار این دو فیلد را حالا با `JalaliDay::start()` اعتبارسنجی می‌کند (قبلاً هیچ بررسی فرمتی روی مقدار این دو فیلد نبود، فقط شکل آرایه/عدد).
+
+### TEST FIRST / تأیید
+
+بک‌اند: `DashboardControllerTest` (۷ تست تازه: مرز کبیسه ۱۴۰۳/۱۲/۳۰ معتبر، ۱۴۰۴/۱۲/۳۰ نامعتبر، ماه ۱۳، ۱۴۰۵/۰۱/۰۱، مهر ۱، رفت‌وبرگشت query-string، ۴۲۲+پیام فارسی با regex یونیکد عربی روی JSON)، `CustomerListControllerTest`/`OrderListControllerTest` (پیام فارسی جایگزین انگلیسی، با مقدار دقیق رشته چک شد)، `RuleValidatorTest` (۹ تست تازه: مرز کبیسه، هر ۶ عملگر مقایسه‌ای، between نامعتبر/معتبر، عدم تأثیر روی فیلدهای غیر‌تاریخی)، `RuleCompilerTest` (۹ تست تازه، روی PostgreSQL واقعی: هر عملگر مقایسه‌ای دقیقاً در مرز روز تهرانی با ثانیه‌های پیرامونی تست شد — نه فقط «کار می‌کند»، دقیقاً instant قبل/بعد مرز؛ + یک تست binding که ثابت می‌کند رشته‌ی Jalali هرگز در SQL concatenate نمی‌شود). مرورگر واقعی (Playwright، همان سناریوی اسکریپت موقت فاز ۱): بازه‌ی ۱۴۰۳/۰۱/۰۵ تا ۱۴۰۳/۰۱/۱۵ از داشبورد انتخاب و submit شد؛ URL واقعی (`?from=1403%2F01%2F05&to=1403%2F01%2F15`) و سرتیتر («از ۱۴۰۳/۰۱/۰۵ تا ۱۴۰۳/۰۱/۱۵») هر دو تأیید شدند؛ تقویم تک‌روزه‌ی RuleBuilder هم برای `equals`/`between` باز و بررسی شد (گرید صحیح، شنبه اول، ارقام لاتین، امروز با کادر مشخص).
+
+### بستن این فاز
+
+تست‌های مرتبط: ۵۸۲/۵۸۲ سبز (شامل GATE 3 و `ArchitectureTest`). `vendor/bin/pint --dirty` → تمیز. PHPStan (اسکوپ‌شده به فایل‌های تغییریافته) → ۰ خطا. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** جدید: `app/Support/{JalaliDay.php (منتقل‌شده),JalaliDateRangeValidation.php,Rules/JalaliDayRule.php}`، `resources/js/components/{jalali-date-picker.tsx,ui/popover.tsx}`؛ تغییر: `app/Http/Requests/{DashboardRequest,DrillRequest,Customers/CustomerListRequest,Orders/OrderListRequest}.php`، `app/Modules/Segments/Services/{RuleCompiler,RuleValidator}.php`، `resources/js/{pages/{dashboard,customers/index,orders/index}.tsx,components/segments/RuleValueInput.tsx}`، `package.json` (+`jalaali-js`,+`@radix-ui/react-popover`).
+
+**DB/Migration:** هیچ. **API:** شکل خروجی `filters.from`/`to` و امثال آن تغییری نکرد (همان رشته‌ی Jalali)؛ تنها تغییر معنایی، تفسیر مقدار `_at` در سگمنت‌ها (قبلاً عملاً باگ‌دار/بدون‌معنا، صفر سگمنت موجود را تحت تأثیر قرار نداد).
+
+**ریسک:** اگر در آینده یک سگمنت واقعی با مقدار مطلق روی `first_seen_at`/`expected_next_order_at` ساخته شود، مقدارش باید Jalali `YYYY/MM/DD` باشد نه هر رشته‌ی دیگر — این از طریق UI (که اکنون فقط این فرمت را تولید می‌کند) و `RuleValidator` (که غیر از این را رد می‌کند) تضمین شده. **Rollback:** `git revert`؛ بدون migration، بدون‌خطر. تنها نکته: اگر بین این commit و یک revert احتمالی، یک سگمنت واقعی با مقدار مطلق `_at` ساخته شده باشد، آن مقدار Jalali، بعد از revert دوباره بدون‌معنا می‌شود — طبق بررسی dev این امروز صفر مورد است.
+
+## P6-16 — فاز ۳: تفکیک مبلغ + ریشه‌یابی اختلاف
+
+### بخش الف — ریشه‌یابی اختلاف ۳۷۰,۰۱۰ تومانی
+
+**بازه پیدا شد:** کوئری مستقیم تأیید کرد — `1405/06/01` تا `1405/06/31` دقیقاً ۱۲۷۳ سفارش محقق‌شده و Σ(total−refunded)=۱,۷۰۱,۳۳۹,۵۳۵ می‌دهد (Σtotal=۱,۷۳۲,۷۲۴,۶۶۲). عدد کاربر از Woo: ۱,۷۰۱,۷۰۹,۵۴۵ → اختلاف دقیقاً ۳۷۰,۰۱۰.
+
+**روش راستی‌آزمایی (فقط‌خواندن، throttled، از طریق `ReconciliationService::compare()` موجود — بدون کد جدید برای این بخش):**
+1. `ReconciliationService::compare('1405-06')` به‌صورت زنده اجرا شد (۴۴ صفحه GET، ۲۱۸۷ سفارش کل ماه): `wooRevenue=۱,۷۳۲,۷۲۴,۶۶۲` **دقیقاً برابر** `localRevenue` (Σtotal محقق‌شده‌ی محلی) — diff=۰. گزارش ذخیره‌شده‌ی قدیمی (از ۱۴۰۵/۰۷/۰۳ Sprint 2) عدد متفاوتی داشت (crm_revenue=۱,۷۳۸,۲۲۲,۶۶۲) چون بعد از آن سفارش‌های بیشتری sync شدند — **stale، نه باگ**؛ عدد تازه با کوئری مستقیم dev دقیقاً یکی است.
+2. مبلغ عودتی: Σ(orders.refunded_total) برای ۲۳ سفارش محقق‌شده‌ی دارای عودت در این بازه = ۳۱,۳۸۵,۱۲۷. هر ۲۳ سفارش به‌صورت زنده از Woo (`GET orders/{id}/refunds`) خوانده شد — **۰ اختلاف در هر ۲۳ مورد** (نه فقط جمع کل؛ تک‌تک سفارش‌ها).
+3. فرضیه‌ی «فیلد تاریخ متفاوت» (`paid_at` به‌جای `ordered_at`) رد شد: همان بازه با همان فیلتر روی `paid_at` دقیقاً همان ۱۲۷۳ سفارش و همان مبالغ را می‌دهد (۰ سفارش realized با `paid_at` خارج از بازه‌ی `ordered_at`).
+
+**نتیجه:** هیچ باگ Sync/نگاشتی پیدا نشد — Σtotal و Σrefunded هر دو، سفارش‌به‌سفارش، با Woo زنده یکی هستند. عدد «مجموع دریافتی» در داشبورد Woo یک معیار دیگر است که تعریفش از طریق REST API قابل بازسازی نیست (دقیقاً همان ابهامی که خود دستور از پیش اعلام کرده بود: «منبع/تعریف آن نامشخص است»). **چیزی دستکاری/رفع نشد چون باگی پیدا نشد** — طبق دستور صریح («برای برابر شدن چیزی را دستکاری نکن»).
+
+### بخش ب — ناوردایی subtotal−discount+shipping+tax=total
+
+بررسی کامل روی **۲۵,۳۳۴ سفارش** (نه نمونه): **۵ نقض** (۰.۰۲٪). هر ۵ با داده‌ی زنده‌ی Woo تشخیص داده شدند، حدس نه:
+- **۲ مورد (سفارش‌های ۱۶۷۵۰، ۱۶۹۱۰، هر دو `completed`/محقق‌شده):** دارای `fee_lines` واقعی در Woo (کارمزد ۳۸۰,۰۰۰ و ۱۴۹,۶۰۰ تومانی) — این مبلغ در `total` هست ولی **هیچ ستونی در جدول `orders` آن را ذخیره نمی‌کند** (شِمای فعلی اصلاً ستون کارمزد ندارد). یک یافته‌ی واقعی، از پیش‌حدس‌زده‌شده در متن دستور («کارمزد fee_lines که ذخیره نمی‌شود») — **رفع نشد**: فقط ۲ از ده‌ها هزار سفارش محقق‌شده (۰.۰۱٪)، افزودن ستون تازه به شِما خارج از ۵ فیلد صراحتاً خواسته‌شده‌ی این فاز است؛ `جمع کل` (ستون `total`) در همه‌جا مستقیماً از Woo نمایش داده می‌شود (هیچ‌وقت از جمع بقیه محاسبه نمی‌شود)، پس این شکاف هرگز به کاربر عدد غلط نشان نمی‌دهد.
+- **۳ مورد (۲۱۲۳۶، ۲۶۹۴۳: `cancelled`؛ ۳۸۳۱۶: `pending`):** در Woo هیچ `line_items`/`shipping_lines` ندارند (لغو/رهاشده بعد از خالی‌شدن سبد) ولی `total` باقی‌مانده غیرصفر دارند — یک ناسازگاری سمت Woo، نه این برنامه. هر سه `is_realized=false` هستند، پس هرگز در هیچ جمع درآمدی این فاز وارد نمی‌شوند.
+
+**تصمیم:** هیچ فیلدی پَد نشد تا مجموع برابر شود؛ هر عدد (`subtotal`, `discount_total`, `shipping_total`, `tax_total`, `total`, `refunded_total`, `net_revenue`) مستقل و همان‌طور که در DB ذخیره است نمایش داده می‌شود.
+
+### بخش ج — `daily_metrics.product_revenue`/`shipping_revenue` (انحراف صریح از PRD §۰۹)
+
+Migration جدید و قابل‌بازگشت (`2026_10_01_120000`)، `DailyMetricsService::rebuild()` اصلاح شد (CTE به `o.subtotal - o.discount_total`/`o.shipping_total` گسترش یافت)، `AnalyticsSchemaTest` عمداً به‌روزرسانی شد. بازسازی کامل تاریخچه (۷۴۵ روز، ۳۳۶ms) با کراس‌چک مستقل (همان invocation، بدون race): هر ۴ ستون درآمدی (`revenue`,`net_revenue`,`product_revenue`,`shipping_revenue`) دقیقاً با کوئری مستقیم `orders` یکی — diff=۰. داشبورد: `AnalyticsService::dashboard()` اندازه‌گیری شد = ۳۶۵ms (<۱s)، بدون تجمیع زنده‌ی تازه (فقط ۲ ستون SUM دیگر به کوئری موجود).
+
+### تفکیک در سراسر برنامه
+
+شش قطعه کد، هرکدام با نمایش مستقل (نه محاسبه‌شده از بقیه در UI):
+- **کامپوننت مشترک** `resources/js/components/orders/revenue-breakdown.tsx` (`RevenueBreakdown`) — «مبلغ کالا (پس از تخفیف)»=subtotal−discount، «پست»، «مالیات» (فقط اگر همان سفارش tax_total≠۰ دارد)، «جمع کل»، «عودتی (کل)»، «خالص (شامل پست)».
+- **داشبورد**: ۲ کارت KPI تازه («مبلغ کالا…»، «پست») کنار «درآمد خالص» موجود، با مقایسه‌ی دوره‌ای مثل بقیه (`AnalyticsService::periodTotals()`).
+- **جزئیات سفارش** (`orders/show.tsx`): کارت «تفکیک مبلغ» کامل (۶ ردیف)، از `OrderShowService`/`OrderShowData` که اکنون `net_revenue` هم می‌فرستد.
+- **لیست سفارش‌ها**: به‌جای ۶ ستون تازه (خیلی شلوغ برای یک جدول)، **پیش‌فرض مستدل**: یک خط فرعی کوچک «خالص: X» فقط زیر سفارش‌هایی که `refunded_total > 0` دارند (اکثریت سفارش‌ها بدون عودت‌اند؛ نمایش «خالص» یکسان با «مبلغ» برای آن‌ها فقط شلوغی بی‌فایده بود).
+- **Drill «سفارش‌ها» + CSV**: هر دو (`DrillService::orders()` و `exportSpec()`) اکنون `product_revenue`,`shipping_revenue`,`tax_total`(فقط CSV، چون یک تصمیم ستونی سطح‌دیتاست است نه سطح‌سطر),`refunded_total` دارند؛ برچسب‌های فارسی هم در `DrillService::COLUMN_LABELS` (بک‌اند/CSV) هم `drill-labels.ts` (فرانت/JSON) به‌روزرسانی شد — طبق قرارداد موجود این دو جدول دستی هماهنگ نگه داشته می‌شوند.
+- **Customer 360 — تصمیم آگاهانه، نه فراموشی:** جدول «سفارش‌های اخیر» آنجا یک پیش‌نمایش کوچک (لینک به لیست کامل) است، نه یک سطح نمایش اصلی؛ لیست و جزئیات سفارش (که این پیش‌نمایش مستقیماً به آن‌ها لینک می‌دهد) هر دو تفکیک کامل را دارند، پس افزودن یک مسیر دادهٔ سوم فقط برای این ویجت کوچک، خارج از scope دانسته شد.
+
+### تأیید مرورگر واقعی (Playwright)
+
+داشبورد (۷ کارت KPI، بدون برش/سرریز)، جزئیات سفارش ۵۱۶۵۰ (تفکیک کامل: مبلغ کالا=۱,۸۸۹,۲۲۰، پست=۲۴۶,۱۰۰، جمع کل=۲,۱۳۵,۳۲۰، عودتی=۲۰۹,۸۵۰، خالص=۱,۹۲۵,۴۷۰ — بدون ردیف مالیات چون tax_total=۰ برای این سفارش)، لیست سفارش‌ها (خط فرعی «خالص: ۱,۹۲۵,۴۷۰ تومان» زیر سفارش ۵۱۶۵۰) — همه با Read شخصاً دیده شد.
+
+### بستن این فاز
+
+تست‌های مرتبط: ۳۲۶/۳۲۶ سبز (شامل `AnalyticsSchemaTest`، `Gate3`/`ArchitectureTest` قبلاً در فاز ۲ سبز بودند و این فاز تغییرشان نداد). PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** Migration جدید: `database/migrations/2026_10_01_120000_add_revenue_breakdown_to_daily_metrics_table.php`؛ جدید: `resources/js/components/orders/revenue-breakdown.tsx`؛ تغییر: `app/Modules/Analytics/Services/{AnalyticsService,DailyMetricsService,DrillService}.php`، `app/Modules/Orders/{Services/OrderShowService,Support/OrderListRow,Support/OrderShowData}.php`، `resources/js/{pages/{dashboard,orders/index,orders/show}.tsx,types/{dashboard,orders}.ts,lib/drill-labels.ts}`، `tests/Integration/AnalyticsSchemaTest.php`.
+
+**DB:** ۲ ستون تازه روی `daily_metrics` (`product_revenue`,`shipping_revenue`، هر دو NOT NULL بدون default نهایی). **API:** `dashboard`/order show/order list/drill JSON هرکدام فیلدهای تازه اضافه کردند (شکل قبلی دست‌نخورده، additive). **ریسک:** کم — صرفاً افزودن ستون/فیلد نمایشی، بدون تغییر منطق محاسباتی موجود؛ تنها نکته، migration باید قبل از دیپلوی کد جدید اجرا شود (ترتیب معمول). **Rollback:** `git revert` + `php artisan migrate:rollback` برای این یک migration (down() پاک، ستون‌ها حذف می‌شوند).
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** (۱) آیا کارمزد Woo (`fee_lines`) باید ستون رسمی جدیدی در `orders` بگیرد؟ فقط ۲ سفارش امروز، ولی سفارش‌های آینده می‌توانند بیشتر داشته باشند. (۲) اختلاف ۳۷۰,۰۱۰ تومانی در داشبورد Woo خودش حل‌نشده ماند — تعریف دقیق «مجموع دریافتی» در Woo را فقط کسی با دسترسی ادمین Woo (نه REST API) می‌تواند تعیین کند.
+
+## P6-17 — فاز ۴: ستون‌های خالی لیست مشتریان
+
+### بخش الف — تشخیص با عدد (قبل از هر تغییر)
+
+کوئری مستقیم روی dev، نه حدس: از ۲۰,۱۵۰ مشتری، **۰ تا province، ۰ تا city، فقط ۲ تا first_seen_at، ۰ تا needs_review=true** — دقیقاً همان رقم‌هایی که ARCHITECTURE.md (P3-01) از قبل گزارش کرده بود، حالا با عدد تازه تأیید شد. جدول `customer_addresses` (از P1-01 موجود) نیز **۰ ردیف** داشت.
+
+### یافته‌ی اصلی بخش ب — فرض «کد استان Woo» رد شد، با داده‌ی زنده
+
+فرض متن تسک این بود که `billing.state` یک کد نیاز به نگاشت دارد. خواندن مستقیم payload زنده (نمونه‌ی ۱۵۰۰ سفارش واقعی) نشان داد **این فرض درست نیست**: `billing.state`/`city` از قبل نام فارسی کامل استان/شهر هستند (۳۱ از ۳۲ مقدار متمایز، نام واقعی استان ایران؛ تنها استثنا یک مقدار زباله `'2007'` در یک سفارش، که خام نگه داشته شد، نه حدس زده). پس **هیچ جدول نگاشتی ساخته نشد** — فقط trim + تبدیل حرف عربی/فارسی (ي→ی، ك→ک، با کلاس تازه‌ی `App\Support\PersianText`، همان دو حرفی که `PersonNameNormalizer` از قبل تایپوگرافی می‌داند، نه هویت).
+
+### رفع ورود داده (going forward)
+
+زنجیره‌ی کامل گسترش یافت تا آدرس Woo تا `customers.province`/`city` و `customer_addresses` برسد:
+- `OrderDto`/`OrderMapper`: ۸ فیلد تازه (billing+shipping × province/city/address/postcode) از `billing.state`/`city`/`address_1`+`address_2`/`postcode` (و همان‌ها زیر `shipping`). یافته‌ی جانبی: فیکسچرهای تست هیچ‌کدام `shipping` نداشتند و `PayloadReader::object()` این را خطای «فیلد الزامی گمشده» می‌گرفت؛ متد تازه‌ی `nullableObject()` اضافه شد (مثل الگوی موجود `objectsOrEmpty()`) — `shipping` واقعاً اختیاری است، نه یک فیلد فراموش‌شده.
+- `OrderInput`/`OrderSyncService`: همان ۸ فیلد تا Orders module منتقل شدند.
+- `CustomerIdentityService::resolve()`/`resolveForWooOrder()`: ۳ پارامتر تازه (`province`, `city`, `orderedAt`، همه optional با پیش‌فرض null، هیچ فراخوان موجودی نشکست). روی مشتری تازه مستقیم ست می‌شود؛ روی مشتری موجود «آخرین مقدار غیرخالی» (دقیقاً همان قاعده‌ی `adoptNames()` برای نام — بدون مقایسه‌ی timestamp، چون pipeline sync از قبل به ترتیب `modified` صعودی پردازش می‌کند).
+- `CustomerAddressService` (تازه، در Customers): یک ردیف در `customer_addresses` به ازای هر (customer, type) — نه یک تاریخچه‌ی append-only (PRD هیچ قید یکتایی روی این جدول ندارد؛ تصمیم مستدل، چون رشد نامحدود یک ردیف به ازای هر سفارش بدون دلیل مستند بود).
+- `OrderService::upsert()`: هر دو سرویس بالا را صدا می‌زند (فقط وقتی مشتری resolve شد).
+
+### first_seen_at — قاعده‌ی «کمینه، نه آخرین»
+
+برخلاف province/city («آخرین مقدار غیرخالی»)، `first_seen_at` باید **قدیمی‌ترین** سفارش را نشان دهد؛ با تست صریح ثابت شد که با همان قاعده‌ی «آخرین فراخوان» کار نمی‌کند (یک resync می‌تواند سفارش‌های قدیمی را بعد از جدید پردازش کند) — پس به‌جای اعتماد به ترتیب فراخوان، مقدار موجود مستقیماً با مقدار ورودی مقایسه می‌شود: `first_seen_at = min(موجود, ordered_at سفارش جاری)`، هرگز دیرتر نمی‌رود.
+
+### ستون «بازبینی» (needs_review) — باگ واقعی: هرگز نوشته نمی‌شد
+
+بررسی کد (نه فرض) ثابت کرد `needs_review` در کل کدبیس **هیچ‌جا نوشته نمی‌شد** — فقط خوانده می‌شد (فیلتر + نمایش). دقیقاً همان باگی که متن تسک حدس زده بود. رفع:
+- `CustomerIdentityService::recordConflict()` اکنون `needs_review=true` می‌نویسد (هر بار که یک تعارض نام واقعاً تشخیص داده شود، چه ردیف تازه باشد چه تکراری).
+- `IdentityConflictReresolveService::closeAsSame()` بعد از بستن یک تعارض، اگر دیگر هیچ تعارض pending برای آن مشتری نمانده باشد، `needs_review=false` می‌کند.
+- بج «نیازمند بازبینی» در لیست مشتریان اکنون (وقتی کاربر `identity.review` دارد) لینک به `/system/identity-conflicts` است.
+
+### TEST FIRST
+
+۴ حوزه‌ی صریح خواسته‌شده در متن تسک، هرکدام با تست واقعی پیش از/همراه پیاده‌سازی: **Mapper** (`OrderMapperTest`: فیلدهای آدرس، letter-shape، نبود shipping/آدرس، کد ناشناخته خام می‌ماند)، **upsert آدرس** (`CustomerAddressServiceTest`: insert، دو نوع جدا، آپدیت نه insert دوم، خالی=no-op، cut به عرض ستون)، **منطق کمینه‌ی first_seen_at** (`CustomerIdentityForWooOrderTest`: ترتیب معکوس resync، هرگز دیرتر نمی‌رود)، **پرچم needs_review** (`CustomerIdentityServiceTest` + `IdentityConflictReresolveTest`: ست و clear). + تست end-to-end در `OrderServiceTest` (کل زنجیره از `OrderInput` تا هر دو جدول).
+
+### یک باگ واقعی دوم، پیدا‌شده حین اجرای زنده: `SyncPageJob` timeout
+
+اولین اجرای کامل (`hm:sync --full`) دقیقاً روی صفحه‌ی ۳۶۱ از ۵۱۳ با `TimeoutExceededException` شکست خورد — نه یک‌مرتبه‌ی تصادفی، دقیقاً ۸۰ ثانیه بعد از صفحه‌ی قبل. با `tries=1`، کل اجرا (۳۶۰ صفحه، ۱۸,۱۹۹ رکورد) شکست خورد، گرچه داده‌های محلی سالم ماندند (هر سفارش تراکنش خودش را دارد)، فقط cursor جلو نرفت. **ریشه:** کامنت قدیمی فایل می‌گفت «باید زیر retry_after (۹۰) بماند» — ولی `retry_after` واقعی از P6-09 به ۹۳۰ رسیده بود و این فایل هرگز به‌روزرسانی نشده بود؛ کامنت و مقدار هر دو کهنه. یک صفحه با چند سفارش دارای عودت (هرکدام نیازمند یک GET زنده‌ی جدا، با احتمال retry ۴۲۹ تا ۱۲۰ ثانیه) به‌راحتی از ۸۰ ثانیه عبور می‌کند. دقیقاً همان الگوی قبلاً مستند‌شده برای `ReconcileMonthJob` (۸۰→۳۰۰، به‌خاطر یک ماه ۳,۱۶۹-سفارشی که Worker را کشت). رفع: `SyncPageJob::$timeout` از ۸۰ به ۳۰۰ (همان عدد `ReconcileMonthJob`، هنوز با فاصله‌ی زیاد زیر ۹۳۰)؛ تست رگرسیون تازه در `ReconcileMonthJobTest.php` کنار تست مشابه موجود.
+
+### یافته‌ی جانبی سوم: Worker های Horizon کد قدیمی را اجرا می‌کردند
+
+اولین اجرای زنده (قبل از کشف باگ timeout) **هیچ ردیف province/city/customer_addresses ننوشت**، با وجود ۳۶۰ صفحه و ۱۸,۱۹۹ رکورد پردازش‌شده. ریشه‌یابی مستقیم (فراخوانی دستی همان Mapper/Service روی همان سفارش واقعی) ثابت کرد **کد درست کار می‌کند** — مشکل این بود که پردازه‌های Horizon (`horizon:work`) از قبل این جلسه (از «Wed06PM») در حافظه بالا بودند و کد PHP تغییریافته را نخوانده بودند (مشکل شناخته‌شده‌ی Laravel: worker های طولانی‌مدت نیاز به `queue:restart` بعد از هر تغییر کد دارند). `php artisan queue:restart` اجرا شد، PIDهای Worker عوض شدند، و اجرای بعدی بلافاصله درست کار کرد (۴۹ مشتری فقط در صفحه‌ی اول). **این یک یافته‌ی عملیاتی است، نه یک باگ کد** — ثبت شد چون می‌تواند دوباره در deploy های آینده رخ دهد.
+
+### اجرای زنده (فقط‌خواندن از Woo، نوشتن فقط محلی)
+
+اعداد اعلام‌شده پیش از اجرا: ۲۵,۶۳۴ سفارش زنده (X-WP-Total) ÷ per_page=۵۰ ≈ ۵۱۳ صفحه، با rate limit ۹۰/دقیقه ≈ ۶-۷ دقیقه برای صفحات + زمان اضافه برای lookup عودتی‌ها. اجرای واقعی (بعد از رفع هر دو باگ بالا): ۳ اجرای `hm:sync`: اول (full) ۵۰۰/۵۰۰ صفحه، ۲۵,۳۳۲ رکورد، ۰ شکست (۱h۱۲m، به‌دلیل backoff/retry واقعی، نه تخمین خوش‌بینانه)؛ دوم (incremental، خودکار از همان cursor) ۱۳ صفحه‌ی باقی‌مانده، ۶۶۱ رکورد. جمعاً هیچ نوشتن به Woo، فقط GET.
+
+**نتیجه روی dev (قبل → بعد):**
+| ستون | قبل | بعد | پوشش |
+|---|---|---|---|
+| province غیرخالی | ۰ | ۲۰,۳۷۸ از ۲۰,۳۹۰ | ۹۹.۹۴٪ |
+| city غیرخالی | ۰ | ۲۰,۳۸۱ از ۲۰,۳۹۰ | ۹۹.۹۵٪ |
+| first_seen_at غیرخالی | ۲ | ۲۰,۳۹۰ از ۲۰,۳۹۰ | ۱۰۰٪ |
+| needs_review=true | ۰ | ۹۶ | — |
+| customer_addresses | ۰ ردیف | ۲۸,۸۲۸ ردیف (۲۰,۳۸۸ billing + ۸,۴۴۰ shipping) | — |
+
+(تعداد مشتری از ۲۰,۱۵۰ به ۲۰,۳۹۰ رشد کرد — ۲۴۰ مشتری/سفارش واقعی تازه، بین شروع این فاز و پایان sync.) ۱۲ مشتری باقی‌مانده بدون province (۹ بدون city) بررسی شدند: هرکدام دقیقاً ۱ سفارش محلی دارند که مقدار `billing.state`/`city`‌اش در Woo واقعاً خالی بوده — نه باگ، داده‌ی مبدأ ناقص.
+
+### تأیید مرورگر واقعی
+
+لیست مشتریان (بدون فیلتر): province/city/اولین‌مشاهده همه‌جا واقعی. فیلتر «فقط نیازمند بازبینی»: دقیقاً ۹۶ مشتری، هرکدام بج «نیازمند بازبینی» — منطبق با عدد DB. هر دو با Read شخصاً دیده شد.
+
+### بستن این فاز
+
+تست‌های مرتبط: ۱۷۴۱/۱۷۴۱ سبز (شامل Arch، از‌جمله `SyncCommandBoundaryTest` که با افزودن Command تازه عمداً به‌روزرسانی شد). PHPStan → ۰ خطا. Pint → تمیز. Backfill محلی (`hm:customers-backfill`) idempotent تأیید شد (اجرای دوم: ۰/۰).
+
+**فایل‌ها:** جدید: `app/Support/PersianText.php`، `app/Modules/Customers/Services/{CustomerAddressService,CustomerBackfillService}.php`، `app/Console/Commands/CustomerBackfillCommand.php`؛ تغییر: `app/Modules/Sync/{DTOs/OrderDto,Mappers/OrderMapper,Mappers/PayloadReader,Services/OrderSyncService,Jobs/SyncPageJob}.php`، `app/Modules/Orders/Services/{OrderInput,OrderService}.php`، `app/Modules/Customers/Services/{CustomerIdentityService,IdentityConflictReresolveService}.php`، `resources/js/pages/customers/index.tsx`.
+
+**DB:** هیچ migration (جدول `customer_addresses` از قبل موجود بود، فقط خالی). داده: ۲۸,۸۲۸ ردیف تازه در `customer_addresses`؛ ۲۰,۳۷۸/۲۰,۳۸۱ مشتری province/city گرفتند؛ ۲۰,۳۹۰ مشتری first_seen_at؛ ۹۶ مشتری needs_review. **API:** بدون تغییر در شکل خروجی لیست/۳۶۰ مشتری (فیلدها از قبل در props بودند، فقط همیشه خالی).
+
+**ریسک:** کم برای کد خودِ این فاز (پوشش تست کامل). ریسک عملیاتی واقعی که پیدا و رفع شد: `SyncPageJob` timeout (۸۰→۳۰۰) و یادآوری `queue:restart` بعد از تغییر کد — هر دو مستند شدند تا در sprint های بعد تکرار نشوند. **Rollback:** کد با `git revert` بی‌خطر؛ داده‌های نوشته‌شده (province/city/first_seen_at/needs_review/customer_addresses) با revert پاک نمی‌شوند چون از طریق migration نیامدند — یک revert کد، دوباره این ستون‌ها را در sync های بعدی خالی نمی‌کند (فقط دیگر به‌روزرسانی نمی‌شوند)، داده‌ی فعلی دست‌نخورده می‌ماند.
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** هیچ — این فاز کاملاً بدون ابهام باز بسته شد (فرض اصلی متن تسک درباره‌ی کد استان با داده‌ی زنده رد و جایگزین شد، نه این‌که منتظر تصمیم بماند).
+
+## P6-18 — فاز ۵: صفحه «راهنمای شاخص‌ها»
+
+### چه ساخته شد
+
+مسیر تازه‌ی `/metrics/guide` (پشت همان `analytics.view` که صفحات Cohort/Retention/Affinity استفاده می‌کنند — این صفحه هم ترکیبی از Metrics+Segments+Analytics است، پس اختراع یک Permission تازه توجیه نداشت). زنجیره: `MetricsGuideController` (Controller نازک، یک فراخوان Service، یک Inertia Response) ← `app/Support/MetricsGuideService.php` (Orchestrator، نه یک ماژول خاص — دقیقاً همان دلیل `HealthCheckService`، P6-10) ← `resources/js/pages/metrics/guide.tsx` (۸ کارت: RFM، CLV، ریسک ریزش، چرخه‌عمر، کوهورت/بازگشت، هم‌خرید، اشاره‌گر داشبورد، کیفیت داده).
+
+**منبع واحد حقیقت، نه کپی دوم:** هیچ آستانه/عدد در این صفحه از نو تایپ نشده — همه از همان Config/Const/جدولی خوانده می‌شود که Calculator واقعی می‌خواند: `config('metrics.*')` (margin_rate, horizon_years, آستانه‌های CLV)، `AffinityService::MIN_CO_CUSTOMERS_*` (۴ ثابت تازه‌ی public، جایگزین ۴ عدد قبلاً inline در SQL heredoc آن سرویس — همان عدد، فقط یک‌جا تعریف شد)، `ChurnThresholdService::percentiles()` یا آخرین `metric_runs.thresholds` ذخیره‌شده، `customer_metrics`/`cohort_snapshots`/`segments` مستقیماً.
+
+**سگمنت‌های سیستمی به‌صورت جمله‌ی فارسی، نه JSON خام:** `app/Modules/Segments/Support/RuleSentenceRenderer.php` (تازه) قانون هر سگمنت (`Group`/`Condition`، عملگرهای رفتاری `bought_*`/`in_segment` و غیره) را به یک جمله‌ی فارسی ساده تبدیل می‌کند — برچسب فیلد/عملگر از `RuleWhitelistPresenter` (موجود، Segments module) خوانده می‌شود، برچسب مقادیر enum (rfm_segment، churn_risk_level، status، lifecycle_stage) از یک نگاشت محلی تازه در خودِ Renderer.
+
+### ابهام PRD حل‌شده (طبق دستور، پیش از کد ثبت شد)
+
+**محدودیت SQL خام در `app/Support/`:** تلاش اول `MetricsGuideService` از `selectRaw()`/`DB::table()->selectRaw()` برای تجمیع‌های گروهی (بازه‌ی هر امتیاز RFM، توزیع confidence، سطوح churn/lifecycle) استفاده می‌کرد. اجرای `ArchitectureTest` نشان داد معافیت قاعده‌ی ۷ (SQL خام ممنوع) فقط `app/Modules/Metrics/`، `app/Modules/Analytics/` و یک فایل نام‌برده‌ی Catalog را پوشش می‌دهد — `app/Support/` در آن فهرست نیست. هر تجمیع گروهی بازنویسی شد به چند کوئری ساده‌ی غیر-raw (یک `count()`/`min()`/`max()` جدا به ازای هر enum case/امتیاز ۱..۵، با `clone` روی یک Query Builder پایه) — این صفحه یک مسیر عملیاتی کم‌تواتر است (نه hot path درخواست)، پس رفت‌وبرگشت‌های اضافه یک تصمیم آگاهانه است، نه غفلت.
+
+### باگ کوچک پیدا و رفع‌شده حین پیاده‌سازی: مقیاس درصد
+
+`orderItemsResolvedPercent()` ابتدا خروجی را از پیش در ۱۰۰ ضرب می‌کرد (مثلاً ۶۸.۲۹)، درحالی‌که قرارداد یکتای این کدبیس برای هر عدد نسبت (`RetentionService`، `formatPercent()` فرانت) یک نسبت ۰..۱ خام است و ضرب در ۱۰۰ فقط در یک‌جا (`formatPercent`) اتفاق می‌افتد. رفع شد تا نسبت خام (۰..۱، گرد‌شده به ۴ رقم اعشار) برگرداند؛ تست تازه این دقیقاً همین قرارداد را با یک سفارش دو-آیتمی (یکی resolve‌شده، یکی نه) تأیید می‌کند (`0.5`، نه `50`).
+
+### باگ دیداری پیدا و رفع‌شده حین تأیید مرورگر واقعی: ترتیب Bidi
+
+بازه‌ی هر امتیاز RFM («۴۸۴ تا ۷۴۸») ابتدا با یک پوشش ساده‌ی `dir="ltr"` روی کل رشته نوشته شد — تأیید Playwright/اسکرین‌شات نشان داد در بافت صفحه‌ی RTL، کلمه‌ی فارسی «تا» بین دو عدد انگلیسی جابه‌جا نمایش داده می‌شود (الگوریتم Bidi یکنواخت کل رشته را به‌عنوان یک بلوک LTR جابه‌جا می‌کند). رفع با همان الگوی از‌پیش‌تثبیت‌شده‌ی `date-range.tsx` (P6-11): `<span dir="rtl">` بیرونی + هر عدد داخل `<bdi dir="ltr">` جدا — کلمه‌ی فارسی در جای طبیعی خودش می‌ماند، عددها مستقل ایزوله می‌شوند. کامپوننت تازه‌ی `RangeText` در `guide.tsx`.
+
+### "؟" های کمکی از داشبورد/RFM — فقط چون ساده بود
+
+طبق قید صریح متن دستور («فقط اگر ساده بود»)، یک لینک کوچک `HelpCircle` کنار عنوان داشبورد (`#dashboard`) و عنوان صفحه‌ی RFM (`#rfm`) اضافه شد، هر دو پشت `can('analytics','view')` (پرمیشن خودِ صفحه‌ی راهنما، نه `dashboard.view`/`metrics.view` صفحه‌ی میزبان). به هر ۸ کارت `id` اضافه شد تا این لینک‌ها (و لینک‌های مشابه‌ی آینده) بتوانند مستقیم به بخش مربوطه اسکرول کنند — تلاش بیشتری (مثلاً "؟" کنار هر KPI تک‌تک در داشبورد بزرگ) عمداً انجام نشد، چون خارج از «ساده» بود.
+
+### TEST FIRST
+
+۱۲ تست تازه در `tests/Feature/Support/MetricsGuideServiceTest.php`: بازه‌ی واقعی هر امتیاز RFM (۱..۵)، ۸ سگمنت RFM با شرط و شمار زنده، هر ۱۲ سگمنت سیستمی به‌صورت جمله‌ی فارسی غیرخالی (regex `\p{Arabic}`)، `margin_rate` از Config خوانده می‌شود — با تغییر Config دوبار و سنجش خروجی هر دو بار (نه فقط یک تطابق ایستا)، توزیع `clv_confidence`، اولویت `metric_runs.thresholds` ذخیره‌شده بر محاسبه‌ی تازه، fallback زیر نمونه‌ی ۲۰۰ با `is_fallback=true`، توزیع `churn_risk_level`/`lifecycle_stage` برای همه‌ی Caseها، ثابت‌های `MIN_CO_CUSTOMERS_*` از خودِ `AffinityService` (نه کپی دوم)، شمار تعارض هویت pending، و نسبت `order_items_resolved_percent` به‌صورت ۰..۱. ۱۸ تست تازه در `tests/Unit/Modules/Segments/RuleSentenceRendererTest.php` روی هر ۱۲ تعریف واقعی `DefaultSegmentSeeder` + حالت‌های لبه (تساوی، لیست، گروه AND، `within_days_of_now`، بدون نشت JSON/کلید انگلیسی).
+
+### تأیید مرورگر واقعی (Playwright، خارج از مخزن طبق دستور فاز ۱)
+
+اسکریپت `phase5-verify.mjs` (کاربر seed شده‌ی `test@example.com`): هر ۸ بخش روی صفحه یافت شد، دقیقاً ۱۲ سگمنت سیستمی رندر شد، هیچ نشت کلید خام JSON (`"op"`, `"field"`, …) یافت نشد، هیچ رقم فارسی/عربی روی صفحه نبود، بدون اسکرول افقی، لینک سایدبار و هر دو لینک "؟" (داشبورد، RFM) هم دیده شدند هم ناوبری واقعی‌شان تأیید شد (کلیک روی لینک RFM → `/metrics/guide#rfm`). اسکرین‌شات کامل صفحه با Read شخصاً دیده شد؛ یک اسکرین‌شات مجزای جدول بازه‌ی امتیاز RFM قبل/بعد از رفع باگ Bidi هم گرفته و مقایسه شد.
+
+### بستن این فاز
+
+تست‌های مرتبط (`MetricsGuideServiceTest`+`RuleSentenceRendererTest`+`AffinityServiceTest`+`CustomerListBoundaryTest`): ۶۱/۶۱ سبز. Arch کامل (۲۱۶ تست، همه‌ی ماژول‌ها): ۲۱۶/۲۱۶ سبز. PHPStan (فایل‌های تغییریافته) → ۰ خطا. Pint → تمیز. `npm run types:check`/`build` → تمیز.
+
+**یادداشت ابزاری (نه کد محصول):** `npx vp check --fix` بدون آرگومان مسیر، کل مخزن را فرمت می‌کند، نه فقط فایل‌های تغییریافته — یک اجرای اول بدون‌مسیر، به‌اشتباه PRD.md/ARCHITECTURE.md/فیکسچرهای JSON/چند فایل فرانت نامرتبط را هم بازفرمت کرد (فقط فرمت/whitespace، بدون تغییر داده). همه‌ی آن تغییرات ناخواسته با `git checkout --` قبل از کامیت برگردانده شدند؛ اجراهای بعدی با فهرست دقیق مسیرها (`vp check --fix <files>`) محدود به همین فاز ماندند. ثبت شد تا در فازهای بعد تکرار نشود.
+
+**فایل‌ها:** جدید: `app/Support/MetricsGuideService.php`، `app/Http/Controllers/Metrics/MetricsGuideController.php`، `app/Modules/Segments/Support/RuleSentenceRenderer.php`، `resources/js/pages/metrics/guide.tsx`، `resources/js/types/metrics-guide.ts`، `tests/Feature/Support/MetricsGuideServiceTest.php`، `tests/Unit/Modules/Segments/RuleSentenceRendererTest.php`؛ تغییر: `app/Modules/Analytics/Services/AffinityService.php` (۴ ثابت public تازه)، `routes/internal.php`، `resources/js/components/app-sidebar.tsx`، `resources/js/pages/{metrics/rfm,dashboard}.tsx`، `tests/Arch/CustomerListBoundaryTest.php` (شمار Route::get از ۲۱ به ۲۲).
+
+**DB:** هیچ migration، هیچ جدول/ستون تازه — فقط خواندن از جداول موجود. **API:** یک مسیر GET تازه (`metrics/guide`)، بدون تغییر در شکل خروجی مسیرهای موجود.
+
+**ریسک:** کم — صفحه‌ی فقط‌خواندن تازه، بدون تغییر منطق محاسباتی موجود؛ تنها تغییر رفتاری واقعی، تغییر مقیاس `order_items_resolved_percent` از ۰..۱۰۰ به ۰..۱ بود که هیچ مصرف‌کننده‌ی دیگری (خارج از همین فایل تازه) نداشت، پس بی‌خطر بود. **Rollback:** `git revert` کامل و بی‌خطر؛ بدون داده‌ی نوشته‌شده‌ای که نیاز به پاک‌سازی جدا داشته باشد.
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** هیچ — این فاز هم بدون ابهام باز بسته شد؛ تنها نکته‌ی باقی‌مانده از فازهای قبل (کارمزد `fee_lines`، اختلاف ۳۷۰,۰۱۰ تومانی داشبورد Woo) هنوز در P6-16 باز است، به این فاز مربوط نیست.
+
+## P6-19 — فاز ۶: بستن اسپرینت
+
+### اجرای یک‌باره‌ی کامل (طبق دستور: فقط یک‌بار، در پایان)
+
+- **تست کامل:** `php artisan test` → **۳۲۶۲/۳۲۶۲ سبز** (۱۴,۵۸۰ Assertion)، PostgreSQL واقعی، بدون SQLite.
+- **PHPStan (کل app، نه فقط فایل‌های تغییریافته):** با `--memory-limit=1G` (حد پیش‌فرض ۱۲۸M برای حجم فعلی کدبیس کافی نبود، صِرفاً محدودیت حافظه‌ی CLI، نه خطای واقعی) → **۰ خطا**.
+- **Pint (`--test`، کل مخزن):** **تمیز** — هیچ فایلی نیاز به فرمت نداشت.
+- **`npm run types:check`:** تمیز. **`npm run build`:** موفق (۱۲.۹ ثانیه)، باندل تازه‌ی `guide-*.js` تولید شد.
+
+### تأیید مرورگر واقعی — تکرار اسکریپت فاز ۱ روی همه‌ی مسیرها + صفحه‌ی راهنما
+
+`phase6-verify.mjs` (کپی اسکریپت فاز ۱، با یک مسیر اضافه: `metrics-guide` → `/metrics/guide`؛ همان منطق سنجش، خارج از مخزن، بدون وابستگی تازه): **۱۴ مسیر × ۳ عرض (۱۲۸۰/۱۴۴۰/۱۹۲۰) × ۲ حالت سایدبار (باز/جمع‌شده) = ۸۴ ترکیب، همه OK** — ۰ اسکرول افقی، ۰ همپوشانی با سایدبار، ۰ سرریز سلول جدول، در همه‌ی ترکیب‌ها بدون استثنا (شامل صفحه‌ی تازه‌ی راهنما که در فاز ۱ هنوز وجود نداشت). سه اسکرین‌شات نماینده (`metrics-guide_w1280_open`, `metrics-guide_w1920_collapsed`, `rfm_w1440_open`) با Read شخصاً دیده شد — سایدبار درست سمت راست، آیتم «راهنمای شاخص‌ها» در ناوبری فعال/هایلایت، لینک "؟" کنار عنوان صفحه‌ی RFM/داشبورد قابل‌مشاهده، بدون رقم فارسی.
+
+### یافته و رفع: ترتیب نادرست دو فاز در همین فایل (خودِ این سند)
+
+هنگام افزودن بخش فاز ۵ به این فایل در پایان فاز ۵، ویرایش به‌اشتباه قبل از خط «کدام تصمیم…» موجودِ فاز ۴ درج شد نه بعد از آن — نتیجه: کل بخش فاز ۵ بین Rollback فاز ۴ و خط تصمیم فاز ۴ جا گرفت، و همان خط تصمیم فاز ۴ به‌صورت تکراری در انتهای فاز ۵ هم باقی ماند. در همین فاز ۶ کشف و رفع شد: خط تصمیم فاز ۴ به‌جای درست خودش (بلافاصله بعد از Rollback فاز ۴) منتقل شد و نسخه‌ی تکراری در انتهای فاز ۵ با خط تصمیم واقعی فاز ۵ جایگزین شد. یک اشتباه مستندسازی، نه کد — چیزی در کد/تست/رفتار برنامه عوض نشد.
+
+### یافته و رفع: فرمت‌کننده‌ی بدون‌محدوده در فاز ۵
+
+مستند شد (بالا، انتهای فاز ۵) که `npx vp check --fix` بدون آرگومان مسیر کل مخزن را بازفرمت می‌کند. تمام تغییرات ناخواسته (PRD.md، ARCHITECTURE.md، فیکسچرهای JSON ثابت تست، چند فایل فرانت نامرتبط) پیش از کامیت با `git checkout --` برگردانده شدند؛ **هیچ فیکسچر تستی خاموش بازتولید نشد** (قاعده‌ی صریح CLAUDE.md §9) — فقط برگردانده شد به نسخه‌ی کامیت‌شده. از آن به بعد هر اجرای `vp check --fix` با فهرست دقیق مسیرهای تغییریافته صدا زده شد.
+
+### بستن اسپرینت
+
+تمام ۶ فاز درخواستی تحویل داده شد: فاز ۱ (RTL sidebar + سرریز جدول)، فاز ۲ (تقویم شمسی app-wide)، فاز ۳ (تفکیک درآمد + ریشه‌یابی اختلاف)، فاز ۴ (ستون‌های خالی لیست مشتریان)، فاز ۵ (راهنمای شاخص‌ها)، فاز ۶ (همین بستن). هر فاز با commit مجزا و `git push Origin sprint/6-analytics` فوری بعد از هر فاز (طبق دستور صریح). «تعارض هویت» تکرار نشد (طبق دستور، چون در P6-13 part B از قبل بسته شده بود) — فقط همپوشانی UI آن در فاز ۱ رفع شد.
+
+**وضعیت گیت‌ها:** GATE 1/2/3 پیش از این اسپرینت سبز بودند (۱۳۴/۱۳۴، ثبت‌شده در ابتدای sprint-6.md) و هیچ تغییری در منطق RFM/CLV/Churn/RuleCompiler که آن‌ها را بسنجد رخ نداد. GATE 4 (AI، فاز هفتم بعدی) خارج از scope این اسپرینت بود، لمس نشد.
+
+**فایل‌ها:** بدون تغییر کد تازه در این فاز — فقط اجرای تأییدها و رفع دو اشتباه مستندسازی (خودِ `docs/architecture/sprint-6.md`) و این بخش بستن.
+
+**DB/API:** بدون تغییر در این فاز.
+
+**ریسک:** ندارد — فاز ۶ فقط تأیید/مستندسازی است، بدون تغییر کد محصول.
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** جدول کامل در گزارش پایانی چت (فرمت §۷ CLAUDE.md) آمده — خلاصه: (۱) کارمزد `fee_lines` Woo نیاز به ستون رسمی دارد یا نه (P6-16)، (۲) اختلاف ۳۷۰,۰۱۰ تومانی تعریف «مجموع دریافتی» Woo فقط با دسترسی ادمین Woo قابل‌حل است (P6-16).
+
+## P6-20 — اصلاح محاسبه M (Monetary) در RFM + بازنویسی متن /metrics/guide
+
+### تصمیم مالک محصول (انحراف صریح از PRD §۱۲)
+
+PRD §۱۲ فرمول M را `NTILE(5) OVER (ORDER BY monetary ASC, customer_id)` تعریف می‌کند — `monetary` یعنی مجموع net_revenue **کل طول عمر** مشتری. تصمیم مالک محصول: به‌خاطر تورم چندسالهٔ تومان، مقایسه‌ی مستقیم یک سفارش ۱۴۰۳ با یک سفارش ۱۴۰۵ گمراه‌کننده است. راه‌حل: حالت تازه‌ی `recent_window` — M فقط از ۶۰ روز اخیر محاسبه می‌شود، و بازه‌های امتیاز ۱ تا ۵ از پراکندگی واقعی همان ۶۰ روز ساخته می‌شوند (نه NTILE با طول مساوی). طبق دستور صریح، **پیش‌فرض قدیمی (`lifetime`) دست‌نخورده ماند** — فقط با `config('metrics.monetary.mode')`/`METRICS_MONETARY_MODE` روشن می‌شود؛ GATE 2 (`expected_metrics.json`، منجمد در `DemoDataSeeder::AS_OF` با فرمول قدیمی) هیچ تغییری نکرد چون مسیر کد `lifetime` عیناً دست‌نخورده ماند (حتی یک کاراکتر SQL هم عوض نشد — `scoreEligible()` کاملاً همان متد قبلی است).
+
+### چه ساخته شد
+
+- **`config('metrics.monetary.mode')`** (`lifetime`|`recent_window`, پیش‌فرض `lifetime`) و **`config('metrics.monetary.window_days')`** (پیش‌فرض ۶۰) — `.env.example` به‌روزرسانی شد (`METRICS_MONETARY_MODE=recent_window` به‌عنوان مقدار توصیه‌شده‌ی dev/prod مستند شد؛ **خودِ فایل‌های `.env`/`.env.testing` به‌خاطر محدودیت sandbox این نشست قابل‌خواندن/نوشتن نبودند** — بخش «تصمیم لازم» پایین را ببینید).
+- **Migration برگشت‌پذیر** (`2026_10_06_100000_add_monetary_recent_to_customer_metrics_table.php`): ستون تازه‌ی `customer_metrics.monetary_recent` (bigint، nullable). `monetary` (کل عمر) دست‌نخورد. `tests/Integration/MetricsSchemaTest.php` آگاهانه به‌روزرسانی شد (طبق دستور).
+- **`BaseAggregateService::upsert()`**: `monetary_recent` همیشه محاسبه می‌شود (مستقل از mode، تا وقتی اپراتور mode را عوض کرد نیازی به backfill جدا نباشد) — همان SUM(net_revenue − shipping طبق `include_shipping`) موجود، با `FILTER (WHERE ordered_at >= ?)` روی مرز **روز تقویمی تهران** (نه تفریق خام ۶۰×۸۶۴۰۰ ثانیه): `asOf` به Asia/Tehran تبدیل، ۶۰ روز عقب، `startOfDay()`. NULL (نه COALESCE به صفر) یعنی «بدون خرید در پنجره» — یک سیگنال واقعی که RfmCalculator مستقیم می‌خواند، نه «صفر خرج کرده».
+- **`RfmCalculator`**: در حالت `recent_window`، بعد از همان `scoreEligible()` قدیمی (که همچنان r_score/f_score/m_score-lifetime را NTILE می‌کند، دست‌نخورده)، `overrideMonetaryScore()` فقط m_score را جایگزین می‌کند: `log(monetary_recent)`، میانه و MAD (هر دو با `percentile_cont`، همان الگوی `ChurnThresholdService`)، z-score مقاوم با برش‌های z = −۰.۸۴/−۰.۲۵/+۰.۲۵/+۰.۸۴ (دقیقاً همان ۴ نقطه‌ای که توزیع نرمال را به ۵ پنجک تقسیم می‌کند) تبدیل به cut-point تومانی. مشتری بدون خرید در پنجره (یا amount ≤ 0) مستقیم m_score=1 می‌گیرد، هرگز وارد محاسبه‌ی cut-point نمی‌شود. حالت تباهیده (MAD=0، بدون پراکندگی): همه‌ی خریداران واقعی امتیاز میانه (۳) می‌گیرند — «مقدار برابر، امتیاز برابر» را برآورده می‌کند. R و F کاملاً دست‌نخورده‌اند (کد مشترک، تست مجزا هم این را اثبات می‌کند).
+- **`MetricsRecomputeService`**: cut-pointهای هر اجرا (`RfmCalculator::monetaryCutpoints()`) در همان ستون JSON `metric_runs.thresholds` کنار آستانه‌های churn ذخیره می‌شوند (کلید تازه‌ی `monetary_cutpoints`) — دقیقاً همان الگوی `ChurnThresholdService::saveToRun()`، یک منبع واحد که هم RfmCalculator امتیازدهی کرده هم `MetricsGuideService` می‌خواند، نه محاسبه‌ی دوم.
+- **`MetricsGuideService`**: در حالت `recent_window`، بازه‌های نمایشی M از همان cut-pointهای ذخیره‌شده می‌آیند (نه بازه‌ی واقعی min/max مثل R/F) — ۵ بازه‌ی نیمه‌باز `[۰,c1) [c1,c2) [c2,c3) [c3,c4) [c4,∞)`. اگر هنوز هیچ اجرایی با این حالت کامل نشده، `monetary_cutpoints_available=false` و صفحه «هنوز محاسبه نشده» نشان می‌دهد — هرگز محاسبه‌ی زنده‌ی دوم. سهم F=1 (`f_score_1_share`) هم اضافه شد، پویا از همان توزیع F.
+
+### صفحه‌ی /metrics/guide — بازنویسی متن
+
+واژه‌های «NTILE» و «واجد شرط» از سراسر صفحه حذف شدند (جای‌گزین: «مشتری دارای امتیاز RFM»). در حالت `recent_window`: نوار بالای کارت RFM («محاسبه‌ی ارزش (M) تا تاریخ …» شمسی، «آخرین بازمحاسبه»، «پنجره: N روز اخیر»)؛ جدول بازه‌های M با برچسب نیمه‌باز واضح («تا X»، «از X تا Y»، «بیشتر از X»، با `formatToman`)؛ دو پاراگراف توضیح کوتاه (چرا فقط ۶۰ روز اخیر — تورم؛ چرا بازه‌ها هم‌عرض نیستند — از پراکندگی واقعی، نه تقسیم مساوی)؛ یادداشت سهم F=1 پویا (نه عدد ثابت). در حالت `lifetime`، صفحه دقیقاً مثل قبل است (M در همان جدول R/F، بدون نوار/بازه‌های جدا).
+
+### TEST FIRST
+
+۱۹ تست تازه، پیش از پیاده‌سازی نوشته شدند، قرمز اجرا شدند، سپس سبز:
+- `tests/Feature/Modules/Metrics/BaseAggregateServiceTest.php` (+۶): مجموع دقیق در پنجره، null وقتی هیچ سفارشی در پنجره نیست، حذف shipping مثل monetary، **مرز روز تهران** (سفارش درست روی مرز = داخل؛ یک ثانیه قبل = بیرون — با `->utc()` صریح قبل از نسبت‌دادن به ستون Eloquent؛ یک باگ واقعی real در خودِ این تست پیدا و رفع شد: دادن یک شیء Carbon با timezone آسیا/تهران مستقیم به attribute یک مدل Eloquent، offset را خاموش گم می‌کند — چون format سازی بدون تبدیل قبلی به UTC انجام می‌شود؛ خودِ `BaseAggregateService` این مشکل را ندارد چون صریحاً `?::timestamptz` با offset را bind می‌کند، نه از طریق attribute مدل)، idempotent بودن.
+- `tests/Feature/Modules/Metrics/RfmMonetaryWindowTest.php` (تازه، ۱۲ تست): مقادیر دقیق روی فیکسچر ۹نفره‌ی لگاریتمی (۱M..۲۵۶M تومان، دوبرابرشونده — median/MAD با دست قابل‌محاسبه، هیچ مشتری نزدیک مرز نیست)، تساوی⇒امتیاز مساوی، یک outlier فوق‌العاده بزرگ بازه‌ی بقیه را له نمی‌کند، بدون‌خرید-در-پنجره⇒۱ (حتی با monetary تاریخی عظیم)، همه بدون‌خرید⇒همه ۱، MAD=۰⇒همه ۳، R/F دست‌نخورده، rfm_score از m_score تازه بازسازی می‌شود، idempotent، حالت `lifetime` کاملاً نادیده می‌گیرد monetary_recent را، cut-pointهای صعودی برای Orchestrator در دسترس‌اند.
+- `tests/Feature/Modules/Metrics/RecomputeMetricsJobTest.php` (+۲): ادغام `monetary_cutpoints` در همان JSON بدون پاک‌کردن کلیدهای churn؛ در حالت `lifetime` اصلاً این کلید نوشته نمی‌شود.
+- `tests/Feature/Support/MetricsGuideServiceTest.php` (+۷): mode/window_days از config (نه hardcode)، بازه‌های M از cut-point ذخیره‌شده (نه بازسنجی زنده)، «هنوز محاسبه نشده» وقتی cut-point نیست یا حالت تباهیده است، حالت `lifetime` دست‌نخورده، سهم F=1 پویا.
+
+### تأیید مرورگر واقعی (موقتاً، بدون تغییر دائمی داده)
+
+چون `.env` در این نشست قابل‌ویرایش نبود، `config/metrics.php`'s default **موقتاً** به `recent_window` تغییر کرد، یک ردیف `metric_runs` با cut-point ساختگی درج شد (بدون لمس `customer_metrics`)، صفحه با Playwright واقعی باز و اسکرین‌شات گرفته شد (نوار پنجره، جدول بازه‌ها، توضیحات، یادداشت F=1 — همه درست، بدون رقم فارسی، بدون NTILE/واجد‌شرط)، سپس ردیف ساختگی حذف و `config/metrics.php` دقیقاً به حالت اولیه (`git diff` خالی) برگردانده شد. حالت `lifetime` هم جداگانه با Playwright بررسی شد (نوار/بازه‌ها غایب، M در جدول مشترک R/F — دقیقاً رفتار قدیم).
+
+### گزارش اثر (فقط‌خواندن — چیزی تغییر داده نشد)
+
+داده‌ی dev، `asOf` ≈ اکنون (۱۴۰۵/۰۷/۱۴)، پنجره ۶۰ روزه، بدون shipping (پیش‌فرض `include_shipping=false`):
+
+**قبل / بعد توزیع سگمنت (۱۴٬۲۹۰ مشتری واجد امتیاز RFM):**
+
+| سگمنت | قبل (lifetime) | بعد (recent_window، شبیه‌سازی فقط‌خواندن) | تغییر |
+|---|---|---|---|
+| champion | ۶۶ | ۶۶ | — |
+| loyal | ۱۴۳ | ۱۴۳ | — |
+| promising | ۵٬۸۹۱ | ۵٬۸۹۱ | — |
+| new_customer | ۲٬۴۷۴ | ۲٬۴۷۴ | — |
+| at_risk | ۴۵ | ۴۵ | — |
+| **cant_lose** | **۵** | **۰** | **−۵** |
+| hibernating | ۵٬۶۵۲ | ۵٬۶۵۲ | — |
+| **lost** | **۱۴** | **۱۹** | **+۵** |
+
+(شبیه‌سازی با کوئری فقط‌خواندن، عیناً همان SQL که `RfmCalculator`/`computeMonetaryCutpoints` واقعاً اجرا می‌کنند — بدون نوشتن در `customer_metrics`. علت ریاضی ساده است: در CASE نگاشت سگمنت PRD §۱۲، `m_score` فقط در شرط `cant_lose` حاضر است؛ هر سگمنت دیگر فقط به r_score/f_score/frequency وابسته است که اصلاً تغییر نکرده‌اند — پس شعاع اثر این تغییر، ساختاری محدود به همین یک جفت سگمنت است، نه گسترده.)
+
+- **مشتری با سفارش ولی بدون خرید در ۶۰ روز اخیر:** ۱۱٬۸۴۱ از ۱۴٬۲۹۰ (٪۸۲.۹) — این‌ها مستقیم m_score=1 می‌گیرند.
+- **لبه‌های بازه‌ی M (بدون shipping):** c1=۲۶۰٬۵۳۴ · c2=۴۷۷٬۸۷۶ · c3=۷۹۹٬۰۵۷ · c4=۱٬۴۶۵٬۶۴۲ تومان (از ۲٬۴۴۹ خریدار واقعی پنجره).
+- **شبیه‌سازی M با احتساب shipping** (`include_shipping=true` به‌جای پیش‌فرض): c1=۴۰۶٬۲۱۶ · c2=۶۵۵٬۳۸۴ · c3=۹۸۲٬۹۸۲ · c4=۱٬۵۸۵٬۹۳۲ — محسوس بالاتر (پست هزینه‌ی تقریباً ثابتی به هر سفارش اضافه می‌کند)؛ پیش‌فرض فعلی (بدون shipping) برای این فاز تغییر نکرد، چون پست بازتاب ارزش خرید نیست.
+- **میانه‌ی ماهانه‌ی مبلغ سفارش، ۱۲ ماه اخیر** (سیگنال واقعی تورم، نه فرض): ۱۴۰۴/۰۷≈۳۳۷٬۷۰۰ → ۱۴۰۵/۰۷≈۸۵۷٬۷۷۰ تومان — نزدیک ۲.۵ برابر در یک سال (بخشی از این رشد می‌تواند تغییر ترکیب محصول باشد نه فقط تورم خالص؛ عدد دقیق تفکیک نشد).
+
+**پیشنهاد (اعمال‌نشده) برای cant_lose:** علت ریشه‌ای ناپدیدشدنش ساختاری است — مشتری با r_score=1 (مدت‌هاست خرید نکرده) تقریباً هرگز در ۶۰ روز اخیر هم خرید ندارد، پس m_score همیشه ۱ می‌شود و شرط `m_score≥4` هرگز برقرار نیست. دو گزینه (هیچ‌کدام اعمال نشد): **(الف)** شرط cant_lose را به یک معیار غیرپنجره‌ای ارجاع دهد (مثلاً `clv_historical` یا M محاسبه‌شده با `lifetime` حتی وقتی mode کلی `recent_window` است — یعنی دو ستون M موازی)، یا **(ب)** یک سگمنت تازه («بازگشت‌طلب با ارزش بالا») مستقل از m_score اضافه شود. هر دو یک تصمیم PRD/محصول است، نه چیزی که این تسک باید ساکت اعمال کند.
+
+### پیشنهاد Patch متن PRD §۱۲ (فقط اینجا نوشته شد؛ PRD.md ویرایش نشد)
+
+> «M (Monetary) پیش‌فرض از `monetary` (کل عمر مشتری) با NTILE(5) محاسبه می‌شود. **افزوده (P6-20):** یک حالت جایگزین، `metrics.monetary.mode=recent_window`، به‌جای آن از `monetary_recent` (مجموع خرید `window_days` روز اخیر، پیش‌فرض ۶۰) استفاده می‌کند؛ امتیاز ۱ تا ۵ نه از NTILE بلکه از چارک‌های z-score مقاوم (میانه/MAD لگاریتم مبلغ، برش در z=∓۰.۸۴/∓۰.۲۵) به‌دست می‌آید — مشتری بدون خرید در پنجره مستقیم امتیاز ۱ می‌گیرد. **هشدار:** در این حالت، شرط `cant_lose` (`r=1 ∧ f≥4 ∧ m≥4`) عملاً هرگز برقرار نمی‌شود چون r=1 و «خرید اخیر» تقریباً ناسازگارند؛ هر پیاده‌سازی این حالت باید یکی از دو راه‌حل را برای cant_lose انتخاب کند (معیار M غیرپنجره‌ای جدا، یا تعریف سگمنت تازه).»
+
+### بستن این تسک
+
+تست‌های مرتبط (۳۸ تست جدید/تغییریافته — BaseAggregateService+۶، RfmMonetaryWindow ۱۲، RecomputeMetricsJob+۲، MetricsGuideService+۷، MetricsSchema+۱ ستون): همه سبز، در کنار GATE 2 (۲/۲، ۱۱۶۹ Assertion، دست‌نخورده) و کل `RfmCalculatorTest`/`MetricsBoundaryTest` قدیمی بدون تغییر. **تست کامل یک‌بار: ۳۲۸۸/۳۲۸۸ سبز (۱۴٬۶۴۳ Assertion).** یک یافته‌ی جانبی محیطی حین این اجرا: ۹۶ تست `FakeWooClientParityTest`/`HttpWooClientTest` با «Redis: Connection refused» شکست خوردند — نه ربطی به این تسک، سرویس Redis محلی (نه از طریق Herd، دستی) از قبل این نشست پایین بود؛ با `redis-server --daemonize yes` بالا آورده شد (همان روشی که ظاهراً قبلاً راه‌اندازی شده بود)، و با آن، همان ۹۶ تست و کل مجموعه سبز شدند — ثبت شد چون ممکن است در جلسه‌ی بعدی دوباره پیش بیاید (سرویس با ری‌استارت ماشین/نشست پایین می‌ماند، باید دستی بالا بیاید). PHPStan (کل app، `--memory-limit=1G`) → ۰ خطا. Pint (`--test`، کل مخزن) → تمیز. `npm run types:check`/`build` → تمیز.
+
+**فایل‌ها:** Migration جدید: `database/migrations/2026_10_06_100000_add_monetary_recent_to_customer_metrics_table.php`؛ تست جدید: `tests/Feature/Modules/Metrics/RfmMonetaryWindowTest.php`؛ تغییر: `config/metrics.php`، `.env.example`، `app/Modules/Metrics/Services/{BaseAggregateService,RfmCalculator,MetricsRecomputeService}.php`، `app/Support/MetricsGuideService.php`، `resources/js/{pages/metrics/guide.tsx,types/metrics-guide.ts}`، `tests/{Feature/Modules/Metrics/{BaseAggregateServiceTest,RecomputeMetricsJobTest}.php,Feature/Support/MetricsGuideServiceTest.php,Integration/MetricsSchemaTest.php}`.
+
+**DB:** یک ستون تازه (`customer_metrics.monetary_recent`، nullable، بدون داده‌ی موجود دست‌کاری‌شده). **API:** `/metrics/guide`'s پاسخ JSON فیلدهای تازه گرفت (`monetary_mode`, `monetary_window_days`, `monetary_window_as_of`, `monetary_cutpoints_available`, `f_score_1_share`) — افزایشی، شکل قبلی دست‌نخورده.
+
+**ریسک:** کم در حالت پیش‌فرض (`lifetime` دقیقاً دست‌نخورده، GATE 2 اثبات می‌کند). ریسک واقعی مربوط به **روشن‌کردن** `recent_window` در dev/prod است: cant_lose صفر می‌شود (مستند شده بالا، نیاز به تصمیم). **Rollback:** `git revert` بی‌خطر؛ اگر `recent_window` در prod روشن شده بود، برگرداندن env به `lifetime` فوراً رفتار قدیم را برمی‌گرداند (ستون `monetary_recent` می‌ماند ولی بلااستفاده).
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:**
+۱. آیا `.env` (dev) و `.env` (prod) باید `METRICS_MONETARY_MODE=recent_window` بگیرند؟ این نشست نتوانست این فایل‌ها را بخواند/بنویسد (محدودیت sandbox) — باید دستی اضافه شود.
+۲. راه‌حل cant_lose (گزینه‌ی الف یا ب بالا، یا نگه‌داشتن همین‌طور که هست و پذیرفتن که این سگمنت در حالت تازه عملاً خالی می‌ماند) — بدون این تصمیم، روشن‌کردن `recent_window` یعنی سگمنت cant_lose را عملاً حذف کردن.
+۳. آیا shipping باید در M لحاظ شود؟ گزارش بالا هر دو گزینه را با عدد نشان داد؛ پیش‌فرض فعلی (`include_shipping=false`) بدون تغییر ماند.
+
+## P6-21 — اصلاح cant_lose با M کل عمر + حذف ارسال/مالیات از M پنجره‌ای
+
+پاسخ مستقیم به دو تصمیم مالک محصول بعد از P6-20 (بالا، سؤال ۲ و ۳).
+
+### نکته‌ی بنیادی: M کل عمر و M پنجره‌ای دو **تعریف متفاوت** دارند، قابل‌مقایسه نیستند
+
+**چرا دو تعریف جدا، نه یکی:** `monetary` (کل عمر، ستون قدیمی) همچنان از `net_revenue` شروع می‌شود که شامل مالیات است و فقط هزینه‌ی ارسال از آن کم می‌شود (`net_revenue − shipping_total`، طبق `include_shipping`) — یعنی **مالیات در M کل عمر هنوز هست**. `monetary_recent` (پنجره‌ای، P6-20/P6-21) از صفر با فرمول دیگری ساخته شده: `(subtotal − discount_total) × (۱ − نسبت_مرجوعی)` — **نه مالیات، نه ارسال، هرگز**، با مرجوعی جزئی نسبی نه کامل. این دو ستون دو معنای متفاوت از «چقدر مشتری خرج کرده» هستند و **عمداً** یکسان‌سازی نشدند، چون GATE 2 اجازه نمی‌دهد: `expected_metrics.json` مستقیماً `row.monetary` را با یک فیکسچر منجمد (در `DemoDataSeeder::AS_OF`، با فرمول قدیمی) مقایسه می‌کند؛ هر تغییری در فرمول `monetary` GATE 2 را می‌شکند. پس فرمول دقیق‌تر فقط روی ستون تازه (`monetary_recent`) پیاده شد، نه روی ستون قدیمی. **نتیجه‌ی عملی:** عددی که در حالت lifetime به‌عنوان M یک مشتری دیده می‌شود، با عددی که همان مشتری در حالت recent_window می‌بیند، حتی برای یک بازه‌ی فرضی یکسان، **یک‌به‌یک برابر نمی‌شود** — نه به‌خاطر باگ، بلکه چون دو فرمول واقعاً متفاوت‌اند.
+
+### تصمیم ۱ — cant_lose همیشه با M کل عمر سنجیده شود
+
+**چه ساخته شد:** `RfmCalculator::mapSegments()` اکنون بسته به mode دو مسیر دارد: `mapSegmentsLifetime()` (دقیقاً همان CASE قدیمی PRD §۱۲، بدون کوچک‌ترین تغییر — در حالت `lifetime` صدا زده می‌شود، GATE 2 را دست‌نخورده نگه می‌دارد) و `mapSegmentsWithLifetimeCantLose()` (در حالت `recent_window`): یک CTE تازه (`lifetime_m`) دقیقاً همان `NTILE(5) OVER (ORDER BY monetary ASC, customer_id ASC)` را روی ستون `monetary` (کل عمر، بدون تغییر) محاسبه می‌کند — نه از یک ستون ذخیره‌شده‌ی تازه، بلکه زنده و گذرا، چون هیچ migration/ستونی لازم نبود. شرط `cant_lose` این مقدار (`lm.m_score_lifetime`) را می‌خواند، نه `m_score` پنجره‌ای. بقیه‌ی هفت شرط (champion تا lost) و حالت `lifetime` عیناً دست‌نخورده‌اند — طبق دستور صریح.
+
+**TEST FIRST:** ۵ تست تازه در `RfmMonetaryWindowTest.php`: مشتری با M کل عمر بالا ولی بدون خرید در پنجره هنوز cant_lose می‌شود؛ مشتری با M کل عمر پایین هنوز lost می‌شود (نه cant_lose)؛ یک فیکسچر یکسان زیر هر دو mode دقیقاً همان سگمنت را می‌دهد (اثبات مستقل‌بودن از mode)؛ مشتری غیرواجد شرط همچنان NULL می‌ماند. یک باگ واقعی خودِ همین تست پیدا شد: فیکسچر اول با frequency یکسان (۵) برای هر ۵ مشتری نوشته شده بود — چون NTILE روی مقدار تکراری فقط با customer_id تساوی می‌شکند، نه هر ۵ نفر f_score=۵ نمی‌گرفتند؛ با الگوی frequency متغیر (۶،۵،۳،۲،۱) که خودِ `RfmCalculatorTest.php` هم استفاده می‌کند رفع شد.
+
+### تصمیم ۲ — M (پنجره‌ای) بدون ارسال/مالیات، با مرجوعی نسبی
+
+**یافته‌ی اول (طبق دستور، قبل از هر تغییر بررسی شد):** M فعلی (هم `monetary` هم `monetary_recent` قبل از این تسک) از قبل shipping را به‌صورت مستقیم «اضافه» نمی‌کرد — فرمول `net_revenue − shipping_total` با `include_shipping=false` (پیش‌فرض، تأیید شد زنده روی dev) آن را از `total` کم می‌کند. اما دو مشکل واقعی دیگر پیدا شد: **(۱)** `tax_total` هنوز در فرمول باقی می‌ماند (چون از `net_revenue` که شامل مالیات است شروع می‌شود)، **(۲)** مرجوعی به‌صورت کامل کم می‌شود، نه نسبی — یعنی یک مرجوعی فقط-هزینه‌ارسال (سناریوی واقعی: مشتری شکایت می‌کند، فروشگاه فقط پست را برمی‌گرداند) به‌اشتباه ارزش کالای مشتری را هم کم می‌کرد، درحالی‌که او کل کالا را نگه داشته.
+
+**چه ساخته شد (فقط `monetary_recent`، نه `monetary` — دلیل در بخش «نکته‌ی بنیادی» بالا):** فرمول تازه: `(subtotal − discount_total) × (۱ − نسبت_مرجوعی)` که `نسبت_مرجوعی = refunded_total / total` (صفر وقتی total=۰، بدون تقسیم‌بر‌صفر). **بدون migration:** هیچ ستون تازه لازم نبود — `monetary_recent` از قبل (P6-20) وجود داشت، فقط فرمول SQL درون `BaseAggregateService::upsert()` عوض شد.
+
+**داده‌ی مرجوعی سطح‌آیتم بررسی و رد شد (طبق دستور، «در صورت امکان»):** `order_items.refunded_amount` روی dev فقط در ٪۹۲ سفارش‌های مرجوعی (۹۳ از ۱۰۱) دقیقاً با `orders.refunded_total` می‌خواند؛ برای ٪۸ باقی‌مانده دقیق نیست. به‌جای تکیه بر این داده‌ی نیمه‌قابل‌اعتماد، نسبت مرجوعی در سطح کل سفارش محاسبه شد — همان‌طور که خودِ دستور با کلمه‌ی «نسبی» پیش‌بینی کرده بود.
+
+**TEST FIRST:** ۶ تست تازه: مالیات دیگر در `monetary_recent` نیست (برخلاف `monetary` کل‌عمر که هنوز هست)؛ shipping مستقل از `include_shipping` حذف است؛ تخفیف اعمال می‌شود؛ مرجوعی جزئی نسبی کم می‌شود (نه کامل)؛ ترکیب تخفیف+ارسال+مالیات+مرجوعی جزئی با هم درست محاسبه می‌شود؛ تقسیم‌بر‌صفر امن است. ۴ تست قدیمی P6-20 (که فقط `total` تنظیم می‌کردند، بدون `subtotal`) آگاهانه به‌روزرسانی شدند — چون با فرمول تازه، `subtotal` ناگفته صفر می‌ماند و `monetary_recent` را به‌اشتباه صفر می‌کرد؛ این خودش یک گواه بود که فرمول واقعاً عوض شده، نه یک رگرسیون.
+
+### صفحه‌ی /metrics/guide
+
+متن سگمنت cant_lose در جدول «۸ سگمنت RFM» اکنون می‌گوید «ارزش کل عمر مشتری (M)» به‌جای «M» ساده (از همان `RFM_SEGMENT_CONDITIONS` که صفحه‌ی راهنما و گزارش‌ها می‌خوانند، نه یک متن جدا). در بخش توضیحات زیر جدول بازه‌های M (حالت `recent_window`): یک پاراگراف تازه («این ارزش فقط مبلغ کالا... هزینه‌ی ارسال و مالیات در آن حساب نمی‌شوند، و مرجوعی جزئی به‌نسبت کم می‌شود») و یک پاراگراف دیگر که صریحاً می‌گوید cant_lose از همین بازه‌ی ۶۰ روزه استفاده نمی‌کند و روی ارزش کل عمر است — تا اپراتور از دیدن M پایین برای یک مشتری cant_lose غافلگیر نشود. **تأیید بصری زنده با Playwright در این بخش انجام نشد** (کاربر درخواست توقف داد وقتی تغییر موقت `config/metrics.php` برای تست زنده در جریان بود) — صحت از طریق بررسی‌های استاتیک (types:check، grep برای ارقام فارسی/واژه‌های ممنوعه، Pint/lint) تأیید شد.
+
+### دستور دقیق برای محاسبه‌ی مجدد کامل بعد از تغییر env
+
+کامند تازه‌ای ساخته نشد — `metrics:recompute` (`app/Console/Commands/MetricsRecompute.php`) از قبل همین کار را می‌کند:
+
+```
+php artisan config:clear
+php artisan queue:restart
+php artisan metrics:recompute
+```
+
+دستور دوم (`queue:restart`) حیاتی است: P6-17 دقیقاً همین مشکل را زنده پیدا کرد — Worker های Horizon از قبل در حافظه، کد/تنظیمات تازه را تا ری‌استارت نمی‌خوانند. فهرست کامل دستورهای فعال‌سازی (با ترتیب و توضیح بیشتر) در گزارش پایانی چت آمده.
+
+### گزارش اثر (به‌روزرسانی‌شده — فقط‌خواندن، چیزی تغییر داده نشد)
+
+داده‌ی dev، همان ۱۴٬۲۹۰ مشتری واجد امتیاز RFM:
+
+| سگمنت | قبل (lifetime) | بعد (recent_window، با هر دو اصلاح P6-21) | تغییر |
+|---|---|---|---|
+| champion | ۶۶ | ۶۶ | — |
+| loyal | ۱۴۳ | ۱۴۳ | — |
+| promising | ۵٬۸۹۱ | ۵٬۸۹۱ | — |
+| new_customer | ۲٬۴۷۴ | ۲٬۴۷۴ | — |
+| at_risk | ۴۵ | ۴۵ | — |
+| **cant_lose** | **۵** | **۵** | **۰ (رفع شد — در P6-20 به ۰ افتاده بود)** |
+| hibernating | ۵٬۶۵۲ | ۵٬۶۵۲ | — |
+| **lost** | **۱۴** | **۱۴** | **۰ (رفع شد — در P6-20 به ۱۹ رسیده بود)** |
+
+**نتیجه:** با اصلاح cant_lose، توزیع سگمنت‌ها بین دو حالت **کاملاً یکسان** شد — چون تنها نقطه‌ی وابستگی سگمنت‌بندی به M (شرط cant_lose) اکنون مستقل از mode است. **۵ نفر همچنان cant_lose می‌شوند** (نه صفر، نه عدد دیگری) — دقیقاً همان ۵ نفری که در حالت lifetime cant_lose بودند.
+
+لبه‌های بازه‌ی نمایشی M (فرمول تازه‌ی بدون ارسال/مالیات، نمونه=۲٬۴۵۰ خریدار پنجره): ۲۶۱٬۰۹۹ · ۴۷۸٬۳۲۲ · ۷۹۸٬۹۷۰ · ۱٬۴۶۳٬۶۷۸ تومان — نزدیک به لبه‌های فرمول قدیم P6-20 (۲۶۰٬۵۳۴ · ۴۷۷٬۸۷۶ · ۷۹۹٬۰۵۷ · ۱٬۴۶۵٬۶۴۲)، چون در این دیتاست مالیات/ارسال/مرجوعی جزئی نسبت کوچکی از اکثر سفارش‌ها هستند — اصلاح دقت فرمول را بالا می‌برد بدون جابه‌جایی چشمگیر توزیع.
+
+### پیشنهاد Patch متن PRD §۱۲ (فقط اینجا نوشته شد؛ PRD.md ویرایش نشد)
+
+> «M (Monetary) پیش‌فرض از `monetary` (کل عمر مشتری، شامل مالیات، بدون ارسال طبق `include_shipping`) با NTILE(5) محاسبه می‌شود. **افزوده (P6-20/P6-21):** یک حالت جایگزین، `metrics.monetary.mode=recent_window`، M را از `monetary_recent` (ارزش کالا پس از تخفیف، منهای مرجوعی نسبی، بدون ارسال/مالیات به‌هیچ‌وجه — تعریفی متفاوت و عمداً غیرقابل‌مقایسه با `monetary` کل‌عمر، به‌خاطر GATE 2) در `window_days` روز اخیر (پیش‌فرض ۶۰) می‌خواند؛ امتیاز ۱ تا ۵ از چارک‌های z-score مقاوم (میانه/MAD لگاریتم مبلغ، برش در z=∓۰.۸۴/∓۰.۲۵) به‌دست می‌آید، نه NTILE — مشتری بدون خرید در پنجره مستقیم امتیاز ۱ می‌گیرد. **استثنا:** شرط `cant_lose` (`r=1 ∧ f≥4 ∧ m≥4`) در هر دو حالت از M **کل عمر** (`monetary`، نه `monetary_recent`) می‌خواند — چون این سگمنت مشتری پرارزشی را هدف می‌گیرد که مدتی خرید نکرده، و M پنجره‌ای برای چنین مشتری‌ای ساختاری پایین است.»
+
+### بستن این تسک
+
+تست‌های مرتبط (۱۱ تست تازه + ۴ تست موجود آگاهانه به‌روزرسانی‌شده): همه سبز، در کنار GATE 2 (دست‌نخورده) و کل خانواده‌ی تست‌های Metrics (۹۳ تست، شامل `RfmCalculatorTest`/`MetricsBoundaryTest`/`RecomputeMetricsJobTest`/`MetricsGuideServiceTest`/`MetricsSchemaTest`). تست کامل یک‌بار، PHPStan، Pint، types:check، build: جزئیات در گزارش پایانی چت.
+
+**فایل‌ها:** تغییر: `app/Modules/Metrics/Services/{RfmCalculator,BaseAggregateService}.php`، `app/Support/MetricsGuideService.php`، `resources/js/pages/metrics/guide.tsx`، `tests/Feature/Modules/Metrics/{RfmMonetaryWindowTest,BaseAggregateServiceTest}.php`. بدون migration، بدون فایل تازه.
+
+**DB:** بدون تغییر schema. **API:** بدون فیلد تازه در `/metrics/guide` (فقط متن توضیحی عوض شد؛ شکل داده دست‌نخورده).
+
+**ریسک:** کم — هر دو اصلاح فقط مسیر `recent_window` را لمس می‌کنند (هنوز در هیچ `.env` واقعی روشن نشده)؛ `lifetime`/GATE 2 اثبات‌شده دست‌نخورده‌اند. **Rollback:** `git revert` بی‌خطر؛ بدون داده‌ی نوشته‌شده‌ای که نیاز به پاک‌سازی جدا داشته باشد.
+
+**کدام تصمیم از طرف پروژه‌مالک لازم است:** فقط `METRICS_MONETARY_MODE=recent_window` باید دستی به `.env` dev/prod اضافه شود (این نشست اجازه‌ی خواندن/نوشتن آن فایل را نداشت) و بعدش دستورهای فعال‌سازی (گزارش پایانی چت) اجرا شود. راه‌حل cant_lose و حذف ارسال/مالیات از M — که در P6-20 به‌عنوان تصمیم باز گزارش شده بودند — با همین تسک (P6-21) حل شدند.
+
+## پایان Sprint 6
+
+### خلاصه‌ی تسک‌ها
+
+اسپرینت ۶ شامل خط اصلی PRD (P6-01 تا P6-13: Analytics base aggregates، daily metrics، cohort، retention، dashboard، drill-down، nightly chain، alerts، Jalali/UI fixes، identity-conflict diagnosis) به‌علاوه‌ی دستور صریح مالک محصول در دو بخش بعدی: شش‌فازی UI/UX (P6-14 تا P6-19: RTL sidebar، تقویم شمسی، تفکیک درآمد، ستون‌های خالی لیست مشتریان، صفحه‌ی راهنمای شاخص‌ها، بستن اسپرینت) و دو‌تسکی RFM Monetary (P6-20، P6-21: پنجره‌ی ۶۰ روزه برای M، رفع cant_lose، رفع ارسال/مالیات). جمعاً بیش از ۲۵ ردیف Task index در `ARCHITECTURE.md`.
+
+### وضعیت گیت‌ها
+
+- **GATE 1** (آشتی Sync): سبز از Sprint 2 (۱۴۰۵/۰۶/۲۹)، دوباره در ابتدای Sprint 6 تأیید شد، در کل این اسپرینت لمس نشد.
+- **GATE 2** (تطابق دقیق متریک‌ها با fixture): سبز، در کل این اسپرینت — شامل P6-20/P6-21 که صریحاً صرف طراحی برای حفظ آن بودند (مسیر `lifetime` در هر دو تسک بدون کوچک‌ترین تغییر SQL باقی ماند) — اثبات نهایی: `Gate2MetricsVerificationTest` در گزارش پایانی چت.
+- **GATE 3** (تزریق SQL در RuleCompiler): سبز از Sprint 5، لمس نشد.
+- **GATE 4** (بدون دسترسی نوشتن برای اتصال AI): هنوز نرسیده — ماژول AI اصلاً شروع نشده (Sprint 7). هیچ تستی هنوز برایش نوشته نشده چون چیزی برای تست وجود ندارد.
+
+### فهرست انتقال به Sprint 8 (یا بعد) — نه فراموش‌شده، آگاهانه خارج از scope این اسپرینت
+
+- اجرای کامل `hm:nightly-chain` به‌صورت زنده روی WooCommerce واقعی (تا امروز فقط تکه‌تکه، دستی، و با داده‌ی dev تست شده).
+- Drill-down سطح basket (P6-07 این را آگاهانه نساخت — سطرش سفارش است نه مشتری، شکل متفاوتی لازم دارد).
+- ۵٬۷۹۸ ردیف `order_items` بدون SKU اصلاً — قابل‌حل‌شدن نیستند چون منبع (Woo) چیزی برای تطبیق نمی‌دهد.
+- ۱۳٬۶۵۳ ردیف دارای SKU ولی بدون تطبیق به یک محصول واقعی — عمدتاً محصولات رد‌شده‌ی کاتالوگ (یافته‌ی P6-03 سری)، نیاز به تصمیم درباره‌ی پاک‌سازی کاتالوگ یا پذیرفتن این شکاف.
+- نرخ خرید تکراری (Repeat Purchase Rate) روی dev برابر ۷.۷۱٪ — زیر آستانه‌ای که PRD به‌عنوان «سالم» فرض می‌کند؛ این یک سیگنال کسب‌وکاری است (یافته‌ی P6-04)، نه یک باگ کد — نیاز به بررسی توسط صاحب کسب‌وکار، نه رفع فنی.
+- باز کردن ثبت‌نام (P8-05) — در نقشه‌راه PRD برای Sprint 8، هنوز لمس نشده.

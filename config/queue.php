@@ -68,8 +68,10 @@ return [
             'driver' => 'redis',
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
-            // Must exceed the longest job timeout (ReconcileMonthJob: 300 s) by a margin, or a running job is re-reserved and run twice.
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 330),
+            // Must exceed the longest job timeout by a margin, or a running job is re-reserved and run twice. The
+            // longest is now 900s (RecomputeMetricsJob, BuildAffinityJob — P6-09 found this stale at 330s, the
+            // ReconcileMonthJob-only margin from P2-11, once metrics/analytics jobs with 900s timeouts existed).
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 930),
             'block_for' => null,
             'after_commit' => false,
         ],

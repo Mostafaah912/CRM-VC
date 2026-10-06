@@ -2,6 +2,7 @@ import { Loader2, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { RuleNodeEditor } from '@/components/segments/RuleNodeEditor';
+import { formatNumber } from '@/lib/format';
 import { validateRuleTree } from '@/lib/segment-rule-validation';
 import {
     addChild,
@@ -191,7 +192,7 @@ export function RuleBuilder({ whitelist, value, onChange }: Props) {
 
                 {preview.status === 'success' && (
                     <span className="text-sm font-medium">
-                        {preview.count.toLocaleString('fa-IR')} مشتری
+                        {formatNumber(preview.count)} مشتری
                     </span>
                 )}
 

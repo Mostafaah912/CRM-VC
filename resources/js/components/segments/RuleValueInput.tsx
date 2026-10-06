@@ -1,4 +1,5 @@
 import { Input } from '@/components/ui/input';
+import { JalaliDayPicker } from '@/components/jalali-date-picker';
 import type { RuleScalarValue, RuleValue } from '@/types/segments';
 
 type Props = {
@@ -10,7 +11,7 @@ type Props = {
     'aria-invalid'?: boolean;
 };
 
-/** date input for `_at` fields (no Jalali date-picker exists in this project yet — ISO on the wire, converted server-side); number input for score/day/money-shaped fields; plain text otherwise (also covers behavior-field ids, since no product/category/segment picker exists yet either). */
+/** Jalali date picker for `_at` fields (value on the wire is `YYYY/MM/DD`, same convention as every other date field in the app — `RuleCompiler` converts it server-side via `JalaliDay`); number input for score/day/money-shaped fields; plain text otherwise (also covers behavior-field ids, since no product/category/segment picker exists yet either). */
 function inputKindFor(fieldName: string): 'date' | 'number' | 'text' {
     if (fieldName.endsWith('_at')) {
         return 'date';
@@ -119,6 +120,35 @@ export function RuleValueInput({
     if (valueShape === 'range') {
         const range = Array.isArray(value) ? value : [];
 
+        if (kind === 'date') {
+            const from =
+                typeof range[0] === 'string' && range[0] !== ''
+                    ? range[0]
+                    : null;
+            const to =
+                typeof range[1] === 'string' && range[1] !== ''
+                    ? range[1]
+                    : null;
+
+            return (
+                <div className="flex items-center gap-2">
+                    <JalaliDayPicker
+                        value={from}
+                        onChange={(v) =>
+                            onChange([v ?? '', range[1] ?? ''])
+                        }
+                    />
+                    <span className="text-muted-foreground text-sm">تا</span>
+                    <JalaliDayPicker
+                        value={to}
+                        onChange={(v) =>
+                            onChange([range[0] ?? '', v ?? ''])
+                        }
+                    />
+                </div>
+            );
+        }
+
         return (
             <div className="flex items-center gap-2">
                 <Input
@@ -153,6 +183,15 @@ export function RuleValueInput({
     }
 
     const scalar = Array.isArray(value) ? '' : (value ?? '');
+
+    if (kind === 'date') {
+        return (
+            <JalaliDayPicker
+                value={typeof scalar === 'string' && scalar !== '' ? scalar : null}
+                onChange={(v) => onChange(v)}
+            />
+        );
+    }
 
     return (
         <Input

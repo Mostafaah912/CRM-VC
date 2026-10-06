@@ -1,4 +1,4 @@
-import { Head, router, usePage } from '@inertiajs/react';
+import { Head, Link, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { JalaliRangePicker } from '@/components/jalali-date-picker';
 import {
     Select,
     SelectContent,
@@ -23,11 +24,13 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
 import { useCan } from '@/hooks/use-can';
 import { customerStatuses, lifecycleStages } from '@/lib/customer-labels';
 import { statusInfo } from '@/lib/system-status';
 import { dashboard } from '@/routes';
 import { index as customersIndex } from '@/routes/customers';
+import { identityConflicts } from '@/routes/system';
 import type {
     CustomerFilters,
     CustomerOptions,
@@ -136,6 +139,7 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
     const [state, setState] = useState<FormState>(initialState(filters));
     const can = useCan();
     const canRevealPhone = can('customers', 'view_full_phone');
+    const canReviewIdentity = can('identity', 'review');
     const { errors } = usePage<{ errors: Record<string, string> }>().props;
     const messages = Object.values(errors ?? {});
 
@@ -202,7 +206,7 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                             onChange={(event) =>
                                 set('search', event.target.value)
                             }
-                            placeholder="مثلاً مریم رضایی یا ۰۹۱۲۳۴۵۶۷۸۹"
+                            placeholder="مثلاً مریم رضایی یا 09123456789"
                         />
                     </div>
 
@@ -248,33 +252,14 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
 
                     <div className="flex flex-wrap items-end gap-4">
                         <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="first-seen-from">
-                                اولین مشاهده از (شمسی)
-                            </Label>
-                            <Input
-                                id="first-seen-from"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/01/01"
-                                value={state.first_seen_from}
-                                onChange={(event) =>
-                                    set('first_seen_from', event.target.value)
-                                }
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                            <Label htmlFor="first-seen-to">
-                                اولین مشاهده تا (شمسی)
-                            </Label>
-                            <Input
-                                id="first-seen-to"
-                                dir="ltr"
-                                className="w-40"
-                                placeholder="1405/06/29"
-                                value={state.first_seen_to}
-                                onChange={(event) =>
-                                    set('first_seen_to', event.target.value)
-                                }
+                            <Label>اولین مشاهده</Label>
+                            <JalaliRangePicker
+                                from={state.first_seen_from || null}
+                                to={state.first_seen_to || null}
+                                onChange={(next) => {
+                                    set('first_seen_from', next.from ?? '');
+                                    set('first_seen_to', next.to ?? '');
+                                }}
                             />
                         </div>
                         <div className="flex items-center gap-2 pb-2">
@@ -341,7 +326,13 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                             {customers.data.map((customer) => (
                                 <TableRow key={customer.id}>
                                     <TableCell className="text-sm font-medium">
-                                        {customer.display_name ?? '—'}
+                                        {customer.display_name === null ? (
+                                            '—'
+                                        ) : (
+                                            <TruncatedText
+                                                value={customer.display_name}
+                                            />
+                                        )}
                                     </TableCell>
                                     <TableCell className="text-sm">
                                         <PhoneRevealButton
@@ -378,17 +369,32 @@ export default function CustomersIndex({ customers, filters, options }: Props) {
                                         )}
                                     </TableCell>
                                     <TableCell>
-                                        {customer.needs_review && (
-                                            <StatusBadge
-                                                status="needs_review"
-                                                labels={{
-                                                    needs_review: {
-                                                        label: 'نیازمند بازبینی',
-                                                        tone: 'warning',
-                                                    },
-                                                }}
-                                            />
-                                        )}
+                                        {customer.needs_review &&
+                                            (canReviewIdentity ? (
+                                                <Link
+                                                    href={identityConflicts()}
+                                                >
+                                                    <StatusBadge
+                                                        status="needs_review"
+                                                        labels={{
+                                                            needs_review: {
+                                                                label: 'نیازمند بازبینی',
+                                                                tone: 'warning',
+                                                            },
+                                                        }}
+                                                    />
+                                                </Link>
+                                            ) : (
+                                                <StatusBadge
+                                                    status="needs_review"
+                                                    labels={{
+                                                        needs_review: {
+                                                            label: 'نیازمند بازبینی',
+                                                            tone: 'warning',
+                                                        },
+                                                    }}
+                                                />
+                                            ))}
                                     </TableCell>
                                 </TableRow>
                             ))}

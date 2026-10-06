@@ -131,15 +131,27 @@ it('never touches a cursor, a credential or the queue tables — depth and failu
         ], ['/[\'"](jobs|failed_jobs)[\'"]/', '/->table\s*\(|\bDB::table/']))->toBe([]);
 });
 
-it('never selects a name, a phone, a customer or an internal id for the identity-conflict list', function () {
+/**
+ * P6-13 reverses one narrow piece of the P2-12 boundary above: a reviewer could not actually review anything without
+ * seeing what differs, so the identity-conflict list now carries the customer's id, its ALWAYS-masked phone (never the
+ * raw `phone_normalized` — same rule CustomerListRow follows) and the two names (unmasked, like every other list in this
+ * app — Customers, Orders, Segments already show display_name to anyone with the page's own view permission; only the
+ * phone is permission-gated project-wide). What stays banned: `resolved_by` (who resolved it is not this list's business),
+ * any reference to Order (an identity conflict never re-reads the order it came from) and, above all, the raw phone.
+ */
+it('loads only the customer id and masked phone for the identity-conflict list — never the raw phone, resolved_by or an order', function () {
+    $service = Scanner::phpCode(sysFile('app/Modules/Customers/Services/IdentityConflictService.php'));
+    $row = Scanner::phpCode(sysFile('app/Modules/Customers/Support/IdentityConflictRow.php'));
+
     expect(Scanner::violations([
         sysFile('app/Modules/Customers/Services/IdentityConflictService.php'),
         sysFile('app/Modules/Customers/Support/IdentityConflictRow.php'),
-    ], [
-        '/existing_name|incoming_name|customer_id|resolved_by|phone/i',
-        '/->(with|load|join|leftJoin|whereHas)\s*\(/',
-        '/\bCustomer\b|\bOrder\b/',
-    ]))->toBe([]);
+    ], ['/resolved_by/i', '/\bOrder\b/']))->toBe([])
+        ->and($service)->toContain("select(['id', 'phone_normalized'])")
+        ->and($row)->toContain('PhoneMask::mask(')
+        // "phone_normalized" appears exactly twice in these two files: the eager-load's column list above, and the one
+        // place it is read before being masked below — never a third, unmasked path to it.
+        ->and(substr_count($service, 'phone_normalized') + substr_count($row, 'phone_normalized'))->toBe(2);
 });
 
 it('keeps the sync-run row free of ids, modes and cursors, and shows an error only for a failed run', function () {

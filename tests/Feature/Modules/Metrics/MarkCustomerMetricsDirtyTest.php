@@ -20,6 +20,11 @@ use Illuminate\Support\Facades\Queue;
 */
 
 it('sets metrics_dirty on the event\'s customer', function () {
+    // Queue::fake(): QUEUE_CONNECTION=sync in testing runs a real dispatch() inline. Now that
+    // MetricsRecomputeService actually resets metrics_dirty (Sprint 6 bugfix), an unfaked dispatch here
+    // would immediately run RecomputeMetricsJob('dirty') and flip the flag this test is asserting back
+    // to false before the assertion even runs — this test only cares about the Listener's own write.
+    Queue::fake();
     $customer = Customer::factory()->create(['metrics_dirty' => false]);
 
     app(MarkCustomerMetricsDirty::class)->handle(new OrderSynced(orderId: 1, customerId: $customer->id));
@@ -37,6 +42,9 @@ it('dispatches a delayed dirty RecomputeMetricsJob', function () {
 });
 
 it('never touches another customer\'s metrics_dirty', function () {
+    // Same reason as the first test above: fake the queue so a real synchronous RecomputeMetricsJob
+    // run never runs and resets these flags before the assertion.
+    Queue::fake();
     $target = Customer::factory()->create(['metrics_dirty' => false]);
     $other = Customer::factory()->create(['metrics_dirty' => false]);
 
@@ -68,6 +76,8 @@ it('marks a real customer dirty and queues a dirty job when OrderService actuall
     $orderId = app(OrderService::class)->upsert(new OrderInput(
         wooOrderId: 5001, number: '5001', status: 'completed', wooCustomerId: 11,
         billingFirstName: 'مشتری', billingLastName: 'نمونه', billingPhone: '09000000101',
+        billingProvince: null, billingCity: null, billingAddress: null, billingPostcode: null,
+        shippingProvince: null, shippingCity: null, shippingAddress: null, shippingPostcode: null,
         total: 100_000, discountTotal: 0, shippingTotal: 0, taxTotal: 0,
         couponCodes: [], paymentMethod: 'synthetic_gateway',
         orderedAt: $at('2026-05-10 08:30:00'), paidAt: $at('2026-05-10 08:35:00'),

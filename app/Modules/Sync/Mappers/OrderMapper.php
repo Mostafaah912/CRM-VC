@@ -6,6 +6,7 @@ namespace App\Modules\Sync\Mappers;
 
 use App\Modules\Sync\DTOs\OrderDto;
 use App\Modules\Sync\DTOs\OrderItemDto;
+use App\Support\PersianText;
 
 /**
  * Raw Woo order object (with its line items) -> OrderDto. Pure transformation: no identity
@@ -20,6 +21,7 @@ final class OrderMapper
     {
         $r = new PayloadReader($raw, 'order');
         $billing = $r->object('billing');
+        $shipping = $r->nullableObject('shipping');
         $customerId = $r->nonNegativeInt('customer_id');
 
         return new OrderDto(
@@ -31,6 +33,14 @@ final class OrderMapper
             $billing->string('first_name'),
             $billing->string('last_name'),
             $billing->nullableString('phone'),
+            PersianText::fixLetterShapes($billing->nullableString('state')),
+            PersianText::fixLetterShapes($billing->nullableString('city')),
+            $this->address($billing),
+            $billing->nullableString('postcode'),
+            PersianText::fixLetterShapes($shipping->nullableString('state')),
+            PersianText::fixLetterShapes($shipping->nullableString('city')),
+            $this->address($shipping),
+            $shipping->nullableString('postcode'),
             $r->money('total'),
             $r->money('discount_total'),
             $r->money('shipping_total'),
@@ -44,6 +54,16 @@ final class OrderMapper
             array_map($this->item(...), $r->objects('line_items')),
             $r->nullableObjectCount('refunds'),
         );
+    }
+
+    /** `address_1`/`address_2` joined with a space when both are present — `customer_addresses.address` is one text column, PRD §09 does not split it. */
+    private function address(PayloadReader $r): ?string
+    {
+        $line1 = trim($r->nullableString('address_1') ?? '');
+        $line2 = trim($r->nullableString('address_2') ?? '');
+        $full = trim($line1.' '.$line2);
+
+        return $full === '' ? null : $full;
     }
 
     /**

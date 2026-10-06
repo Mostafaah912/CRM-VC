@@ -316,6 +316,102 @@ it('binds within_days_of_now as two date parameters, never concatenating the day
     Carbon\Carbon::setTestNow();
 });
 
+/*
+| P6-14 phase 2: a DATE_FIELDS scalar/range value is now a Jalali day (YYYY/MM/DD), translated to a
+| Tehran [start, nextStart) interval the same way every other from/to filter in the app already does
+| (App\Support\JalaliDay). Day 1405/01/01 begins 2026-03-20 20:30:00 UTC and ends (exclusive)
+| 2026-03-21 20:30:00 UTC — the exact instants Unit/Support/JalaliDayTest.php already proves.
+*/
+it('"=" on a date field matches the whole Tehran day, not a single instant', function () {
+    $justAfterStart = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 21:00:00']);
+    $justBeforeEnd = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:29:59']);
+    $justBeforeStart = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 20:29:59']);
+    $exactlyNextDayStart = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:30:00']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '=', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($justAfterStart->id, $justBeforeEnd->id)
+        ->and($ids)->not->toContain($justBeforeStart->id, $exactlyNextDayStart->id);
+});
+
+it('"!=" on a date field excludes the whole Tehran day, nothing more', function () {
+    $onDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 21:00:00']);
+    $dayBefore = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 20:29:59']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '!=', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($dayBefore->id)->not->toContain($onDay->id);
+});
+
+it('">" on a date field excludes the boundary day itself, only the next day onward matches', function () {
+    $onDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:29:59']);
+    $nextDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:30:00']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '>', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($nextDay->id)->not->toContain($onDay->id);
+});
+
+it('">=" on a date field includes the whole boundary day', function () {
+    $onDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 21:00:00']);
+    $dayBefore = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 20:29:59']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '>=', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($onDay->id)->not->toContain($dayBefore->id);
+});
+
+it('"<" on a date field excludes the whole boundary day, only before it matches', function () {
+    $dayBefore = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 20:29:59']);
+    $onDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 21:00:00']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '<', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($dayBefore->id)->not->toContain($onDay->id);
+});
+
+it('"<=" on a date field includes the whole boundary day, not the day after', function () {
+    $onDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:29:59']);
+    $nextDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 20:30:00']);
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '<=', 'value' => '1405/01/01'])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($onDay->id)->not->toContain($nextDay->id);
+});
+
+it('"between" on a date field is inclusive of both whole days', function () {
+    $firstDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 21:00:00']); // 1405/01/01
+    $lastDay = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-22 12:00:00']); // 1405/01/02
+    $before = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-20 20:29:59']); // 1404/12/29
+    $after = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-22 20:30:00']); // 1405/01/03
+
+    $ids = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'between', 'value' => ['1405/01/01', '1405/01/02']])->pluck('customers.id')->all();
+
+    expect($ids)->toContain($firstDay->id, $lastDay->id)
+        ->and($ids)->not->toContain($before->id, $after->id);
+});
+
+it('"between" on a date field normalizes a reversed pair the same as the forward order', function () {
+    $inRange = segmentCustomerWithMetrics([], ['first_seen_at' => '2026-03-21 12:00:00']);
+
+    $forward = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'between', 'value' => ['1405/01/01', '1405/01/02']])->pluck('customers.id')->all();
+    $reversed = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => 'between', 'value' => ['1405/01/02', '1405/01/01']])->pluck('customers.id')->all();
+
+    expect($forward)->toContain($inRange->id)
+        ->and($reversed)->toBe($forward);
+});
+
+it('binds a date-field condition as parameters, never concatenating the Jalali string into SQL', function () {
+    $query = RuleCompiler::compile(['field' => 'first_seen_at', 'operator' => '>=', 'value' => '1405/01/01']);
+
+    expect($query->toSql())->not->toContain('1405/01/01');
+
+    $bindings = $query->getBindings();
+    expect($bindings)->not->toContain('1405/01/01');
+
+    $query->count();
+});
+
 it('propagates a RuleValidationException for a field outside the whitelist without building a query', function () {
     expect(fn () => RuleCompiler::compile(['field' => 'email', 'operator' => '=', 'value' => 'x']))
         ->toThrow(RuleValidationException::class);

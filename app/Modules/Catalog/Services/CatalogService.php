@@ -77,9 +77,13 @@ final class CatalogService
             $product = Product::query()->where('woo_product_id', $input->wooProductId)->lockForUpdate()->first()
                 ?? new Product(['woo_product_id' => $input->wooProductId]);
 
+            $this->assertProductSkuFree($product, $input);
+
             $attributes = [
                 'name' => $input->name,
                 'slug' => $input->slug,
+                'sku' => $input->sku,
+                'price' => $input->price,
                 'type' => $this->productType($input),
                 'status' => $this->status($input->status, 'product', $input->wooProductId),
                 'synced_at' => now(),
@@ -103,6 +107,20 @@ final class CatalogService
         });
     }
 
+    /**
+     * Like upsertProduct(), but for a caller outside Catalog (P6 decision, ARCHITECTURE.md): a SKU
+     * conflict comes back as a CatalogUpsertOutcome instead of a thrown CatalogIntegrityException, since
+     * the module boundary never lets another module import Catalog's Exceptions, only its Services.
+     */
+    public function tryUpsertProduct(ProductInput $input): CatalogUpsertOutcome
+    {
+        try {
+            return CatalogUpsertOutcome::accepted($this->upsertProduct($input));
+        } catch (CatalogIntegrityException $e) {
+            return CatalogUpsertOutcome::rejected($e->getMessage());
+        }
+    }
+
     /** Read-only lookup by Woo variation id. Woo's 0 means "no variation": callers must not ask with it. */
     public function resolveVariationByWooId(int $wooVariationId): ?ResolvedCatalogItem
     {
@@ -122,6 +140,19 @@ final class CatalogService
     public function resolveVariationBySku(string $sku): ?ResolvedCatalogItem
     {
         return $this->resolved(ProductVariation::query()->where('sku', $sku)->first());
+    }
+
+    /**
+     * Read-only lookup: a "simple" product's own SKU (P6 decision, not PRD §07's original 4-step list —
+     * see `OrderService::resolve()`). Unambiguous for the same reason step 3 is: `products.sku` has its
+     * own partial unique index, and a SKU can never live in both `products` and `product_variations` at
+     * once (`assertProductSkuFree()`/`assertSkuFree()` both check across the two tables).
+     */
+    public function resolveProductBySku(string $sku): ?ResolvedCatalogItem
+    {
+        $product = Product::query()->where('sku', $sku)->first();
+
+        return $product === null ? null : new ResolvedCatalogItem($product->id, null);
     }
 
     private function resolved(?ProductVariation $variation): ?ResolvedCatalogItem
@@ -181,6 +212,36 @@ final class CatalogService
 
         if ($owner !== null) {
             throw CatalogIntegrityException::skuAlreadyOwned($input->wooVariationId, $input->sku, $owner->id);
+        }
+
+        // P6 decision: products can now own a SKU too (resolveProductBySku) — a SKU must be unique across both tables.
+        $owningProduct = Product::query()->where('sku', $input->sku)->first();
+
+        if ($owningProduct !== null) {
+            throw CatalogIntegrityException::variationSkuAlreadyOwnedByProduct($input->wooVariationId, $input->sku, $owningProduct->id);
+        }
+    }
+
+    /** P6 decision: mirrors assertSkuFree() above, but for a product's own SKU. */
+    private function assertProductSkuFree(Product $product, ProductInput $input): void
+    {
+        if ($input->sku === null) {
+            return;
+        }
+
+        $owningProduct = Product::query()
+            ->where('sku', $input->sku)
+            ->when($product->exists, fn ($query) => $query->where('id', '!=', $product->id))
+            ->first();
+
+        if ($owningProduct !== null) {
+            throw CatalogIntegrityException::productSkuAlreadyOwnedByProduct($input->wooProductId, $input->sku, $owningProduct->id);
+        }
+
+        $owningVariation = ProductVariation::query()->where('sku', $input->sku)->first();
+
+        if ($owningVariation !== null) {
+            throw CatalogIntegrityException::productSkuAlreadyOwnedByVariation($input->wooProductId, $input->sku, $owningVariation->id);
         }
     }
 

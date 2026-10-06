@@ -30,6 +30,11 @@ it('has daily_metrics exactly as the PRD defines it', function () {
         'revenue' => ['bigint', false, null],
         'refunds' => ['bigint', false, null],
         'net_revenue' => ['bigint', false, null],
+        // P6-14 phase 3: deliberate deviation from the PRD §09 literal column list (documented in
+        // ARCHITECTURE.md, "P6-16") — the revenue breakdown everywhere else in the app needs these
+        // pre-aggregated, not a live re-query of `orders` on every dashboard load.
+        'product_revenue' => ['bigint', false, null],
+        'shipping_revenue' => ['bigint', false, null],
         'aov' => ['bigint', false, null],
         'customers_total' => ['int', false, null],
         'customers_new' => ['int', false, null],

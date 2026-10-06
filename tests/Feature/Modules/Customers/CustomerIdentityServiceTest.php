@@ -216,7 +216,10 @@ it('records a conflict, keeps the one customer and does not touch its name, when
         ->and(Customer::count())->toBe(1)
         ->and($resolved->fresh()->first_name)->toBe('مشتری')
         ->and($resolved->fresh()->last_name)->toBe('نمونه')
-        ->and($resolved->fresh()->display_name)->toBe('مشتری نمونه');
+        ->and($resolved->fresh()->display_name)->toBe('مشتری نمونه')
+        // P6-14 phase 4: needs_review was never written anywhere before this — confirmed 0 of 20,150
+        // customers had it true on dev, despite 240+ pending conflicts existing.
+        ->and($resolved->fresh()->needs_review)->toBeTrue();
 
     $conflict = IdentityConflict::sole();
     expect($conflict->customer_id)->toBe($original->id)

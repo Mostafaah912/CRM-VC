@@ -23,7 +23,7 @@ final class ProductMapper
             $r->nonEmptyString('type'),
             $r->nonEmptyString('status'),
             $r->nullableString('sku'),
-            $r->nullableMoney('price'),
+            $r->nullableDecimalMoney('price'),
             $r->nullableDate('date_created_gmt'),
             array_map(fn (PayloadReader $category): int => $category->positiveInt('id'), $r->objects('categories')),
         );

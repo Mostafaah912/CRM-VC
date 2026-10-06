@@ -178,6 +178,18 @@ it('refuses a blank or too-long body itself, whatever the request let through', 
     expect(CustomerNote::query()->count())->toBe(0)->and(DB::table('customer_events')->count())->toBe(0);
 })->with(['empty' => [''], 'blank' => ["  \n\t "], '2001 ascii' => [str_repeat('x', 2001)], '2001 persian' => [str_repeat('ی', 2001)]]);
 
+/** P6-12: only Latin digits anywhere a number appears, including a backend-generated validation message. */
+it('spells the too-long-body message with Latin digits only, never Persian/Arabic-Indic ones', function () {
+    try {
+        nsService()->store($this->customer, $this->author, str_repeat('x', 2001));
+        $this->fail('expected a ValidationException');
+    } catch (ValidationException $e) {
+        $message = $e->errors()['body'][0];
+        expect($message)->toContain('2000')
+            ->and($message)->not->toMatch('/[\x{06F0}-\x{06F9}\x{0660}-\x{0669}]/u');
+    }
+});
+
 it('refuses to add a note to a soft-deleted customer', function () {
     $this->customer->delete();
 

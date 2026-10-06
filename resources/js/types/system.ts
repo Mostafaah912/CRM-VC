@@ -35,6 +35,10 @@ export type IdentityConflictRow = {
     status: string;
     woo_order_id: number | null;
     reason: string;
+    customer_id: number | null;
+    customer_phone: string | null;
+    existing_name: string | null;
+    incoming_name: string | null;
 };
 
 export type HealthLastSync = {

@@ -2,10 +2,8 @@
 
 declare(strict_types=1);
 
-namespace App\Modules\Customers\Support;
+namespace App\Support;
 
-use App\Support\Digits;
-use App\Support\JalaliDate;
 use Carbon\CarbonImmutable;
 
 /**

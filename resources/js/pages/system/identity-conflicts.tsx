@@ -1,6 +1,12 @@
-import { Head } from '@inertiajs/react';
+import { Head, Link } from '@inertiajs/react';
+import { PhoneRevealButton } from '@/components/customers/PhoneRevealButton';
 import { Pagination } from '@/components/pagination';
 import { StatusBadge } from '@/components/status-badge';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipTrigger,
+} from '@/components/ui/tooltip';
 import {
     Table,
     TableBody,
@@ -9,8 +15,11 @@ import {
     TableHeader,
     TableRow,
 } from '@/components/ui/table';
+import { TruncatedText } from '@/components/truncated-text';
+import { useCan } from '@/hooks/use-can';
 import { conflictReasons, conflictStatuses } from '@/lib/system-status';
 import { dashboard } from '@/routes';
+import { show as customerShow } from '@/routes/customers';
 import { identityConflicts } from '@/routes/system';
 import type { IdentityConflictRow, Paginated } from '@/types/system';
 
@@ -19,6 +28,9 @@ type Props = {
 };
 
 export default function IdentityConflicts({ conflicts }: Props) {
+    const can = useCan();
+    const canRevealPhone = can('customers', 'view_full_phone');
+
     return (
         <>
             <Head title="تعارض‌های هویت" />
@@ -27,20 +39,25 @@ export default function IdentityConflicts({ conflicts }: Props) {
                 <h1 className="text-xl font-medium">تعارض‌های هویت</h1>
 
                 <div className="border-sidebar-border/70 dark:border-sidebar-border overflow-hidden rounded-xl border">
-                    <Table>
+                    <Table className="table-fixed">
                         <TableHeader>
                             <TableRow>
-                                <TableHead>زمان</TableHead>
-                                <TableHead>وضعیت</TableHead>
-                                <TableHead>سفارش ووکامرس</TableHead>
-                                <TableHead>دلیل</TableHead>
+                                <TableHead className="w-36">زمان</TableHead>
+                                <TableHead className="w-36">وضعیت</TableHead>
+                                <TableHead className="w-28">
+                                    سفارش ووکامرس
+                                </TableHead>
+                                <TableHead className="w-40">دلیل</TableHead>
+                                <TableHead className="w-24">مشتری</TableHead>
+                                <TableHead>نام ثبت‌شده</TableHead>
+                                <TableHead>نام سفارش جدید</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {conflicts.data.length === 0 && (
                                 <TableRow>
                                     <TableCell
-                                        colSpan={4}
+                                        colSpan={7}
                                         className="text-muted-foreground text-center"
                                     >
                                         هیچ تعارض هویتی ثبت نشده است.
@@ -60,6 +77,7 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                         <StatusBadge
                                             status={conflict.status}
                                             labels={conflictStatuses}
+                                            className="whitespace-normal break-words text-center"
                                         />
                                     </TableCell>
                                     <TableCell className="text-sm">
@@ -71,15 +89,71 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                             </span>
                                         )}
                                     </TableCell>
+                                    <TableCell className="text-sm whitespace-normal break-words">
+                                        <Tooltip>
+                                            <TooltipTrigger asChild>
+                                                <span className="cursor-default">
+                                                    {conflictReasons[
+                                                        conflict.reason
+                                                    ] ?? conflict.reason}
+                                                </span>
+                                            </TooltipTrigger>
+                                            <TooltipContent>
+                                                <span dir="ltr">
+                                                    {conflict.reason}
+                                                </span>
+                                            </TooltipContent>
+                                        </Tooltip>
+                                    </TableCell>
                                     <TableCell className="text-sm">
-                                        {conflictReasons[conflict.reason] ??
-                                            conflict.reason}
-                                        <span
-                                            dir="ltr"
-                                            className="text-muted-foreground ms-2 font-mono text-xs"
-                                        >
-                                            {conflict.reason}
-                                        </span>
+                                        {conflict.customer_id === null ? (
+                                            '—'
+                                        ) : (
+                                            <span className="flex flex-col gap-0.5">
+                                                <Link
+                                                    href={customerShow(
+                                                        conflict.customer_id,
+                                                    )}
+                                                    className="underline-offset-4 hover:underline"
+                                                >
+                                                    <bdi
+                                                        dir="ltr"
+                                                        className="text-xs"
+                                                    >
+                                                        #{conflict.customer_id}
+                                                    </bdi>
+                                                </Link>
+                                                <PhoneRevealButton
+                                                    customerId={
+                                                        conflict.customer_id
+                                                    }
+                                                    maskedPhone={
+                                                        conflict.customer_phone
+                                                    }
+                                                    hasPermission={
+                                                        canRevealPhone
+                                                    }
+                                                />
+                                            </span>
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                        {conflict.existing_name === null ? (
+                                            '—'
+                                        ) : (
+                                            <TruncatedText
+                                                value={conflict.existing_name}
+                                            />
+                                        )}
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                        {conflict.incoming_name === null ? (
+                                            '—'
+                                        ) : (
+                                            <TruncatedText
+                                                value={conflict.incoming_name}
+                                            />
+                                        )}
                                     </TableCell>
                                 </TableRow>
                             ))}

@@ -17,10 +17,37 @@ use Illuminate\Support\Facades\DB;
  * to count days since. `monetary` is `net_revenue` minus shipping unless `metrics.include_shipping`
  * says otherwise (PRD D2); the choice is a fixed, config-selected SQL literal, never request input.
  *
+ * `monetary_recent` (P6-20/P6-21, product-owner decisions): filtered to realized orders within
+ * `metrics.monetary.window_days` of `$asOf` — always computed, regardless of `metrics.monetary.mode`,
+ * so RfmCalculator can score it the moment an operator flips the mode, with no separate backfill
+ * step. NULL (via `FILTER`, never `COALESCE`d to 0) means "no realized purchase in the window" — a
+ * real signal RfmCalculator reads directly (not the same thing as "spent 0"). The window boundary is
+ * a Tehran CALENDAR day, not a raw `$asOf - N*86400s` subtraction: `$asOf` is converted to Asia/Tehran,
+ * walked back `window_days` days, then floored to that day's own midnight — the same "Tehran local
+ * day" `DailyMetricsService` (P6-02) already established for calendar-day grouping, picked here over
+ * `JalaliDay::start()` because the input is an already-known instant, not a Jalali date string to
+ * parse.
+ *
+ * P6-21: unlike `monetary` (legacy formula below, UNCHANGED — still net_revenue minus shipping per
+ * `include_shipping`, still what GATE 2's frozen fixture checks), `monetary_recent`'s own formula was
+ * redefined to a structurally cleaner "goods value, no exceptions": `(subtotal - discount_total)` —
+ * tax and shipping are simply never part of the base, regardless of `include_shipping` — times
+ * `(1 - refund_ratio)`, where `refund_ratio = refunded_total / total` (0 when total is 0, never a
+ * division by zero), applied proportionally across the whole order rather than subtracting the full
+ * refunded amount from goods value alone (a real, found inaccuracy in the old `net_revenue - shipping`
+ * formula: a shipping-only refund would previously have incorrectly reduced M, even though the
+ * customer kept 100% of the goods). Per-item refund data (`order_items.refunded_amount`) was checked
+ * first and found only ~92% reliable against `orders.refunded_total` on dev (8 of 101 refunded orders
+ * mismatched) — too unreliable to sum directly, so the order-level proportional ratio is used instead,
+ * matching the task's own "نسبی" (proportional) wording. `is_fully_refunded = true` orders are already
+ * excluded entirely by this LATERAL's own WHERE clause (unchanged), so this ratio only ever applies to
+ * a genuinely partial refund.
+ *
  * This step only ever writes the columns it owns (identity + raw aggregates). RFM/CLV/churn/lifecycle
- * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. It also never
- * touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not just
- * this step) has recomputed a customer, which is P4-07's job.
+ * columns are later pipeline steps (PRD §11 steps 5-10) and are left untouched here. `upsert()` itself
+ * never touches `customers.metrics_dirty` — that flag is only cleared once the *whole* pipeline (not
+ * just this step) has recomputed a customer, via {@see resetDirtyFlag()} (PRD §11 step 11), called by
+ * `MetricsRecomputeService::run()` after every later step.
  *
  * `$asOf` (P4-08, Gate 2): `recency_days` is bound to this instant, never Postgres's own `NOW()` —
  * a literal NOW() can never be reproduced by a test asserting against a fixture frozen at a fixed
@@ -42,18 +69,48 @@ final class BaseAggregateService
         return $this->upsert($metricRunId, dirtyOnly: true, asOf: $asOf ?? CarbonImmutable::now());
     }
 
+    /**
+     * PRD §11 step 11. Clears `metrics_dirty` for exactly the customers this run actually wrote a
+     * `customer_metrics` row for (identified by `metric_run_id`, set by {@see upsert()} above) —
+     * never "every dirty customer", because a dirty run only upserted the ones that were dirty, and a
+     * full run upserted everyone, so `metric_run_id = $metricRunId` already means "processed by this
+     * run" for both modes without tracking anything new. A customer excluded from the upsert entirely
+     * (soft-deleted) keeps whatever `metrics_dirty` value it already had.
+     */
+    public function resetDirtyFlag(int $metricRunId): int
+    {
+        return DB::affectingStatement(
+            <<<'SQL'
+                UPDATE customers c SET metrics_dirty = false
+                FROM customer_metrics cm
+                WHERE cm.customer_id = c.id
+                  AND cm.metric_run_id = ?
+                  AND c.metrics_dirty = true
+                SQL,
+            [$metricRunId],
+        );
+    }
+
+    private function monetaryWindowStart(CarbonImmutable $asOf): CarbonImmutable
+    {
+        $windowDays = (int) config('metrics.monetary.window_days', 60);
+
+        return $asOf->setTimezone('Asia/Tehran')->subDays($windowDays)->startOfDay();
+    }
+
     private function upsert(int $metricRunId, bool $dirtyOnly, CarbonImmutable $asOf): int
     {
         // A fixed choice between two literals from config — never a value built from request input.
         $monetaryShippingTerm = config('metrics.include_shipping', false) ? '0' : 'o.shipping_total';
         $dirtyFilter = $dirtyOnly ? 'AND c.metrics_dirty = true' : '';
+        $windowStart = $this->monetaryWindowStart($asOf)->format('Y-m-d H:i:sP');
 
         return DB::affectingStatement(
             <<<SQL
                 INSERT INTO customer_metrics AS cm (
                     customer_id, first_order_at, last_order_at, total_orders, frequency,
-                    total_revenue, total_refunded, monetary, aov, recency_days, cohort_month,
-                    metric_run_id, computed_at
+                    total_revenue, total_refunded, monetary, monetary_recent, aov, recency_days,
+                    cohort_month, metric_run_id, computed_at
                 )
                 SELECT
                     c.id,
@@ -64,6 +121,7 @@ final class BaseAggregateService
                     COALESCE(agg.total_revenue, 0),
                     COALESCE(agg.total_refunded, 0),
                     COALESCE(agg.monetary, 0),
+                    agg.monetary_recent,
                     CASE
                         WHEN COALESCE(agg.total_orders, 0) = 0 THEN 0
                         ELSE (agg.total_revenue / agg.total_orders)
@@ -83,7 +141,11 @@ final class BaseAggregateService
                         COUNT(*)::integer AS total_orders,
                         SUM(o.net_revenue)::bigint AS total_revenue,
                         SUM(o.refunded_total)::bigint AS total_refunded,
-                        SUM(o.net_revenue - {$monetaryShippingTerm})::bigint AS monetary
+                        SUM(o.net_revenue - {$monetaryShippingTerm})::bigint AS monetary,
+                        ROUND(SUM(
+                            (o.subtotal - o.discount_total)
+                            * (1 - LEAST(1.0, CASE WHEN o.total > 0 THEN o.refunded_total::numeric / o.total ELSE 0 END))
+                        ) FILTER (WHERE o.ordered_at >= ?::timestamptz))::bigint AS monetary_recent
                     FROM orders o
                     WHERE o.customer_id = c.id
                       AND o.is_realized = true
@@ -99,13 +161,14 @@ final class BaseAggregateService
                     total_revenue   = EXCLUDED.total_revenue,
                     total_refunded  = EXCLUDED.total_refunded,
                     monetary        = EXCLUDED.monetary,
+                    monetary_recent = EXCLUDED.monetary_recent,
                     aov             = EXCLUDED.aov,
                     recency_days    = EXCLUDED.recency_days,
                     cohort_month    = EXCLUDED.cohort_month,
                     metric_run_id   = EXCLUDED.metric_run_id,
                     computed_at     = EXCLUDED.computed_at
                 SQL,
-            [$asOf->format('Y-m-d H:i:sP'), $metricRunId],
+            [$asOf->format('Y-m-d H:i:sP'), $metricRunId, $windowStart],
         );
     }
 }

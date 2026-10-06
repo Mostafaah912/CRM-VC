@@ -13,14 +13,14 @@ use Carbon\CarbonImmutable;
  * Customer, so this stays inside the Orders module's own reach (ArchitectureTest: reading the `customers` table is fine,
  * `use`ing its Model is not).
  *
- * @phpstan-type OrderListShape array{id: int, woo_order_id: int, status: string, total: int, is_realized: bool, needs_phone_review: bool, ordered_at_jalali: string, ordered_at_iso: string, customer_id: int|null, customer_display_name: string|null}
+ * @phpstan-type OrderListShape array{id: int, woo_order_id: int, status: string, total: int, refunded_total: int, net_revenue: int, is_realized: bool, needs_phone_review: bool, ordered_at_jalali: string, ordered_at_iso: string, customer_id: int|null, customer_display_name: string|null}
  */
 final readonly class OrderListRow
 {
     /** The columns this list selects, qualified: orders.* plus the one customers column it needs. */
     public const COLUMNS = [
-        'orders.id', 'orders.woo_order_id', 'orders.status', 'orders.total', 'orders.is_realized',
-        'orders.needs_phone_review', 'orders.ordered_at', 'orders.customer_id', 'customers.display_name as customer_display_name',
+        'orders.id', 'orders.woo_order_id', 'orders.status', 'orders.total', 'orders.refunded_total', 'orders.net_revenue',
+        'orders.is_realized', 'orders.needs_phone_review', 'orders.ordered_at', 'orders.customer_id', 'customers.display_name as customer_display_name',
     ];
 
     /** @param array<string, mixed> $row */
@@ -44,6 +44,8 @@ final readonly class OrderListRow
             'status' => (string) $r['status'],
             // Money is int Toman, exactly as stored — the store's unit is Toman already (P0-00), so there is nothing to convert.
             'total' => (int) $r['total'],
+            'refunded_total' => (int) $r['refunded_total'],
+            'net_revenue' => (int) $r['net_revenue'],
             'is_realized' => (bool) $r['is_realized'],
             'needs_phone_review' => (bool) $r['needs_phone_review'],
             'ordered_at_jalali' => TehranDateTime::format($at),

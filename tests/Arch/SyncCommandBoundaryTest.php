@@ -18,14 +18,25 @@ function syncCommandFile(): string
 /*
 | The list below grows one file per sprint that adds its own top-level command (same pattern as
 | CustomerListBoundaryTest's route count): P4-07 added MetricsRecompute (`metrics:recompute`, PRD
-| §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile.
+| §11/§26's nightly chain step 6) alongside P2-10's hm:sync and P2-11's hm:reconcile. P6-09 added
+| NightlyChainCommand (`hm:nightly-chain`, PRD §22's actual full chain). P6-13 added
+| IdentityReresolveCommand (`hm:identity-reresolve`) — composes Customers + Orders, same reason as
+| NightlyChainCommand for living here rather than inside either module. P6-14 phase 4 added
+| CustomerBackfillCommand (`hm:customers-backfill`) — the two local-only customer-list backfills
+| (first_seen_at, needs_review), same "composes a module's own public Service, lives at the top
+| level" pattern as the others on this list.
 */
-it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile and P4-07\'s metrics:recompute, nothing else under app/Console', function () {
+it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s metrics:recompute, P6-09\'s hm:nightly-chain, P6-13\'s hm:identity-reresolve and P6-14\'s hm:customers-backfill, nothing else under app/Console', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
+        'app/Console/Commands/CatalogDryRunCommand.php',
+        'app/Console/Commands/CustomerBackfillCommand.php',
+        'app/Console/Commands/IdentityReresolveCommand.php',
         'app/Console/Commands/MetricsRecompute.php',
+        'app/Console/Commands/NightlyChainCommand.php',
         'app/Console/Commands/ReconcileCommand.php',
+        'app/Console/Commands/ResolveOrderItemsCommand.php',
         'app/Console/Commands/SyncCommand.php',
     ])
         ->and(Scanner::phpCode(syncCommandFile()))->toMatch('/hm:sync \{--entity=orders[^}]*\} \{--full[^}]*\}/');
@@ -44,7 +55,8 @@ it('keeps the command free of logic: no database, models, services, config or cu
         '/cursor|sync_cursors|sync_jobs|epoch|window/i',
         '/\bfor(each)?\s*\(|\bwhile\s*\(/',
     ]))->toBe([])
-        ->and(substr_count($code, 'SyncEntityJob::dispatch('))->toBe(1);
+        ->and(substr_count($code, 'SyncEntityJob::dispatch('))->toBe(1)
+        ->and(substr_count($code, 'CatalogSyncJob::dispatch('))->toBe(1);
 });
 
 it('prints only its one line, plus a static error for an unknown entity — never a variable that could be a secret', function () {
@@ -94,18 +106,21 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
         ->and($service)->not->toContain('JalaliDate');
 });
 
-it('registers the hm:sync poll in routes/console.php, with no overlap or server flags (P2-11 adds one more entry beside it)', function () {
+it('registers only the hm:sync orders poll in routes/console.php, with no overlap or server flags (P6-09: catalog moved inside hm:nightly-chain)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
 
     expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
+        ->and($console)->not->toContain("'--entity' => 'catalog'")
         ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 
-it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11)', function () {
-    $names = array_map(fn (string $f) => basename($f), Scanner::phpFiles(['app']));
+it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11) — P6-10 later added exactly HealthCheckJob + HealthCheckService, nothing else', function () {
+    $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app']));
+    $healthCheckFiles = array_values(array_filter($names, fn (string $n) => preg_match('/HealthCheck/i', $n) === 1));
+    sort($healthCheckFiles);
 
-    expect(array_filter($names, fn (string $n) => preg_match('/HealthCheck/i', $n) === 1))->toBe([]);
+    expect($healthCheckFiles)->toBe(['app/Jobs/HealthCheckJob.php', 'app/Support/HealthCheckService.php']);
 });

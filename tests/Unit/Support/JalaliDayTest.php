@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use App\Modules\Customers\Support\JalaliDay;
+use App\Support\JalaliDay;
 
 /*
 | A Jalali calendar day typed by a person (1405/03/11, 1405-03-11, Persian or ASCII digits) as the instants that bound it in

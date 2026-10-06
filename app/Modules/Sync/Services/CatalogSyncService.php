@@ -11,10 +11,12 @@ use App\Modules\Catalog\Services\VariationInput;
 use App\Modules\Sync\DTOs\CategoryDto;
 use App\Modules\Sync\DTOs\ProductDto;
 use App\Modules\Sync\DTOs\VariationDto;
+use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Modules\Sync\Mappers\CategoryMapper;
 use App\Modules\Sync\Mappers\ProductMapper;
 use App\Modules\Sync\Mappers\VariationMapper;
 use App\Modules\Sync\Support\CatalogSyncResult;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Woo -> Catalog (P2-05): reads through the WooClient contract, turns raw payloads into DTOs with the
@@ -23,8 +25,17 @@ use App\Modules\Sync\Support\CatalogSyncResult;
  *
  * Full lists, no window: PRD §10 polls catalog data nightly and Woo's categories have no modified filter.
  * A variable product is written together with its variations (read from its own endpoint FIRST, so a
- * variable product is never stored without them). Any Woo, mapping or integrity failure stops the run
- * and propagates; what was already committed stays, and the run can simply be repeated.
+ * variable product is never stored without them). A malformed category payload still stops the whole
+ * categories batch (nothing is written of it — see syncCategories()'s own doc). A malformed PRODUCT
+ * payload or a catalog conflict is different (P6 decision, ARCHITECTURE.md): it is logged as a warning
+ * with its reason and counted, and the run moves on to the next product — mirroring the existing Orders
+ * rule "an unresolvable product never rejects an order" (`.claude/rules/sync.md`). A mapping failure is
+ * this module's own WooMappingException, caught directly; a catalog conflict is reported by
+ * CatalogService::tryUpsertProduct()'s CatalogUpsertOutcome, never by catching CatalogIntegrityException
+ * (the module boundary never lets Sync import Catalog's Exceptions, only its Services). A
+ * WooRequestException (a real HTTP/connectivity failure, e.g. 401/5xx reading a product's variations) is
+ * not a product-data problem and still stops the run and propagates; what was already committed stays,
+ * and the run can simply be repeated.
  */
 final class CatalogSyncService
 {
@@ -67,20 +78,41 @@ final class CatalogSyncService
     {
         $products = 0;
         $variations = 0;
+        $rejected = 0;
 
         foreach ($this->woo->pages('products') as $page) {
             foreach ($page->items as $raw) {
-                $dto = $this->products->map($raw);
-                $variationInputs = $dto->type === self::VARIABLE_TYPE ? $this->variationsOf($dto) : [];
+                try {
+                    $dto = $this->products->map($raw);
+                    $variationInputs = $dto->type === self::VARIABLE_TYPE ? $this->variationsOf($dto) : [];
+                } catch (WooMappingException $e) {
+                    $rejected++;
+                    Log::warning('Catalog product rejected during sync; skipping it and continuing', [
+                        'woo_product_id' => $raw['id'] ?? null,
+                        'reason' => $e->getMessage(),
+                    ]);
 
-                $this->catalog->upsertProduct($this->input($dto, $variationInputs));
+                    continue;
+                }
+
+                $outcome = $this->catalog->tryUpsertProduct($this->input($dto, $variationInputs));
+
+                if (! $outcome->accepted) {
+                    $rejected++;
+                    Log::warning('Catalog product rejected during sync; skipping it and continuing', [
+                        'woo_product_id' => $dto->wooProductId,
+                        'reason' => $outcome->rejectionReason,
+                    ]);
+
+                    continue;
+                }
 
                 $products++;
                 $variations += count($variationInputs);
             }
         }
 
-        return new CatalogSyncResult($products, $variations);
+        return new CatalogSyncResult($products, $variations, $rejected);
     }
 
     /** @return list<VariationInput> */
@@ -100,7 +132,7 @@ final class CatalogSyncService
     /** @param  list<VariationInput>  $variations */
     private function input(ProductDto $p, array $variations): ProductInput
     {
-        return new ProductInput($p->wooProductId, $p->name, $p->slug, $p->type, $p->status, $p->createdAtWoo, $p->wooCategoryIds, $variations);
+        return new ProductInput($p->wooProductId, $p->name, $p->slug, $p->type, $p->status, $p->createdAtWoo, $p->wooCategoryIds, $variations, $p->sku, $p->price);
     }
 
     private function variationInput(VariationDto $v): VariationInput

@@ -7,11 +7,12 @@ namespace App\Http\Requests\Customers;
 use App\Modules\Customers\Enums\CustomerStatus;
 use App\Modules\Customers\Enums\LifecycleStage;
 use App\Modules\Customers\Support\CustomerListFilters;
-use App\Modules\Customers\Support\JalaliDay;
-use Closure;
-use Illuminate\Contracts\Validation\Validator;
+use App\Support\JalaliDateRangeValidation;
+use App\Support\JalaliDay;
+use App\Support\Rules\JalaliDayRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 /**
  * The query string of the customer list: every value is optional, an empty one means "not asked", and one that is not
@@ -37,22 +38,15 @@ class CustomerListRequest extends FormRequest
             'province' => ['nullable', 'string', 'max:60'],
             'city' => ['nullable', 'string', 'max:80'],
             'needs_review' => ['nullable', 'boolean'],
-            'first_seen_from' => ['nullable', 'string', $this->jalaliDay()],
-            'first_seen_to' => ['nullable', 'string', $this->jalaliDay()],
+            'first_seen_from' => ['nullable', 'string', new JalaliDayRule],
+            'first_seen_to' => ['nullable', 'string', new JalaliDayRule],
             'page' => ['nullable', 'integer', 'min:1', 'max:100000'],
         ];
     }
 
     public function withValidator(Validator $validator): void
     {
-        $validator->after(function (Validator $validator): void {
-            $from = JalaliDay::start((string) $this->input('first_seen_from'));
-            $to = JalaliDay::start((string) $this->input('first_seen_to'));
-
-            if (! $validator->errors()->any() && $from !== null && $to !== null && $from->greaterThan($to)) {
-                $validator->errors()->add('first_seen_to', 'The end of the range must not be before its start.');
-            }
-        });
+        $validator->after(fn (Validator $validator) => JalaliDateRangeValidation::assertOrder($validator, 'first_seen_from', 'first_seen_to'));
     }
 
     public function filters(): CustomerListFilters
@@ -91,14 +85,5 @@ class CustomerListRequest extends FormRequest
     public function page(): int
     {
         return max(1, $this->integer('page', 1));
-    }
-
-    private function jalaliDay(): Closure
-    {
-        return function (string $attribute, mixed $value, Closure $fail): void {
-            if (JalaliDay::start((string) $value) === null) {
-                $fail("The {$attribute} must be a Jalali day written YYYY/MM/DD.");
-            }
-        };
     }
 }

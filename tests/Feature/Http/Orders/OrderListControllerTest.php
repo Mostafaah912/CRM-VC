@@ -75,6 +75,8 @@ it('sends the order and the joined customer name, and no other customer field', 
         'woo_order_id' => 55501,
         'status' => 'completed',
         'total' => 344_890,
+        'refunded_total' => 0,
+        'net_revenue' => 344_890,
         'is_realized' => true,
         'needs_phone_review' => false,
         'ordered_at_jalali' => '1405/01/01 00:00:00',
@@ -165,6 +167,17 @@ it('rejects a Jalali date that is not a real day, and one written the wrong way 
 
     olGet($this, '?ordered_from=1405/13/01')->assertRedirect()->assertSessionHasErrors(['ordered_from']);
     olGet($this, '?ordered_from=1405/06/10&ordered_to=1405/06/01')->assertRedirect()->assertSessionHasErrors(['ordered_to']);
+});
+
+/* P6-14 phase 2: both messages were in English before the shared JalaliDayRule/JalaliDateRangeValidation. */
+it('rejects an out-of-order range with a Persian message, not English', function () {
+    olOrder();
+
+    $resp = olGet($this, '?ordered_from=1405/06/10&ordered_to=1405/06/01');
+    $resp->assertSessionHasErrors(['ordered_to']);
+
+    expect(session('errors')->get('ordered_to')[0])
+        ->toBe('انتهای بازه نباید قبل از ابتدای آن باشد.');
 });
 
 it('combines every filter with AND', function () {
