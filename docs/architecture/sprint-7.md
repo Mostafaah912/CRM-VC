@@ -148,6 +148,22 @@ cluster-wide هستند (نه per-database)، یک بار اصلاح کافی ا
 دور زده شده باشد. تأیید شده در این نشست: با همین وضعیت فعلی (بدون `CREATEROLE`)، این ۷ تست
 `skipped` هستند، نه `failed`.
 
+### وضعیت نهایی P7-01: انجام شد — GATE 4 (بخش read-only) واقعاً اجرا و سبز
+
+بلاکر `CREATEROLE` با ریست رمز ابرکاربر `postgres` توسط کاربر و تنظیم `DB_AI_ADMIN_*` (اتصال `ai_admin`) حل شد. `hm:ai-setup-readonly` هم روی dev (`heymode`) هم روی `heymode_testing` اجرا شد و **۷ تست `AiReadonlyRoleTest` همگی passed (۳۲ assertion)، صفر skipped**. بررسی دستی روی dev، فقط با نقش `hm_ai_readonly`:
+- SELECT روی `customer_metrics`: موفق.
+- INSERT روی `metric_runs`: `cannot execute INSERT in a read-only transaction`.
+- SELECT روی `customers`: `permission denied for table customers`.
+- `statement_timeout` نقش: ۵s.
+
+اصلاح‌های همین مرحله: (۱) خطای `CREATE/ALTER ROLE` دیگر متن SQL را (که رمز نقش داخلش بود) چاپ نمی‌کند — فقط SQLSTATE و پیام Postgres؛ یک بار رمز در خروجی چاپ شد و کاربر آن را عوض کرد. (۲) چون نقش cluster-wide است، تست دیگر رمز نقش را override نمی‌کند (قبلاً رمز dev را خراب می‌کرد) و در `afterEach` `statement_timeout` را به پیش‌فرض برمی‌گرداند.
+
+**فعال‌سازی روی production (یک‌بار، بدون CREATEROLE برای کاربر برنامه):**
+1. یک credential ابرکاربر (یا کاربری فقط با `CREATEROLE`) را فقط برای این دستور در `.env` سرور بگذار: `DB_AI_ADMIN_HOST/PORT/DATABASE/USERNAME/PASSWORD`. `DB_USERNAME` برنامه هیچ‌وقت `CREATEROLE` نمی‌گیرد.
+2. `DB_AI_READONLY_*` را پر کن (رمز تصادفی قوی، فقط حروف و عدد).
+3. `php artisan config:clear && php artisan hm:ai-setup-readonly`
+4. بعد از اجرا، `DB_AI_ADMIN_*` را از `.env` سرور حذف کن. دستور idempotent است و برای هر تغییر لیست جدول‌ها یا چرخش رمز دوباره با همان مراحل اجرا می‌شود.
+
 ### فایل‌ها
 
 جدید: `app/Modules/Ai/Services/AiReadonlyRoleService.php`,
