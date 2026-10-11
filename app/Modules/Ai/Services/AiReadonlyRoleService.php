@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Ai\Services;
 
 use Illuminate\Database\Connection;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -52,10 +53,13 @@ final class AiReadonlyRoleService
         $quotedPassword = $admin->getPdo()->quote($password);
         $tableList = implode(', ', self::ALLOWED_TABLES);
 
-        if ($this->roleExists($admin)) {
-            $admin->statement('ALTER ROLE '.self::ROLE." LOGIN PASSWORD {$quotedPassword}");
-        } else {
-            $admin->statement('CREATE ROLE '.self::ROLE." LOGIN PASSWORD {$quotedPassword}");
+        $verb = $this->roleExists($admin) ? 'ALTER' : 'CREATE';
+
+        try {
+            $admin->statement("{$verb} ROLE ".self::ROLE." LOGIN PASSWORD {$quotedPassword}");
+        } catch (QueryException $e) {
+            // The default message embeds the whole SQL — including the role password. Never let it out.
+            throw new RuntimeException("{$verb} ROLE ".self::ROLE.' failed on the ai_admin connection (SQLSTATE '.$e->getCode().'): '.($e->getPrevious()?->getMessage() ?? 'unknown error'));
         }
 
         // Reset to exactly ALLOWED_TABLES every run — never an incremental GRANT, so a table removed

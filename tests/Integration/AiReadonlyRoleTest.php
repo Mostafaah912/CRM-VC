@@ -10,10 +10,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * P7-01 / GATE 4 (PRD §19, D7): proves the real, idempotent `hm_ai_readonly` role — not a mock —
  * actually enforces every guardrail PRD §19 lists. Runs against the real test PostgreSQL database
- * (CLAUDE.md §3/§8: no SQLite). The role's password is set directly on the `ai_readonly` connection
- * config for this test run (not read from .env.testing) so the suite needs no extra environment
- * setup beyond the admin DB credentials .env.testing already provides for `ai_admin` (which falls
- * back to the same ones as `pgsql` — see config/database.php).
+ * (CLAUDE.md §3/§8: no SQLite). Needs DB_AI_READONLY_PASSWORD and DB_AI_ADMIN_* in .env.testing.
  *
  * This whole file needs `ai_admin`'s credential to actually hold CREATEROLE — an environment
  * precondition this repo cannot guarantee (a fresh Postgres install's admin user often lacks it).
@@ -22,11 +19,15 @@ use Illuminate\Support\Facades\DB;
  * (CLAUDE.md §9 bans disabling a test to force green; this is reporting an unmet precondition).
  */
 beforeEach(function () {
-    config(['database.connections.ai_readonly.password' => 'hm-ai-readonly-test-only']);
+    // hm_ai_readonly is a cluster-wide role shared with dev: the test must use the configured
+    // password (DB_AI_READONLY_PASSWORD), never override it, or running tests would lock dev out.
+    if ((string) config('database.connections.ai_readonly.password') === '') {
+        $this->markTestSkipped('DB_AI_READONLY_PASSWORD is not set in .env.testing.');
+    }
 
     try {
         Artisan::call('hm:ai-setup-readonly', ['--statement-timeout-ms' => 200]);
-    } catch (QueryException $e) {
+    } catch (RuntimeException $e) {
         $this->markTestSkipped(
             'hm:ai-setup-readonly could not run — the ai_admin connection likely lacks CREATEROLE '
             .'(ALTER ROLE <user> CREATEROLE; once, as a Postgres superuser). Underlying error: '.$e->getMessage(),
@@ -45,6 +46,9 @@ beforeEach(function () {
 
 afterEach(function () {
     DB::purge('ai_readonly');
+
+    // The role is cluster-wide: put its statement_timeout back to the default so dev isn't left at 200ms.
+    Artisan::call('hm:ai-setup-readonly');
 });
 
 it('selects from every PRD §19-allowed table', function () {
