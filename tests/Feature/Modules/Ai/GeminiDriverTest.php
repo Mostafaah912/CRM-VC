@@ -121,6 +121,7 @@ it('parses text, tokens (thinking counts as output), cost, model, provider and d
         ->and($r->toolCalls)->toBe([])
         ->and($r->inputTokens)->toBe(1000)
         ->and($r->outputTokens)->toBe(250)
+        ->and($r->reasoningTokens)->toBe(50)
         ->and($r->costUsd)->toBe('0.00093')
         ->and($r->model)->toBe('test-model-1.0')
         ->and($r->provider)->toBe('gemini')

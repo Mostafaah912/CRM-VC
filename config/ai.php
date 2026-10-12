@@ -45,6 +45,9 @@ return [
         'warn_at' => env('AI_BUDGET_WARN_AT') ?: '0.8',
         'monthly_tokens' => env('AI_BUDGET_MONTHLY_TOKENS') ?: null,
         'allow_unpriced' => false,
+        // Hidden "thinking" tokens are billed as output but are NOT counted by max_output_tokens on some models.
+        // The worst case adds this many output tokens per call. Conservative default; tune down once real usage is seen.
+        'reasoning_margin_tokens' => env('AI_REASONING_MARGIN_TOKENS') === null || env('AI_REASONING_MARGIN_TOKENS') === '' ? 4096 : (int) env('AI_REASONING_MARGIN_TOKENS'),
         'reservation_ttl_seconds' => 300,
         'lock_seconds' => 10,
     ],

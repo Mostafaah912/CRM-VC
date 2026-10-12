@@ -123,7 +123,8 @@ final class OpenAiDriver extends HttpAiDriver
 
         $in = (int) ($data['usage']['prompt_tokens'] ?? 0);
         $out = (int) ($data['usage']['completion_tokens'] ?? 0);
+        $reasoning = (int) ($data['usage']['completion_tokens_details']['reasoning_tokens'] ?? 0);
 
-        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $this->costs->cost($this->name(), $this->model, $in, $out), $this->model, $this->name(), $durationMs);
+        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $this->costs->cost($this->name(), $this->model, $in, $out), $this->model, $this->name(), $durationMs, $reasoning);
     }
 }

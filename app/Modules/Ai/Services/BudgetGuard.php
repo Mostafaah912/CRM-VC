@@ -23,10 +23,10 @@ use Illuminate\Support\Str;
  * concurrent calls near the cap cannot both pass. A reservation carries an expiry, so a crashed process cannot block
  * the budget forever. (A cache outage fails closed: if the lock cannot be taken the call is refused.)
  *
- * Worst case = (input estimate + max output tokens) priced. The input estimate is 1 token per UTF-8 BYTE of
+ * Worst case = (input estimate + max output tokens + reasoning margin) priced. The input estimate is 1 token per UTF-8 BYTE of
  * everything sent — a deliberate over-estimate (real tokenizers average several bytes per token), so the guard errs
  * toward refusing. The only way to overshoot is a provider billing more output than max_output_tokens (e.g. hidden
- * reasoning tokens) — recorded honestly afterwards, so the NEXT call is refused.
+ * reasoning tokens beyond the margin) — recorded honestly afterwards, so the NEXT call is refused.
  */
 final class BudgetGuard
 {
@@ -53,10 +53,11 @@ final class BudgetGuard
         }
 
         $estimatedIn = $this->estimateInputTokens($request);
-        $worstTokens = $estimatedIn + $request->maxOutputTokens;
+        $worstOutput = $request->maxOutputTokens + $config->reasoningMarginTokens;
+        $worstTokens = $estimatedIn + $worstOutput;
         $worstUsd = $price === null
             ? '0'
-            : bcdiv(bcadd(bcmul((string) $estimatedIn, $price['input'], 10), bcmul((string) $request->maxOutputTokens, $price['output'], 10), 10), '1000000', 10);
+            : bcdiv(bcadd(bcmul((string) $estimatedIn, $price['input'], 10), bcmul((string) $worstOutput, $price['output'], 10), 10), '1000000', 10);
 
         try {
             return Cache::lock(self::LOCK, $config->lockSeconds)->block($config->lockSeconds, function () use ($config, $worstUsd, $worstTokens, $model): string {

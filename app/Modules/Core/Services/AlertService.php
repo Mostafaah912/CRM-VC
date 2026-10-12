@@ -25,9 +25,10 @@ final class AlertService
 
     /**
      * @param  array<string, mixed>  $context
+     *                                         `dedupeScope` gives one kind several independent dedupe windows (e.g. a soft warning must never swallow a hard stop).
      * @return bool true if raised, false if disabled or a duplicate inside the dedupe window
      */
-    public function critical(AlertKind $kind, string $message, array $context = []): bool
+    public function critical(AlertKind $kind, string $message, array $context = [], string $dedupeScope = ''): bool
     {
         if (! $this->settings->get(SettingKey::AlertsEnabled)) {
             return false;
@@ -35,7 +36,7 @@ final class AlertService
 
         $minutes = (int) $this->settings->get(SettingKey::AlertsDedupeMinutes);
 
-        if (! Cache::add('alert:'.$kind->value, true, now()->addMinutes($minutes))) {
+        if (! Cache::add('alert:'.$kind->value.($dedupeScope === '' ? '' : ':'.$dedupeScope), true, now()->addMinutes($minutes))) {
             return false;
         }
 

@@ -61,6 +61,7 @@ beforeEach(function () {
         'ai.budget.warn_at' => '0.8',
         'ai.budget.monthly_tokens' => null,
         'ai.budget.allow_unpriced' => false,
+        'ai.budget.reasoning_margin_tokens' => 0,
     ]);
     $this->travelTo(CarbonImmutable::parse('2026-10-14 09:00:00', 'Asia/Tehran'));
 });
@@ -316,4 +317,55 @@ it('resolves the container AiProvider as the budget decorator', function () {
     config(['ai.provider' => 'gemini', 'ai.model' => 'test-model', 'ai.providers.gemini.api_key' => 'k']);
 
     expect(app(AiProvider::class))->toBeInstanceOf(BudgetedAiProvider::class);
+});
+
+it('adds the reasoning margin to the worst case: a call that only fits without it is refused', function () {
+    config(['ai.budget.monthly_usd' => '20']);   // worst case 16 fits, 16 + 10 margin = 26 does not
+
+    $without = (new FakeAiProvider)->queue(...spend('1.00000'));
+    budgeted($without)->generate(req());
+    expect($without->callCount())->toBe(1);
+
+    config(['ai.budget.reasoning_margin_tokens' => 10]);
+    $with = (new FakeAiProvider)->queue(...spend('1.00000'));
+
+    expect(fn () => budgeted($with)->generate(req()))->toThrow(BudgetExceededException::class)
+        ->and($with->callCount())->toBe(0);
+});
+
+it('applies the reasoning margin to the token cap too', function () {
+    config(['ai.budget.monthly_usd' => '1000000', 'ai.budget.monthly_tokens' => 20, 'ai.budget.reasoning_margin_tokens' => 10]);
+
+    expect(fn () => budgeted(new FakeAiProvider)->generate(req()))->toThrow(BudgetExceededException::class, 'token budget');   // 6 + 10 + 10 = 26 > 20
+});
+
+it('defaults to a conservative reasoning margin', function () {
+    expect((require base_path('config/ai.php'))['budget']['reasoning_margin_tokens'])->toBeGreaterThanOrEqual(1024);
+});
+
+it('records the real usage including reasoning tokens (they are part of output tokens)', function () {
+    config(['ai.budget.monthly_usd' => '1000000']);
+    $fake = (new FakeAiProvider)->queue(FakeAiProvider::response(text: 'x', inputTokens: 10, outputTokens: 300, costUsd: '0.01000', reasoningTokens: 250));
+
+    $r = budgeted($fake)->generate(req());
+
+    expect($r->reasoningTokens)->toBe(250)->and((int) DB::table('ai_usage_daily')->value('output_tokens'))->toBe(300);
+});
+
+it('never lets the warning swallow the hard-stop alert, even inside the 60-minute window', function () {
+    config(['ai.budget.monthly_usd' => '70', 'ai.budget.warn_at' => '0.5']);
+    $fake = (new FakeAiProvider)->queue(...spend('40.00000'))->queue(...spend('30.00000'));
+    $provider = budgeted($fake);
+    $messages = fn () => DB::table('audit_logs')->where('action', 'alert.critical')->orderBy('id')->pluck('after')->map(fn ($a) => json_decode($a, true)['message'])->all();
+
+    $provider->generate(req());   // 40 >= 35 -> warning
+    $provider->generate(req());   // 70
+
+    try {
+        $provider->generate(req());   // 70 + 16 > 70 -> hard stop, seconds after the warning
+    } catch (BudgetExceededException) {
+    }
+
+    $all = $messages();
+    expect($all)->toHaveCount(2)->and($all[0])->toContain('reached')->and($all[1])->toContain('exhausted');
 });

@@ -127,7 +127,8 @@ final class GeminiDriver extends HttpAiDriver
         $usage = (array) ($data['usageMetadata'] ?? []);
         $in = (int) ($usage['promptTokenCount'] ?? 0);
         // Thinking tokens are billed as output.
-        $out = (int) ($usage['candidatesTokenCount'] ?? 0) + (int) ($usage['thoughtsTokenCount'] ?? 0);
+        $reasoning = (int) ($usage['thoughtsTokenCount'] ?? 0);
+        $out = (int) ($usage['candidatesTokenCount'] ?? 0) + $reasoning;
 
         return new AiResponse(
             $text === '' ? null : $text,
@@ -139,6 +140,7 @@ final class GeminiDriver extends HttpAiDriver
             $this->model,
             $this->name(),
             $durationMs,
+            $reasoning,
         );
     }
 

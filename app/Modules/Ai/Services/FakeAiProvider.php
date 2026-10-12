@@ -35,8 +35,9 @@ final class FakeAiProvider implements AiProvider
         int $outputTokens = 50,
         string $costUsd = '0.00000',
         string $model = 'fake-model',
+        int $reasoningTokens = 0,
     ): AiResponse {
-        return new AiResponse($text ?? ($json !== null ? json_encode($json, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) : null), $json, $toolCalls, $inputTokens, $outputTokens, $costUsd, $model, 'fake', 1);
+        return new AiResponse($text ?? ($json !== null ? json_encode($json, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) : null), $json, $toolCalls, $inputTokens, $outputTokens, $costUsd, $model, 'fake', 1, $reasoningTokens);
     }
 
     /** @param array<string, mixed> $json */

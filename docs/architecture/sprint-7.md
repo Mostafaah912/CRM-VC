@@ -238,3 +238,7 @@ cluster-wide هستند (نه per-database)، یک بار اصلاح کافی ا
 
 ### فایل‌ها
 جدید: `app/Modules/Ai/{Services/{BudgetGuard,BudgetedAiProvider,AiUsageService,BudgetStatusService,AiBudgetConfig},Models/AiUsageDaily,Events/{AiBudgetExceeded,AiBudgetWarning},Exceptions/{BudgetExceeded,UnpricedModel}Exception,Dto/BudgetStatus,Enums/BudgetState,Support/Decimal}`، `app/Support/AiBudgetAlerts.php`، `tests/Feature/Modules/Ai/BudgetGuardTest.php`، `tests/Arch/AiBudgetBoundaryTest.php`. تغییر: `config/ai.php` (`budget`)، `AiCostCalculator` (`price()`)، `FakeAiProvider` (هر Throwable)، `AppServiceProvider` (bind + listener)، `.env.example` (`AI_BUDGET_MONTHLY_TOKENS`)، تست‌های P7-02 (container/boundary).
+
+### P7-03، اصلاح‌های بعدی (دو مورد)
+1. **حاشیه‌ی reasoning:** بدترین حالت اکنون `maxOutputTokens + reasoning_margin_tokens` (`AI_REASONING_MARGIN_TOKENS`، پیش‌فرض محافظه‌کارانه ۴۰۹۶) است، هم برای سقف دلاری و هم توکنی؛ `AiResponse::reasoningTokens` (Gemini: `thoughtsTokenCount`، OpenAI: `reasoning_tokens`) جداگانه برمی‌گردد و جزئی از `outputTokens` است (همان‌ها ثبت و صورت‌حساب می‌شوند). پیش‌فرض ۴۰۹۶ حدس محافظه‌کارانه است، نه عدد اندازه‌گیری‌شده — بعد از اولین مصرف واقعی با `thoughtsTokenCount` واقعی تنظیم شود.
+2. **هشدار توقف سخت گم نمی‌شود:** `AlertService::critical()` پارامتر `dedupeScope` گرفت (پیش‌فرض خالی = رفتار قبلی)؛ هشدار نرم و توقف سخت dedupe مستقل دارند. mutation هر دو اصلاح با شکست تست تأیید شد.
