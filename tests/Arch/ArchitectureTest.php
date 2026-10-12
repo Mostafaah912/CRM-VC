@@ -292,6 +292,7 @@ it('does not track env files or credentials', function () {
         '/\bck_[0-9a-f]{40}\b/',
         '/\bcs_[0-9a-f]{40}\b/',
         '/\bsk-ant-[A-Za-z0-9_-]{20,}/',
+        '/\bAIza[0-9A-Za-z_-]{35}\b/',
         '/\bsk-[A-Za-z0-9]{32,}\b/',
         '/-----BEGIN [A-Z ]*PRIVATE KEY-----/',
     ], stripPhpComments: false))->toBeEmpty();

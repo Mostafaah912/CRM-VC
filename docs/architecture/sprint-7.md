@@ -173,3 +173,37 @@ cluster-wide هستند (نه per-database)، یک بار اصلاح کافی ا
 تغییر: `.env.example` (نام envها بدون مقدار، شامل `DB_AI_ADMIN_*` در پیگیری)، `config/database.php`
 (اتصال‌های `ai_readonly` و `ai_admin`)، `tests/Arch/ArchitectureTest.php` (استثنای Rule 7)،
 `tests/Arch/SyncCommandBoundaryTest.php` (لیست فایل‌های command).
+
+
+## P7-02 — AiProvider + driverها + FakeAiProvider
+
+**PRD کدام ۳ provider را نام برده:** هیچ‌کدام — §19/§24/§25 فقط «AiProvider + 3 providers + FakeAiProvider» می‌گویند و هیچ نامی نمی‌آورد (کل PRD برای anthropic/openai/gemini جست‌وجو شد: صفر رخداد). چون PRD نامی نبرده، «جایگزینی» لازم نبود؛ سه driver این‌ها شدند — **Gemini** (انتخاب مالک محصول، کامل)، **Anthropic** و **OpenAI** (ساده، فقط ساخت درخواست/parse، تأییدنشده با API زنده). این انتخاب سه‌گانه یک پیش‌فرض استدلال‌شده است، نه عدد PRD.
+
+### ساختار (`app/Modules/Ai`)
+- `Services/AiProvider` (interface، یک متد `generate(AiRequest): AiResponse`)، `AiProviderFactory` (انتخاب driver از `config('ai.provider')`، تنها کدی که driverهای واقعی را می‌شناسد)، `AiCostCalculator`، `FakeAiProvider` (همان الگوی `FakeWooClient` که در `Services` ماژول خودش است).
+- `Drivers/HttpAiDriver` (پایه: Http client، retry کوتاه، نگاشت خطا)، `GeminiDriver`، `AnthropicDriver`، `OpenAiDriver`.
+- `Dto/` (`AiRequest`, `AiMessage`, `AiToolDefinition`, `AiToolCall`, `AiResponse`)، `Exceptions/` (`AiProviderException` + Rate-limit/Authentication/Timeout/InvalidResponse/ContentBlocked/Configuration)، `Enums/AiDriver`, `AiMessageRole`.
+- `config/ai.php`؛ bind در `AppServiceProvider` (lazy، مثل `WooClient`: نبود کلید هرگز boot را نمی‌شکند، فقط هنگام درخواست `AiConfigurationException` می‌دهد).
+
+### تصمیم‌ها
+- **ورودی/خروجی ثابت:** `AiResponse` = متن یا JSON ساخت‌یافته، tool callها، `input_tokens`، `output_tokens`، `cost_usd` (رشته‌ی ۵ رقم اعشار با bcmath، half-up؛ هرگز float)، `model`، `provider`، `duration_ms`. `provider` همان مقدار `ai_insights.provider` است (`gemini` در varchar(20) جا می‌شود).
+- **retry:** فقط 429/500/502/503/504/529 و timeout/اتصال؛ سقف `AI_MAX_RETRIES` (پیش‌فرض ۲، پس‌پرداخت ۲s/8s/30s). 401/403/400/404، پاسخ 2xx ناقص و پاسخ blocked هرگز retry نمی‌شوند.
+- **امنیت پیام خطا:** کلید فقط در header است (نه URL)؛ پیام exception و لاگ فقط provider، status، attempt و در صورت وجود یک کد خطای enum‌مانند (`^[A-Za-z_]{1,40}$`) دارند — هرگز متن پاسخ، پرامپت یا متن خطای cURL (که URL دارد). تست یک سناریوی پنج‌حالته با کلید/پرامپت/موبایل جعلی می‌سازد و عدم نشت را در پیام‌ها و لاگ‌ها اثبات می‌کند.
+- **Gemini:** `generateContent` با `x-goog-api-key`، `systemInstruction`، `contents` (functionCall/functionResponse، نتیجه‌ی چند tool در یک content)، `generationConfig` با `responseMimeType`+`responseSchema`، `tools.functionDeclarations`. کلیدهای JSON Schema که Gemini رد می‌کند (`additionalProperties`, `$schema`, `$id`) حذف می‌شوند؛ توکن «thinking» به‌عنوان خروجی حساب می‌شود (صورت‌حساب واقعی).
+- **قیمت‌ها:** در `config('ai.pricing')` هستند و **همگی صفر**، چون قیمت واقعی را حدس نمی‌زنم. با قیمت صفر `AiCostCalculator` برای هر فراخوانی یک warning لاگ می‌کند تا BudgetGuard (P7-03) بی‌صدا غلط نشود. **قبل از P7-03 باید قیمت واقعی مدل انتخابی از صفحه‌ی قیمت provider در `ai.pricing.models` وارد شود.**
+- **env:** `AI_PROVIDER`, `AI_MODEL`, `AI_TIMEOUT`, `AI_MAX_RETRIES` (+ `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` برای دو driver دیگر — فقط نام، بدون مقدار). مقدار خالی (کپی `.env.example`) به پیش‌فرض برمی‌گردد (`?:`).
+- نام مدل هرگز در کد نیست: فقط `AI_MODEL`؛ arch test الگوی `gemini-*/claude-*/gpt-*` را در ماژول Ai ممنوع می‌کند. `AI_MODEL` فقط `[A-Za-z0-9._-]` می‌پذیرد (جلوگیری از تزریق مسیر در URL مدل Gemini).
+
+### Arch tests (`tests/Arch/AiProviderBoundaryTest.php`)
+هیچ کد خارج از ماژول Ai (جز bind در `AppServiceProvider` و دستور P7-01) کلاسی از Ai را نمی‌شناسد؛ bind فقط `AiProvider`/`AiProviderFactory` را می‌نامد، نه driver؛ Http client فقط در `Drivers/`؛ driver واقعی فقط در factory؛ هر تستی که driver/factory را بسازد باید `Http::preventStrayRequests()` داشته باشد؛ کلید/نام مدل هاردکد نشود. الگوی کلید Google (`AIza…`) به تست اسکن secret موجود اضافه شد.
+
+### ⚠ هنوز بدون کلید واقعی تأیید نشده (برای تأیید دستی بعد از P7-08)
+1. **شکل دقیق پاسخ Gemini:** `candidates[0].content.parts`، `finishReason` (مقادیر blocked/MAX_TOKENS)، `promptFeedback.blockReason`، `usageMetadata.promptTokenCount/candidatesTokenCount/thoughtsTokenCount`، و اینکه `functionCall.id` برگردانده می‌شود یا نه.
+2. **ترکیب `responseSchema` با function calling در یک درخواست** — بعضی مدل‌های Gemini آن را رد می‌کنند؛ اگر چنین بود، AnalystService باید دو مرحله‌ای کند (tool loop، سپس درخواست نهایی با schema).
+3. **زیرمجموعه‌ی JSON Schema پذیرفته‌شده‌ی Gemini** (فقط سه کلید حذف می‌شود؛ `oneOf`/`$ref` و… تست نشده).
+4. اسم دقیق مدل (`AI_MODEL`) و قیمت‌ها؛ `thoughtsTokenCount` واقعاً جدا از `candidatesTokenCount` است؟
+5. دو driver دیگر (Anthropic/OpenAI): کل درخواست/پاسخ، `max_completion_tokens`/`temperature` برای مدل‌هایی که ردشان می‌کنند، و schema خروجی Anthropic (فقط از طریق system prompt).
+6. رفتار timeout/retry واقعی و نگاشت 429 Retry-After (فعلاً از ladder ثابت استفاده می‌شود).
+
+### فایل‌ها
+جدید: `config/ai.php`; `app/Modules/Ai/{Services/AiProvider,AiProviderFactory,AiCostCalculator,FakeAiProvider,Drivers/*,Dto/*,Exceptions/*,Enums/AiDriver,AiMessageRole}`; `tests/Feature/Modules/Ai/{GeminiDriverTest,OtherDriversTest,AiProviderContainerTest}.php`; `tests/Arch/AiProviderBoundaryTest.php`. تغییر: `app/Providers/AppServiceProvider.php` (bind)، `.env.example`، `tests/Arch/ArchitectureTest.php` (الگوی کلید Google).

@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Modules\Ai\Services\AiProvider;
+use App\Modules\Ai\Services\AiProviderFactory;
 use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
@@ -41,6 +43,9 @@ class AppServiceProvider extends ServiceProvider
             backoffSeconds: array_map(intval(...), (array) config('woo.retry_backoff_seconds')),
             rateLimiter: $app->make(RedisTokenBucket::class),
         ));
+
+        // Lazy for the same reason as WooClient: no AI key must never break app boot.
+        $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => $app->make(AiProviderFactory::class)->make());
     }
 
     /**
