@@ -17,10 +17,10 @@ function aiOutsideFiles(): array
     return array_values(array_filter($files, fn (string $f) => ! str_starts_with(Scanner::relative($f), 'app/Modules/Ai/')));
 }
 
-it('lets no code outside the Ai module name a driver or any Ai class except the container binding and the P7-01 setup command', function () {
+it('lets no code outside the Ai module name a driver or any Ai class except the container binding the P7-01 setup command and the budget-alert listener (Ai Events only)', function () {
     $files = array_values(array_filter(
         aiOutsideFiles(),
-        fn (string $f) => ! in_array(Scanner::relative($f), ['app/Providers/AppServiceProvider.php', 'app/Console/Commands/AiSetupReadonlyRoleCommand.php'], true),
+        fn (string $f) => ! in_array(Scanner::relative($f), ['app/Providers/AppServiceProvider.php', 'app/Console/Commands/AiSetupReadonlyRoleCommand.php', 'app/Support/AiBudgetAlerts.php'], true),
     ));
 
     expect(Scanner::violations($files, ['/App\\\\Modules\\\\Ai\\\\/']))->toBeEmpty();

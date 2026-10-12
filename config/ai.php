@@ -34,6 +34,22 @@ return [
     ],
 
     /*
+    | Monthly budget (PRD §19) — a HARD stop, not a warning: the guard refuses a call before contacting the provider
+    | when month-to-date + in-flight reservations + this call's worst case would pass a cap. The month is the Gregorian
+    | calendar month in Asia/Tehran. Defaults are deliberately SMALL; an unparseable value means "cap 0" (everything
+    | refused), never "unlimited". `monthly_tokens` (input + output) is an optional second cap, independent of prices.
+    | `allow_unpriced` exists for tests only: with it false, a model without a price is refused (fail-closed).
+    */
+    'budget' => [
+        'monthly_usd' => env('AI_BUDGET_MONTHLY_USD') ?: '5',
+        'warn_at' => env('AI_BUDGET_WARN_AT') ?: '0.8',
+        'monthly_tokens' => env('AI_BUDGET_MONTHLY_TOKENS') ?: null,
+        'allow_unpriced' => false,
+        'reservation_ttl_seconds' => 300,
+        'lock_seconds' => 10,
+    ],
+
+    /*
     | USD per 1,000,000 tokens, as decimal STRINGS (never floats). ⚠ ESTIMATES MUST BE VERIFIED: every price is
     | 0 until someone copies the real number from the provider's pricing page — a guessed price would make
     | BudgetGuard (P7-03) silently wrong, and 0 makes that loud instead (AiCostCalculator logs a warning

@@ -207,3 +207,34 @@ cluster-wide هستند (نه per-database)، یک بار اصلاح کافی ا
 
 ### فایل‌ها
 جدید: `config/ai.php`; `app/Modules/Ai/{Services/AiProvider,AiProviderFactory,AiCostCalculator,FakeAiProvider,Drivers/*,Dto/*,Exceptions/*,Enums/AiDriver,AiMessageRole}`; `tests/Feature/Modules/Ai/{GeminiDriverTest,OtherDriversTest,AiProviderContainerTest}.php`; `tests/Arch/AiProviderBoundaryTest.php`. تغییر: `app/Providers/AppServiceProvider.php` (bind)، `.env.example`، `tests/Arch/ArchitectureTest.php` (الگوی کلید Google).
+
+
+## P7-03 — BudgetGuard + ثبت مصرف (`ai_usage_daily`)
+
+وضعیت: **انجام شد.** بدون migration (جدول از P1-04 هست). PRD ماه شمسی نگفته (فقط `'budget' => ['monthly_usd' => 15.0, 'warn_at' => 0.80, 'hard_stop' => true]`)، پس طبق دستور: **ماه میلادی به وقت Asia/Tehran** — هر ردیف `ai_usage_daily.date` روز تهران است، پس عبور ماه مصرف را «خودبه‌خود» صفر می‌کند (چیزی پاک نمی‌شود).
+
+### طراحی
+- `BudgetedAiProvider` (decorator) همان `AiProvider` است که container می‌دهد: `reserve → provider → record → release`. هیچ مسیر دیگری به driver واقعی نیست (arch: `AiBudgetBoundaryTest`).
+- `BudgetGuard::reserve()` **قبل از** تماس با provider: مصرف ماه (DB) + رزروهای در جریان (cache) + بدترین حالت همین فراخوانی را با سقف مقایسه می‌کند؛ بیشتر = `BudgetExceededException` و provider صدا زده نمی‌شود. بدترین حالت = (برآورد توکن ورودی + `maxOutputTokens`) × قیمت. **برآورد ورودی = ۱ توکن به‌ازای هر بایت UTF-8** (عمداً بالاتر از واقعیت؛ هر tokenizer واقعی چند بایت در هر توکن دارد) تا گارد به‌سمت رد کردن خطا کند.
+- **هم‌زمانی:** بررسی سقف و نوشتن رزرو داخل یک `Cache::lock` انجام می‌شود (Redis در prod)، پس دو فراخوانی هم‌زمان نمی‌توانند هر دو از سقف رد شوند. هر رزرو `expires` دارد (۳۰۰s) تا crash یک پردازش بودجه را برای همیشه قفل نکند. اگر lock گرفته نشود → fail-closed (رد). **ثبت مصرف:** در یک تراکنش با `insertOrIgnore` + `lockForUpdate` روی ردیف روز و جمع با bcmath (بدون SQL خام). تست هم‌زمانی با interleaving قطعی است (وسط فراخوانی A، فراخوانی‌های B و C شروع می‌شوند)؛ تست چندپردازشی واقعی روی lock Redis ننوشته شد و تأییدش با حقیقتِ Redis در staging می‌ماند.
+- **خطای provider:** مصرفی ثبت نمی‌شود و رزرو آزاد می‌شود (`catch Throwable`).
+- **fail-closed قیمت:** قیمت ورودی یا خروجی صفر/ناموجود/نامعتبر (و `ai.budget.allow_unpriced=false`) → `UnpricedModelException` با نام دقیق کلید config. مقدار نامعتبر `AI_BUDGET_MONTHLY_USD` یعنی سقف ۰ (همه‌چیز رد)، نه «نامحدود».
+- **سقف توکن مستقل:** `AI_BUDGET_MONTHLY_TOKENS` (ورودی+خروجی، اختیاری) با همان منطق.
+- **هشدار:** `AiBudgetWarning` یک‌بار در ماه (marker در cache به کلید ماه، 40 روز) و `AiBudgetExceeded` در هر توقف (فیلد `firstThisMonth`)؛ listener (`App\Support\AiBudgetAlerts`) آن‌ها را با `AlertService::critical(AlertKind::AiBudgetThreshold)` به همان alert موجود PRD §22 تبدیل می‌کند. چرا بیرون از ماژول: `AlertKind` یک enum از Core است و مرز ماژول فقط Service/Event را اجازه می‌دهد (همان دلیل `HealthCheckService`).
+- `BudgetStatusService::status()` فقط‌خواندنی: ماه، مصرف/سقف، درصد، `ok|warn|blocked`، آخرین روز مصرف، تعداد درخواست (برای P7-09).
+
+### ⚠ انحراف آگاهانه از CLAUDE.md §2 («هرگز aggregate ذخیره‌شده را increment نکن»)
+`ai_usage_daily` با افزایش (requests/توکن/cost) به‌روز می‌شود، نه recompute. دلیل: آن قانون برای جدول‌های مشتق‌شده‌ی قابل‌بازسازی از منبع است؛ اما یک فراخوانی که schema validation را رد می‌کند یا یک retry هیچ ردیف `ai_insights` نمی‌سازد، پس این جدول **تنها** ثبت آن هزینه است و از منبع دیگری بازسازی نمی‌شود. (در فهرست جدول‌های مشتق CLAUDE.md §1 هم نیست.) نوشتن در یک تراکنش با قفل ردیف و بدون SQL خام است.
+
+### محدودیت‌های شناخته‌شده
+- اگر provider بیشتر از `maxOutputTokens` صورت‌حساب کند (مثلاً توکن reasoning پنهان)، مصرف واقعی ثبت می‌شود و فراخوانی **بعدی** رد می‌شود — ولی همان یک فراخوانی ممکن است کمی از سقف رد شود.
+- marker «یک‌بار در ماه» و رزروها در cache هستند؛ پاک‌شدن cache در وسط ماه می‌تواند یک هشدار تکراری بسازد (نه یک توقف جاافتاده — مصرف از DB خوانده می‌شود).
+- `AlertService` خودش alert هم‌نوع را ۶۰ دقیقه dedupe می‌کند؛ هشدار ۸۰٪ و توقف ۱۰۰٪ هم‌نوع‌اند، پس اگر در یک ساعت پشت‌سر هم رخ دهند، دومی فقط در لاگ (warning) می‌آید.
+
+### قبل از اولین فراخوانی واقعی کاربر باید پر کند
+1. `AI_PROVIDER`، `AI_MODEL` و `GEMINI_API_KEY` در `.env`.
+2. **قیمت واقعی همان مدل** در `config/ai.php` → `pricing.models['<همان AI_MODEL>'] = ['input' => '…', 'output' => '…']` (دلار به‌ازای هر ۱ میلیون توکن، رشته‌ی اعشاری، هر دو > 0). تا پر نشود، هر فراخوانی `UnpricedModelException` می‌دهد.
+3. `AI_BUDGET_MONTHLY_USD` (بدون مقدار = ۵ دلار)، `AI_BUDGET_WARN_AT` (بدون مقدار = 0.8) و اختیاری `AI_BUDGET_MONTHLY_TOKENS`.
+
+### فایل‌ها
+جدید: `app/Modules/Ai/{Services/{BudgetGuard,BudgetedAiProvider,AiUsageService,BudgetStatusService,AiBudgetConfig},Models/AiUsageDaily,Events/{AiBudgetExceeded,AiBudgetWarning},Exceptions/{BudgetExceeded,UnpricedModel}Exception,Dto/BudgetStatus,Enums/BudgetState,Support/Decimal}`، `app/Support/AiBudgetAlerts.php`، `tests/Feature/Modules/Ai/BudgetGuardTest.php`، `tests/Arch/AiBudgetBoundaryTest.php`. تغییر: `config/ai.php` (`budget`)، `AiCostCalculator` (`price()`)، `FakeAiProvider` (هر Throwable)، `AppServiceProvider` (bind + listener)، `.env.example` (`AI_BUDGET_MONTHLY_TOKENS`)، تست‌های P7-02 (container/boundary).

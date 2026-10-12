@@ -23,10 +23,10 @@ function aiConfig(string $provider): void
     ]);
 }
 
-it('resolves the configured driver through the container', function (string $name, string $class) {
+it('builds the configured driver through the factory', function (string $name, string $class) {
     aiConfig($name);
 
-    expect(app(AiProvider::class))->toBeInstanceOf($class);
+    expect(app(AiProviderFactory::class)->make())->toBeInstanceOf($class);
 })->with([['gemini', GeminiDriver::class], ['anthropic', AnthropicDriver::class], ['openai', OpenAiDriver::class]]);
 
 it('defaults to gemini', function () {
@@ -36,7 +36,7 @@ it('defaults to gemini', function () {
 it('fails loudly, and only when asked, for an unknown provider or a missing key/model', function () {
     config(['ai.provider' => 'gemini', 'ai.model' => null, 'ai.providers.gemini.api_key' => null]);
 
-    expect(fn () => app(AiProvider::class))->toThrow(AiConfigurationException::class);
+    expect(fn () => app(AiProvider::class))->toThrow(AiConfigurationException::class);   // the budget decorator still builds the real driver lazily
     expect(fn () => app(AiProviderFactory::class)->make('nonsense'))->toThrow(AiConfigurationException::class);
 });
 

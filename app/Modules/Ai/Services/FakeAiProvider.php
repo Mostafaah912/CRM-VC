@@ -7,9 +7,9 @@ namespace App\Modules\Ai\Services;
 use App\Modules\Ai\Dto\AiRequest;
 use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Dto\AiToolCall;
-use App\Modules\Ai\Exceptions\AiProviderException;
 use Closure;
 use LogicException;
+use Throwable;
 
 /**
  * The test double every AI test uses (PRD §24: no test hits the network). Scripted answers are consumed in
@@ -17,7 +17,7 @@ use LogicException;
  */
 final class FakeAiProvider implements AiProvider
 {
-    /** @var list<AiResponse|AiProviderException|Closure(AiRequest): AiResponse> */
+    /** @var list<AiResponse|Throwable|Closure(AiRequest): AiResponse> */
     private array $queue = [];
 
     /** @var list<AiRequest> */
@@ -56,8 +56,8 @@ final class FakeAiProvider implements AiProvider
         return $this->queue(self::response(toolCalls: [new AiToolCall($id, $name, $arguments)]));
     }
 
-    /** @param AiResponse|AiProviderException|Closure(AiRequest): AiResponse $next */
-    public function queue(AiResponse|AiProviderException|Closure $next): self
+    /** @param AiResponse|Throwable|Closure(AiRequest): AiResponse $next */
+    public function queue(AiResponse|Throwable|Closure $next): self
     {
         $this->queue[] = $next;
 
@@ -70,7 +70,7 @@ final class FakeAiProvider implements AiProvider
         $next = array_shift($this->queue)
             ?? throw new LogicException('FakeAiProvider has no scripted response left for call #'.count($this->calls).'.');
 
-        if ($next instanceof AiProviderException) {
+        if ($next instanceof Throwable) {
             throw $next;
         }
 

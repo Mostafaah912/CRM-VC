@@ -2,8 +2,13 @@
 
 namespace App\Providers;
 
+use App\Modules\Ai\Events\AiBudgetExceeded;
+use App\Modules\Ai\Events\AiBudgetWarning;
 use App\Modules\Ai\Services\AiProvider;
 use App\Modules\Ai\Services\AiProviderFactory;
+use App\Modules\Ai\Services\AiUsageService;
+use App\Modules\Ai\Services\BudgetedAiProvider;
+use App\Modules\Ai\Services\BudgetGuard;
 use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
@@ -11,6 +16,7 @@ use App\Modules\Segments\Listeners\RebuildSegmentsAfterMetricsRecomputed;
 use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
+use App\Support\AiBudgetAlerts;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
@@ -44,8 +50,12 @@ class AppServiceProvider extends ServiceProvider
             rateLimiter: $app->make(RedisTokenBucket::class),
         ));
 
-        // Lazy for the same reason as WooClient: no AI key must never break app boot.
-        $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => $app->make(AiProviderFactory::class)->make());
+        // Lazy for the same reason as WooClient: no AI key must never break app boot. Always wrapped in BudgetedAiProvider (P7-03): no un-budgeted path.
+        $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => new BudgetedAiProvider(
+            $app->make(AiProviderFactory::class)->make(),
+            $app->make(BudgetGuard::class),
+            $app->make(AiUsageService::class),
+        ));
     }
 
     /**
@@ -62,6 +72,10 @@ class AppServiceProvider extends ServiceProvider
 
         // P5-08: Segments reacts to Metrics only through this public Event, never a direct call.
         Event::listen(MetricsRecomputed::class, RebuildSegmentsAfterMetricsRecomputed::class);
+
+        // P7-03: Ai raises budget events; the alert itself (a Core concern) is raised outside the module.
+        Event::listen(AiBudgetWarning::class, [AiBudgetAlerts::class, 'onWarning']);
+        Event::listen(AiBudgetExceeded::class, [AiBudgetAlerts::class, 'onExceeded']);
     }
 
     /**
