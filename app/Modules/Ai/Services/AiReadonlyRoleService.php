@@ -35,10 +35,12 @@ final class AiReadonlyRoleService
 {
     public const string ROLE = 'hm_ai_readonly';
 
-    /** PRD §19's own guardrail list — the only tables the AI role may ever SELECT from. No PII column exists on any of them (verified P7-01: no name/phone/email/address anywhere in these 9 tables). */
+    /** PRD §19's own guardrail list — the only tables the AI role may ever SELECT from (PRD's nine + customer_product_purchases, P7-04). No PII column exists on any of them (verified: no name/phone/email/address). */
     public const array ALLOWED_TABLES = [
         'daily_metrics', 'cohort_snapshots', 'product_affinities', 'customer_metrics',
         'segments', 'segment_members', 'products', 'product_categories', 'metric_runs',
+        // P7-04: get_top_products needs per-product sales; none of PRD §19's nine tables has them. Derived, no PII column.
+        'customer_product_purchases',
     ];
 
     public function setup(int $statementTimeoutMs = 5000): void

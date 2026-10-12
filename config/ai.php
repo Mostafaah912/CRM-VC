@@ -34,6 +34,17 @@ return [
     ],
 
     /*
+    | Analyst tools (P7-04). Every tool is read-only and aggregate-only; these are the shared ceilings.
+    | small_group_min: a group of fewer customers is never shown on its own (PRD sets no threshold; 5 is the project default).
+    */
+    'tools' => [
+        'max_rows' => 25,
+        'max_result_bytes' => 6144,
+        'max_string_length' => 64,
+        'small_group_min' => 5,
+    ],
+
+    /*
     | Monthly budget (PRD §19) — a HARD stop, not a warning: the guard refuses a call before contacting the provider
     | when month-to-date + in-flight reservations + this call's worst case would pass a cap. The month is the Gregorian
     | calendar month in Asia/Tehran. Defaults are deliberately SMALL; an unparseable value means "cap 0" (everything

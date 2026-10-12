@@ -138,6 +138,10 @@ it('bans raw SQL in the Segments module outright', function () {
  * ordinary parameterized function call — which needs no `DB::statement`/`DB::raw`/`DB::select`/`DB::unprepared`
  * at all, so the exception was removed; only the original P3-07 one remains.
  *
+ * P7-04 note: app/Modules/Ai/Tools/ may use selectRaw/havingRaw/orderByRaw for grouped aggregates and percentile_cont, which the
+ * query builder cannot express — but tests/Arch/AiToolsBoundaryTest.php requires every such call to be a pure literal (no variable,
+ * so no model-supplied value can ever reach SQL) and allows no DB:: outside AiReadonlyDb.
+ *
  * P7-01 note (ARCHITECTURE.md, "P7-01"): a third exception, app/Modules/Ai/Services/AiReadonlyRoleService.php
  * — CREATE ROLE/GRANT/REVOKE/ALTER ROLE (the `hm_ai_readonly` role, GATE 4) have no Schema:: or query-builder
  * form at all; the file is invoked only from `hm:ai-setup-readonly` (an explicit command, admin connection),
@@ -145,7 +149,7 @@ it('bans raw SQL in the Segments module outright', function () {
  * whitelist constant).
  */
 it('confines raw SQL to migrations, the Metrics/Analytics modules, and Catalog\'s one product-sales aggregate', function () {
-    $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/'];
+    $allowedPrefixes = ['app/Modules/Metrics/', 'app/Modules/Analytics/', 'app/Modules/Ai/Tools/'];
     $allowedFiles = [
         'app/Modules/Catalog/Services/ProductListService.php',
         'app/Modules/Ai/Services/AiReadonlyRoleService.php',

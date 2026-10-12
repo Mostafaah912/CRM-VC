@@ -242,3 +242,44 @@ cluster-wide هستند (نه per-database)، یک بار اصلاح کافی ا
 ### P7-03، اصلاح‌های بعدی (دو مورد)
 1. **حاشیه‌ی reasoning:** بدترین حالت اکنون `maxOutputTokens + reasoning_margin_tokens` (`AI_REASONING_MARGIN_TOKENS`، پیش‌فرض محافظه‌کارانه ۴۰۹۶) است، هم برای سقف دلاری و هم توکنی؛ `AiResponse::reasoningTokens` (Gemini: `thoughtsTokenCount`، OpenAI: `reasoning_tokens`) جداگانه برمی‌گردد و جزئی از `outputTokens` است (همان‌ها ثبت و صورت‌حساب می‌شوند). پیش‌فرض ۴۰۹۶ حدس محافظه‌کارانه است، نه عدد اندازه‌گیری‌شده — بعد از اولین مصرف واقعی با `thoughtsTokenCount` واقعی تنظیم شود.
 2. **هشدار توقف سخت گم نمی‌شود:** `AlertService::critical()` پارامتر `dedupeScope` گرفت (پیش‌فرض خالی = رفتار قبلی)؛ هشدار نرم و توقف سخت dedupe مستقل دارند. mutation هر دو اصلاح با شکست تست تأیید شد.
+
+
+## P7-04 — ToolRegistry + ۱۲ ابزار فقط‌خواندنی
+
+وضعیت: **انجام شد.** بدون migration. ابزارها از **اتصال `ai_readonly`** (نقش `hm_ai_readonly`) می‌خوانند و تست‌های ابزار روی PostgreSQL واقعی و همان نقش اجرا می‌شوند (۳۸ تست؛ مثل P7-01 اگر `ai_admin` نتواند نقش بسازد skip می‌شوند).
+
+### ⚠ آنچه PRD نمی‌گوید (پیش‌فرض‌های استدلال‌شده، نه اختراع پنهان)
+PRD §19 فقط **۱۲ نام** ابزار می‌دهد — هیچ ورودی/خروجی ندارد. ورودی‌ها/خروجی‌ها طراحی همین تسک است و باید مرور شود:
+1. **`get_top_products` با ۹ جدول PRD شدنی نیست** (هیچ‌کدام فروش هر محصول ندارد). `customer_product_purchases` (مشتق، P6-01، بدون ستون PII؛ `customer_id` عدد خالی مثل `segment_members`) به `AiReadonlyRoleService::ALLOWED_TABLES` اضافه شد — **تنها گسترش grant نسبت به لیست PRD**. روی هر محیط باید یک‌بار `php artisan hm:ai-setup-readonly` دوباره اجرا شود.
+2. **`get_customer_summary`:** PRD آن را با «(بدون نام/موبایل/ایمیل/آدرس)» می‌آورد که به یک مشتری خاص هم می‌خورد، اما دستور این تسک «هیچ ردیف/شناسه‌ی مشتری» را ممنوع کرد؛ پس **خلاصه‌ی کل پایگاه مشتری** است (نه یک نفر). توضیح فردِ Customer 360 (P7-09) باید جداگانه و با تصمیم صریح طراحی شود.
+3. **آستانه‌ی گروه کوچک:** PRD آستانه‌ای ندارد؛ **۵ مشتری** (`config('ai.tools.small_group_min')`). گروه کمتر از ۵ هرگز تنها نشان داده نمی‌شود: در یک ردیف `other_small_groups` ادغام می‌شود و اگر مجموع ادغام‌شده هم زیر ۵ باشد عدد به `"<5"` تبدیل می‌شود. روی محصول (<۵ خریدار)، جفت affinity (<۵ هم‌خرید)، کوهورت (<۵ نفر)، سگمنت (<۵ عضو)، و توزیع‌ها (<۵ مشتری) هم اعمال می‌شود.
+4. `get_sales_trend` تجمیع هفته/ماه را در PHP روی ≤۳۶۶ ردیف **از قبل تجمیع‌شده‌ی** `daily_metrics` انجام می‌دهد (گروه‌بندی هفته/ماه شمسی با query builder ممکن نبود)؛ این «حلقه روی سطرهای مشتری» نیست.
+5. بازه‌ها به‌جای تاریخ آزاد، `days` (عدد صحیح) هستند و روی **آخرین تاریخ موجود در `daily_metrics`** لنگر می‌شوند (داده ممکن است از ساعت عقب باشد)؛ بنابراین هیچ رشته‌ی تاریخ از مدل پذیرفته نمی‌شود. خروجی هر تاریخ هم ISO هم شمسی (`JalaliDate`) با ارقام لاتین.
+
+### جدول ابزارها
+| ابزار | ورودی (همه اختیاری) | جدول‌های خوانده‌شده | نکته‌ی حریم |
+|---|---|---|---|
+| `get_dashboard_metrics` | `days` 1-366 (۳۰) | `daily_metrics`, `customer_metrics` | فقط مجموع |
+| `get_sales_trend` | `days`, `granularity` day/week/month | `daily_metrics` | روز ≤۳۱، هفته ≤۱۸۲ |
+| `get_rfm_distribution` | — | `customer_metrics` | گروه <۵ ادغام |
+| `get_churn_report` | — | `customer_metrics`, `metric_runs` | گروه <۵ ادغام؛ ارزش در خطر <۵ → null |
+| `get_retention_report` | `max_period` 1-12, `last_cohorts` 1-24 | `cohort_snapshots` | کوهورت <۵ حذف؛ فقط دوره‌ی mature |
+| `get_cohort_report` | `last_cohorts` 1-12, `max_period` 1-12 | `cohort_snapshots` | کوهورت <۵ → `"<5"` |
+| `get_product_affinity` | `level` category/product/variation/basket, `limit` 1-15 | `product_affinities`, `products`, `product_categories` | جفت <۵ حذف |
+| `get_top_products` | `by` revenue/units/customers, `limit` 1-15 | `customer_product_purchases`, `products` | محصول <۵ خریدار حذف |
+| `get_segment_summary` | `segment_id`, `limit` 1-30 | `segments`, `segment_members`, `customer_metrics` | عضو <۵ → `"<5"` بدون آمار |
+| `get_customer_metrics_distribution` | `metric` (۶ مقدار) | `customer_metrics` | جمعیت <۵ پنهان |
+| `get_anomalies` | `days` 1-30, `limit` 1-20 | — (`AnomalySource`) | فقط فیلدهای whitelist |
+| `get_customer_summary` | — | `customer_metrics` | فقط کل پایگاه |
+
+### طراحی
+- `ToolRegistry::execute()` **هرگز exception نمی‌دهد**: ابزار ناشناس، آرگومان اضافه/ناقص/خارج از enum/بازه، رشته‌ی بلندتر از ۶۴ یا غیرِ اسکالر، نتیجه‌ی بزرگ‌تر از `max_result_bytes` (۶۱۴۴) و خطای DB همگی `ToolResult` با `error` امن می‌شوند. متن خطا **ورودی رد‌شده را بازتاب نمی‌دهد** (فقط نام آرگومان‌ها / مجاز‌ها)، پس تزریق به prompt بعدی برنمی‌گردد. خطای DB فقط نام کلاس را لاگ می‌کند (پیام QueryException حاوی SQL و مقدارهاست).
+- `ToolResult` = نام، آرگومان‌های **اعتبارسنجی‌شده** (روی خطا خالی)، نتیجه، `resultSize`، `durationMs`، `error`. ذخیره در `ai_tool_calls` کار P7-08 است.
+- schema مدل‌محور فقط `type/properties/enum/required/items/description`؛ اعتبارسنجی اصلی قوانین Laravel است (تست تضمین می‌کند ویژگی‌های schema و rules یکی باشند و enum‌ها هم‌ارز). `get_anomalies` یک `AnomalySource` می‌خواند؛ تا P7-05 `NullAnomalySource` = `detector_available:false`.
+- **SQL:** فقط query builder روی `ai_readonly`؛ جز `AiReadonlyDb` هیچ `DB::` نیست. چند ابزار `selectRaw/havingRaw/orderByRaw` ثابت دارند (aggregate گروه‌بندی‌شده، `percentile_cont`) که query builder نمی‌تواند: استثنای Rule 7 برای `app/Modules/Ai/Tools/` اضافه شد، به شرط تست arch که **هر فراخوانی raw فقط literal باشد (بدون هیچ `$`)**؛ `metric` مدل فقط یکی از ۶ شاخه‌ی literal را انتخاب می‌کند، هرگز در SQL ریخته نمی‌شود.
+
+### تست
+۳۸ تست Integration (مقادیر دقیق هر ابزار، تزریق ۸×۷ حالت، آرگومان بد، سقف سطر/اندازه، ماسک گروه کوچک، `permission denied` روی `customers`)، ۳ تست ساختاری schema (از جمله serialise شدن واقعی با `GeminiDriver`)، ۶ تست arch. **GATE 4 («هیچ ابزاری PII نشت نمی‌دهد»)**: fixture با نام/ایمیل/آدرس/موبایل جعلی (ارقام لاتین و فارسی) در `customers`؛ خروجی JSON ۲۱ فراخوانی از ۱۲ ابزار با رشته‌ها و regexهای PII (موبایل، ایمیل، هر رقم فارسی/عربی، کلیدهای `customer_id/phone/email/...`) اسکن می‌شود: صفر برخورد. ۳ mutation (برداشتن آستانه‌ی ۵، نشت `customer_id`، raw با متغیر) همگی با شکست تست گرفته شدند.
+
+### فایل‌ها
+جدید: `app/Modules/Ai/Tools/{AiTool,ToolRegistry,ToolCatalog,AiReadonlyDb,SmallGroupMask,ToolFormat,ToolArgumentException}.php`، `Tools/Tools/*` (۱۲ ابزار + `Period`)، `Dto/ToolResult`، `Services/{AnomalySource,NullAnomalySource}`، `tests/Support/AiToolsFixture.php`، `tests/Integration/AiToolsTest.php`، `tests/Feature/Modules/Ai/ToolSchemaTest.php`، `tests/Arch/AiToolsBoundaryTest.php`. تغییر: `config/ai.php` (`tools`)، `AiReadonlyRoleService` (+`customer_product_purchases`)، `AppServiceProvider` (bind `AnomalySource`)، `tests/Arch/ArchitectureTest.php`.
