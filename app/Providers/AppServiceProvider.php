@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Modules\Ai\Anomaly\AnomalyDetector;
 use App\Modules\Ai\Events\AiBudgetExceeded;
 use App\Modules\Ai\Events\AiBudgetWarning;
 use App\Modules\Ai\Services\AiProvider;
@@ -10,7 +11,6 @@ use App\Modules\Ai\Services\AiUsageService;
 use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Services\BudgetedAiProvider;
 use App\Modules\Ai\Services\BudgetGuard;
-use App\Modules\Ai\Services\NullAnomalySource;
 use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
@@ -52,8 +52,8 @@ class AppServiceProvider extends ServiceProvider
             rateLimiter: $app->make(RedisTokenBucket::class),
         ));
 
-        // P7-04: get_anomalies reads from this; P7-05's AnomalyDetector replaces the binding.
-        $this->app->bind(AnomalySource::class, NullAnomalySource::class);
+        // P7-05: get_anomalies reads the real, pure-statistics detector.
+        $this->app->bind(AnomalySource::class, AnomalyDetector::class);
 
         // Lazy for the same reason as WooClient: no AI key must never break app boot. Always wrapped in BudgetedAiProvider (P7-03): no un-budgeted path.
         $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => new BudgetedAiProvider(

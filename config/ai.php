@@ -45,6 +45,36 @@ return [
     ],
 
     /*
+    | AnomalyDetector (P7-05): pure statistics over daily_metrics, no LLM, no network. PRD §19 names no metrics or thresholds,
+    | so every number below is a documented project default (reasons in docs/architecture/sprint-7.md).
+    |
+    | A day is compared with the SAME WEEKDAY of the previous `window_days` (Iran's Thu/Fri differ from the rest of the week).
+    | Robust z = (x - median) / sigma, sigma = max(1.4826 * MAD, min_sigma_fraction * |median|) — the floor is what stops a
+    | zero MAD from inventing an infinite z. A day is an anomaly only if ALL hold: |z| >= z.info, relative change >=
+    | min_relative_change, absolute change >= the metric's min_abs, and the baseline is big enough (min_baseline_orders).
+    | `known_events`: optional [['name' => 'nowruz', 'from' => '2027-03-18', 'to' => '2027-03-30']] (Gregorian ISO, inclusive).
+    | An anomaly inside one is KEPT and labelled `known_event`, never dropped. Empty by default: nothing is hardcoded.
+    */
+    'anomaly' => [
+        'window_days' => 56,
+        'min_samples' => 4,
+        'min_baseline_orders' => 5,
+        'min_relative_change' => 0.30,
+        'min_sigma_fraction' => 0.10,
+        'z' => ['info' => 3.5, 'warning' => 5.0, 'critical' => 8.0],
+        'max_lookback_days' => 1100,
+        'metrics' => [
+            'orders_count' => ['min_abs' => 3],
+            'net_revenue' => ['min_abs' => 1_000_000],
+            'aov' => ['min_abs' => 100_000],
+            'customers_new' => ['min_abs' => 2],
+            'refund_rate' => ['min_abs' => 0.05],
+            'repeat_share' => ['min_abs' => 0.10],
+        ],
+        'known_events' => [],
+    ],
+
+    /*
     | Monthly budget (PRD §19) — a HARD stop, not a warning: the guard refuses a call before contacting the provider
     | when month-to-date + in-flight reservations + this call's worst case would pass a cap. The month is the Gregorian
     | calendar month in Asia/Tehran. Defaults are deliberately SMALL; an unparseable value means "cap 0" (everything

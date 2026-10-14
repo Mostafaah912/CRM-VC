@@ -2,10 +2,13 @@
 
 declare(strict_types=1);
 
+use App\Modules\Ai\Dto\AnomalyEvent;
+use App\Modules\Ai\Dto\AnomalyReport;
 use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Tools\SmallGroupMask;
 use App\Modules\Ai\Tools\ToolCatalog;
 use App\Modules\Ai\Tools\ToolRegistry;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Tests\Support\AiToolsFixture;
@@ -166,25 +169,35 @@ it('get_customer_summary: whole-base numbers, never an individual', function () 
         ->and($r['clv_confidence'][1])->toBe(['level' => 'other_small_groups', 'customers' => '<5', 'merged_groups' => 1]);
 });
 
-it('get_anomalies: reports "no detector" until P7-05, then passes through only whitelisted fields', function () {
-    expect(tool('get_anomalies'))->toBe(['detector_available' => false, 'anomalies' => []]);
+it('get_anomalies: the real detector says "low_volume" for a 2-orders-a-day store instead of inventing anomalies', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-15 10:00:00', 'Asia/Tehran'));
 
+    $r = tool('get_anomalies');
+
+    expect($r['status'])->toBe('low_volume')->and($r['anomalies'])->toBe([])->and($r['as_of']['iso'])->toBe('2026-10-14')->and($r['data_age_days'])->toBe(0)
+        ->and($r['baseline_window_days'])->toBe(56)->and($r['events_total'])->toBe(0)->and($r)->not->toHaveKey('detector_available');
+});
+
+it('get_anomalies passes through a source report with only the whitelisted shape', function () {
     app()->instance(AnomalySource::class, new class implements AnomalySource
     {
-        public function isAvailable(): bool
+        public function report(int $days): AnomalyReport
         {
-            return true;
-        }
-
-        public function recent(int $days): array
-        {
-            return [['date' => '2026-10-13', 'metric' => 'orders_count', 'observed' => 1, 'expected' => 9, 'deviation_percent' => -88.9, 'direction' => 'down', 'severity' => 'high', 'description' => 'drop', 'customer_id' => 5, 'phone' => '09121234567']];
+            return new AnomalyReport('ok', '2026-10-13', 0, 56, 10, 0, [
+                new AnomalyEvent('orders_count', 'count', '2026-10-11', '2026-10-13', 3, '2026-10-12', 5, 40, -87.5, -9.1, 'critical', 'down', 'sale'),
+                new AnomalyEvent('aov', 'toman', '2026-10-13', '2026-10-13', 1, '2026-10-13', 300000, 200000, 50.0, 4.0, 'info', 'up', null),
+            ]);
         }
     });
 
-    $r = (new ToolRegistry(app()))->execute('get_anomalies', []);
+    $r = (new ToolRegistry(app()))->execute('get_anomalies', ['limit' => 1]);
 
-    expect($r->result['anomalies'][0])->toHaveKeys(['date', 'metric', 'observed', 'severity'])->not->toHaveKeys(['customer_id', 'phone']);
+    expect($r->failed())->toBeFalse()->and($r->result['events_total'])->toBe(2)->and($r->result['anomalies'])->toHaveCount(1)
+        ->and($r->result['anomalies'][0])->toBe([
+            'metric' => 'orders_count', 'unit' => 'count', 'from' => ['iso' => '2026-10-11', 'jalali' => '1405/07/19'], 'to' => ['iso' => '2026-10-13', 'jalali' => '1405/07/21'],
+            'days' => 3, 'peak_date' => ['iso' => '2026-10-12', 'jalali' => '1405/07/20'], 'observed' => 5, 'expected' => 40, 'deviation_percent' => -87.5,
+            'robust_z' => -9.1, 'severity' => 'critical', 'direction' => 'down', 'known_event' => 'sale',
+        ]);
 });
 
 it('GATE 4 — no tool leaks PII: every tool, several argument sets, scanned for names, phones (both digit systems), emails, addresses and customer keys', function () {

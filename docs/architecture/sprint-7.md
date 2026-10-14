@@ -283,3 +283,42 @@ PRD §19 فقط **۱۲ نام** ابزار می‌دهد — هیچ ورودی/�
 
 ### فایل‌ها
 جدید: `app/Modules/Ai/Tools/{AiTool,ToolRegistry,ToolCatalog,AiReadonlyDb,SmallGroupMask,ToolFormat,ToolArgumentException}.php`، `Tools/Tools/*` (۱۲ ابزار + `Period`)، `Dto/ToolResult`، `Services/{AnomalySource,NullAnomalySource}`، `tests/Support/AiToolsFixture.php`، `tests/Integration/AiToolsTest.php`، `tests/Feature/Modules/Ai/ToolSchemaTest.php`، `tests/Arch/AiToolsBoundaryTest.php`. تغییر: `config/ai.php` (`tools`)، `AiReadonlyRoleService` (+`customer_product_purchases`)، `AppServiceProvider` (bind `AnomalySource`)، `tests/Arch/ArchitectureTest.php`.
+
+
+## P7-05 — AnomalyDetector (آمار خالص) + اتصال به `get_anomalies`
+
+وضعیت: **انجام شد.** بدون migration. PRD §19 فقط می‌گوید «ناهنجاری با آمار، نه AI» و `AnomalyDetector (pure statistics, NO LLM, first)` — **هیچ متریک، آستانه یا نام خروجی‌ای نمی‌دهد**، پس همه‌ی عددهای زیر پیش‌فرض مستند همین تسک‌اند (اختلافی با PRD نبود که بخواهد بر پرامپت مقدم شود).
+
+### جایگذاری معماری
+`app/Modules/Ai/Anomaly/`: `AnomalyEngine` (آمار **خالص**: ورودی ردیف‌ها، خروجی گزارش؛ بدون DB/ساعت/تصادف/config/HTTP — arch test)، `AnomalyDetector` (بارگذاری ردیف‌ها + as-of)، `RobustStats` (میانه/MAD)، `AnomalyConfig`. ماژول Analytics هیچ سرویس عمومی «سری روزانه» ندارد و دور زدن نقش `hm_ai_readonly` GATE 4 را بی‌معنا می‌کرد؛ پس detector `daily_metrics` را از **همان درگاه `AiReadonlyDb`** می‌خواند که ابزارها (فقط `table('daily_metrics')`). قرارداد `AnomalySource` به `report(int $days): AnomalyReport` تغییر کرد و `NullAnomalySource` (stub مرحله‌ی P7-04) حذف شد؛ `detector_available` دیگر نیست — به‌جایش `status`.
+
+### روز کامل
+`DailyMetricsService` همیشه ردیف **امروز** را هم می‌نویسد و در طول روز بازسازی می‌کند. پس as-of = جدیدترین ردیف **≤ دیروز به وقت Asia/Tehran** (۲۱:۰۰ UTC روز قبل = ۰۰:۳۰ تهران روز بعد، تست شده). `data_age_days` = فاصله‌ی as-of تا دیروز؛ اگر زنجیره‌ی شبانه اجرا نشده باشد دیده می‌شود.
+
+### روش و آستانه‌های پیش‌فرض (`config/ai.php` → `anomaly`)
+| پارامتر | پیش‌فرض | دلیل |
+|---|---|---|
+| baseline | **هم‌روز-هفته** در `window_days=56` (۸ هفته) | آخر هفته‌ی ایران (پنج‌شنبه/جمعه) الگوی متفاوت دارد؛ مقایسه با هم‌روز-هفته بدون مدل فصلی |
+| `min_samples` | ۴ نمونه‌ی هم‌روز-هفته | کمتر از ۴ → «ناکافی»، نه anomaly |
+| مقیاس | `max(1.4826·MAD, 0.10·|median|)` | کف ۱۰٪: MAD صفر هرگز z بی‌نهایت نمی‌سازد |
+| z آستانه | info 3.5 / warning 5 / critical 8 | ۳٫۵ حدّ کلاسیک Iglewicz–Hoaglin برای z مقاوم؛ ۵ و ۸ دو پله‌ی بالاتر |
+| `min_relative_change` | ۳۰٪ | جلوگیری از هشدار برای نوسان کوچک روی baseline بسیار پایدار |
+| `min_abs` | orders 3، net_revenue 1٬000٬000 تومان، aov 100٬000 تومان، customers_new 2، refund_rate 5 امتیاز درصد، repeat_share 10 امتیاز درصد | تغییر مطلق کوچک روی عدد کوچک ناهنجاری نیست |
+| `min_baseline_orders` | ۵ (میانه‌ی سفارش هم‌روز-هفته) | فروشگاهی با ۰ تا ۲ سفارش در روز «عادی» معناداری ندارد → `low_volume` |
+
+یک روز **ناهنجار** است فقط اگر هر چهار شرط (|z|≥3.5، تغییر نسبی، تغییر مطلق، حجم baseline) هم‌زمان برقرار باشد. شدت از |z|. روزهای متوالیِ هم‌متریک و هم‌جهت یک رخداد با بازه‌ی `from..to` می‌شوند؛ مقادیر (`observed/expected/deviation/z`) مربوط به روز اوج‌اند.
+متریک‌ها: `orders_count`، `net_revenue`، `aov` (روز بدون سفارش حذف)، `customers_new`، `refund_rate` (refunds/revenue، درصد)، `repeat_share` (customers_repeat/customers_total، درصد). مبلغ‌ها تومان صحیح، نرخ‌ها درصد دو رقم اعشار، تاریخ‌ها میلادی + شمسی (`JalaliDate`). **متن فارسی ساخته نمی‌شود** — فقط کلیدها.
+مرتب‌سازی: شدت، سپس تازه‌تر، سپس ترتیب ثابت متریک؛ دو اجرا بایت‌به‌بایت یکسان (تست).
+
+### رویدادهای شناخته‌شده
+`ai.anomaly.known_events` (پیش‌فرض **خالی**، هیچ تاریخی hardcode نشده): `[['name'=>…,'from'=>'YYYY-MM-DD','to'=>…]]` (میلادی، شامل دو سر). ناهنجاری درون بازه **حذف نمی‌شود** و `known_event` می‌گیرد. ⚠ فصل‌های پرفروش ایران (نوروز، شب یلدا، رمضان/عید، کمپین‌های فروش) می‌توانند false positive بسازند؛ تا وقتی بازه‌ها وارد config نشده‌اند، مدل باید این را بداند و قبل از «هشدار فوری» بپرسد/ذکر کند.
+
+### محدودیت‌ها
+- روز با صفر سفارش به‌خاطر **متوقف‌ماندن sync** با روز صفر واقعی از `daily_metrics` قابل‌تفکیک نیست (ردیف صفر هر دو را می‌نویسد). اجرای dev همین را نشان داد: ۲ روز آخر as-of صفر سفارش دارند. آستانه‌ای برای این نمی‌گذارم؛ `data_age_days` و health-check sync جای تفکیک‌اند.
+- baseline فقط هم‌روز-هفته است؛ جابه‌جایی تعطیلات در تقویم هفتگی (مثلاً عید وسط هفته) با `known_events` برچسب می‌خورد، نه مدل می‌شود.
+
+### تست
+۱۳ تست خالص (injected spike/drop دقیق با شدت/جهت، آخر هفته عادی، مقاومت MAD، ناکافی، حجم کم، MAD صفر، حداقل مطلق، گروه‌بندی، known_event، ترتیب/determinism، واحد پول، ۳ سال داده)، ۷ تست روی PostgreSQL واقعی (روز ناقص، وقت تهران، کهنگی، ابزار از طریق Registry + اسکن PII = صفر، ۳ سال ≈ ۱۱۰۰ ردیف)، ۴ تست arch. ۵ mutation (حذف کف سیگما، baseline غیر هم‌روز-هفته، حذف گارد حجم، میانگین به‌جای میانه، …) همگی با شکست تست گرفته شدند؛ تست MAD-صفر پس از یک mutation که از آن عبور می‌کرد تقویت شد.
+
+### فایل‌ها
+جدید: `app/Modules/Ai/Anomaly/{AnomalyEngine,AnomalyDetector,AnomalyConfig,RobustStats}.php`، `Dto/{AnomalyEvent,AnomalyReport}`، `tests/Support/AnomalySeries.php`، `tests/Feature/Modules/Ai/AnomalyEngineTest.php`، `tests/Integration/AiAnomalyDetectorTest.php`، `tests/Arch/AiAnomalyBoundaryTest.php`. تغییر/حذف: `AnomalySource` (قرارداد)، `GetAnomaliesTool`، `NullAnomalySource` (حذف)، `AppServiceProvider` (bind)، `config/ai.php`، `tests/Integration/AiToolsTest.php`.
