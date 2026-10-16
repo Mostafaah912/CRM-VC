@@ -1,0 +1,12 @@
+{
+    "analyst.daily.v1": {
+        "type": "daily_brief",
+        "prompt_sha256": "759e2ac7f7983d5b15c6decf2e6292fe46d8139b7217a87af288b5e416ec2793",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    },
+    "analyst.weekly.v1": {
+        "type": "weekly_review",
+        "prompt_sha256": "57f4e0103e5e91fad163ba9b53761255bf2e0f0158829e7f76179437a692cff2",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    }
+}

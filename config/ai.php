@@ -48,6 +48,23 @@ return [
         'pii_denylist' => [],
     ],
 
+    /*
+    | Analyst request (P7-07). max_output_tokens is deliberately generous (Persian text is token-heavy); the budget guard prices
+    | the worst case from it, so lowering it also lowers the per-call worst-case spend.
+    */
+    'analyst' => [
+        'max_output_tokens' => 3000,
+        'temperature' => 0.2,
+    ],
+
+    /*
+    | ResponseCache (P7-07): an insight whose cache_key (type + prompt version + model + context hash) already exists in ai_insights
+    | and is younger than this is reused without calling the provider or spending budget. New data changes the context hash, hence the key.
+    */
+    'cache' => [
+        'ttl_minutes' => 1440,
+    ],
+
     'tools' => [
         'max_rows' => 25,
         'max_result_bytes' => 6144,

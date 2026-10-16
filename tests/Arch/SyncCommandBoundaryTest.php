@@ -32,6 +32,7 @@ it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s
     $names = array_map(fn (string $f) => Scanner::relative($f), Scanner::phpFiles(['app/Console']));
 
     expect($names)->toBe([
+        'app/Console/Commands/AiPreviewCommand.php',
         'app/Console/Commands/AiSetupReadonlyRoleCommand.php',
         'app/Console/Commands/CatalogDryRunCommand.php',
         'app/Console/Commands/CustomerBackfillCommand.php',
