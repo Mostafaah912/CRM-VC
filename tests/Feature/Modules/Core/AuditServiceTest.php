@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Modules\Core\Enums\AuditActorType;
 use App\Modules\Core\Models\AuditLog;
 use App\Modules\Core\Services\AuditService;
+use Illuminate\Support\Facades\DB;
 
 it('records an audit entry with actor, action, and target', function () {
     $user = User::factory()->create();
@@ -127,4 +128,17 @@ it('formats created_at as Jalali/Tehran time (P6-11), never the raw Gregorian va
 
     expect($row['created_at'])->toMatch('/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}$/')
         ->and($row['created_at'])->not->toContain((string) $storedGregorianYear);
+});
+
+it('breaks created_at ties by id: inside one transaction every DB-default created_at is identical, so order must not be arbitrary', function () {
+    $stamp = '2026-10-14 10:00:00+00';
+    $ids = [];
+
+    foreach (['a', 'b', 'c'] as $action) {
+        $ids[] = DB::table('audit_logs')->insertGetId(['actor_type' => 'system', 'action' => $action, 'auditable_type' => 'X', 'auditable_id' => 1, 'created_at' => $stamp]);
+    }
+
+    $items = app(AuditService::class)->paginate(perPage: 10)->items();
+
+    expect(array_column($items, 'action'))->toBe(['c', 'b', 'a'])->and(array_column($items, 'id'))->toBe(array_reverse($ids));
 });

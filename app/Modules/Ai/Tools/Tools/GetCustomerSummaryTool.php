@@ -32,6 +32,7 @@ final class GetCustomerSummaryTool extends AiTool
         )->first();
         $confidence = $db->table('customer_metrics')->where('total_orders', '>', 0)->whereNotNull('clv_confidence')->groupBy('clv_confidence')
             ->selectRaw('clv_confidence as level, count(*) as customers')->get()
+            ->sortBy(fn ($c) => array_search((string) $c->level, ['high', 'medium', 'low'], true))
             ->map(fn ($c) => ['level' => (string) $c->level, 'customers' => (int) $c->customers])->values()->all();
 
         $customers = (int) $r->customers;

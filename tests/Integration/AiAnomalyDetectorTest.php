@@ -15,15 +15,7 @@ use Tests\Support\AnomalySeries;
 
 function loadDaily(array $rows): void
 {
-    $db = AiToolsFixture::admin();
-    $db->table('daily_metrics')->delete();
-
-    foreach (array_chunk($rows, 300) as $chunk) {
-        $db->table('daily_metrics')->insert(array_map(fn ($r) => $r + [
-            'jalali_date' => '1405/01/01', 'product_revenue' => $r['net_revenue'], 'shipping_revenue' => 0, 'aov' => intdiv($r['net_revenue'], max(1, $r['orders_count'])),
-            'revenue_new' => 0, 'revenue_repeat' => 0, 'computed_at' => now(),
-        ], $chunk));
-    }
+    AiToolsFixture::loadDaily($rows);
 }
 
 beforeEach(function () {

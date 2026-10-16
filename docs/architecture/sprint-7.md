@@ -322,3 +322,41 @@ PRD §19 فقط **۱۲ نام** ابزار می‌دهد — هیچ ورودی/�
 
 ### فایل‌ها
 جدید: `app/Modules/Ai/Anomaly/{AnomalyEngine,AnomalyDetector,AnomalyConfig,RobustStats}.php`، `Dto/{AnomalyEvent,AnomalyReport}`، `tests/Support/AnomalySeries.php`، `tests/Feature/Modules/Ai/AnomalyEngineTest.php`، `tests/Integration/AiAnomalyDetectorTest.php`، `tests/Arch/AiAnomalyBoundaryTest.php`. تغییر/حذف: `AnomalySource` (قرارداد)، `GetAnomaliesTool`، `NullAnomalySource` (حذف)، `AppServiceProvider` (bind)، `config/ai.php`، `tests/Integration/AiToolsTest.php`.
+
+
+## P7-06 — ContextBuilder (JSON فشرده با سقف اندازه)
+
+وضعیت: **انجام شد.** بدون migration. PRD §19 فقط می‌گوید «ContextBuilder (tools, compact JSON, max 24KB)» و `max_context_kb => 24`؛ نوع‌های تحلیل، بخش‌ها و اولویت‌ها را نمی‌گوید — همه‌ی تصمیم‌های زیر پیش‌فرض مستند همین تسک‌اند (هیچ اختلافی با PRD نبود). `AI_MAX_CONTEXT_KB` (پیش‌فرض ۲۴) حالا از `config('ai.context.max_kb')` خوانده می‌شود (مقدار اعشاری مجاز است، برای تست).
+
+### ساختار (`app/Modules/Ai/Context/`)
+`ContextBuilder::build(AiInsightType, ?int $days): BuiltContext` — فقط `daily_brief` و `weekly_review` (بقیه‌ی انواع در P7-08 با موضوع خاص خودشان؛ بقیه `InvalidArgumentException`). ابزارها را **سمت سرور** با `ToolRegistry` اجرا می‌کند؛ بدون LLM، بدون شبکه، بدون بودجه. خروجی `BuiltContext`: `json`، `sizeBytes`، `maxBytes`، `estimatedTokens` (= بایت ÷ `ai.context.bytes_per_token`=۳، فقط برای لاگ/نمایش؛ BudgetGuard همان برآورد محافظه‌کارانه‌ی ۱ توکن/بایت را دارد)، `truncated`، `truncations`، `sectionBytes`، و `toolResults` (فقط ToolResultهایی که خروجی‌شان **داخل** JSON است، برای ثبت P7-08 در `ai_tool_calls`؛ مدت اجرا در JSON نیست تا قطعی بماند).
+
+| نوع | KPI (روز) | روند | ناهنجاری |
+|---|---|---|---|
+| daily_brief | ۱ و ۷ | ۱۴ روز، روزانه | ۳ روز |
+| weekly_review | ۷ و ۲۸ | ۵۶ روز، هفتگی | ۷ روز |
+
+بخش‌ها به ترتیب ثابت: `meta`، `data_quality`، `truncated`/`truncations`، `kpis` (مقایسه‌ی دوره‌ی قبل از قبل محاسبه‌شده؛ `customer_base` فقط در پنجره‌ی اول)، `anomalies`، `trend`، `customer_health` (RFM، churn، segment، خلاصه‌ی پایگاه)، `retention_cohort`، `products_affinity`.
+
+### سقف و کوتاه‌کردن
+اگر JSON فشرده از سقف بگذرد، **کم‌اولویت‌ترین** بخشی که هنوز پایین‌تر نرفته یک پله کوتاه می‌شود: `products_affinity` (۳ پله) → `retention_cohort` (۳) → `customer_health` (۳) → `trend` (۲) → پنجره‌ی دوم KPI (۱) → `anomalies` (فقط کوتاه می‌شود: limit ۱۰←۵←۳←۱، هرگز حذف نمی‌شود). `meta`، `data_quality` و پنجره‌ی اول KPI هرگز لمس نمی‌شوند. هر کوتاه‌شدن هم در `BuiltContext` و هم **داخل خود JSON** (`truncated: true` + `truncations[{section, action: reduced|removed, detail}]`) علامت می‌خورد تا مدل بداند تصویر ناقص است. اندازه‌ی نهایی هرگز از سقف نمی‌گذرد؛ اگر هسته‌ی غیرقابل‌کاهش هم جا نشود `ContextTooLargeException` (به‌جای حذف بی‌صدا).
+
+### تازگی و کیفیت داده (`DataFreshnessReader` → `data_quality`)
+فقط از جدول‌های مجاز نقش: `as_of` و `data_age_days` (جدیدترین روز کامل `daily_metrics` تا دیروز تهران، مثل anomaly detector)، `stale_data` (= سن بیش از `ai.context.stale_after_days`، پیش‌فرض ۱، env: `AI_CONTEXT_STALE_AFTER_DAYS`)، `pipeline_last_run` (= `max(daily_metrics.computed_at)`)، آخرین اجرای موفق/ناموفق metrics از `metric_runs`، `metrics_failed_recently` (= جدیدترین اجرای ناموفق از آخرین موفق جدیدتر است)، `warnings` (کدهای ساختاری: `stale_data`، `metrics_run_failed_recently`). **وضعیت Sync مستقیم قابل‌خواندن نیست** (نقش `hm_ai_readonly` به `sync_cursors`/`sync_logs` دسترسی ندارد و گسترش grant بدون تصمیم صریح انجام نشد)؛ پس «استنتاجی» است و خروجی `sync_status_source: inferred_from_pipeline_last_run` می‌گوید. استدلال: زنجیره‌ی شبانه یک `Bus::chain` است که در اولین شکست می‌ایستد (PRD §22) — پس شکست Sync = بازسازی نشدن `daily_metrics` = بالارفتن `data_age_days`.
+
+**`suspected_data_gap`:** ناهنجاری با `observed = 0` روی `orders_count`/`net_revenue`/`customers_new` وقتی `stale_data` یا `metrics_failed_recently` برقرار باشد، `suspected_data_gap: true` می‌گیرد (حذف نمی‌شود)، شمارنده‌ی `suspected_data_gap_events` و `interpretation` ساختاری (`zero_values_may_be_missing_data_not_business_decline`) در `data_quality` می‌آید. با داده‌ی تازه و pipeline سالم همان ناهنجاری `suspected_data_gap: false` و ناهنجاری عادی است (هر دو در تست). قانون عمداً ساده است: نمی‌داند صفر واقعی است یا شکاف، فقط وقتی شواهد غیرمستقیم هست هشدار می‌دهد. `customers_new` به فهرست ساده‌ی «حجم» افزوده شد چون صفر شدن هم‌زمان با سفارش‌ها یک علت دارد (فراتر از دو متریک نام‌برده‌ی دستور).
+
+### قطعی‌بودن
+ترتیب کلیدها و ردیف‌ها ثابت؛ هیچ زمان «اکنون»ی در JSON نیست (فقط داده‌ی DB و `data_age_days` که در یک روز ثابت است)؛ `json_encode` یک‌شکل. برای رسیدن به این، چهار ابزار tie-break/ترتیب ثابت گرفتند (RFM: `count desc, rfm_segment`؛ churn و `clv_confidence`: ترتیب ثابت؛ affinity: id جفت) — قبلاً به ترتیب فیزیکی ردیف‌های Postgres وابسته بودند. تست: ردیف‌های ۵ جدول را به‌ترتیب برعکس دوباره درج می‌کند و بایت‌ها را مقایسه می‌کند.
+
+### PII (دفاع در عمق)
+`ContextPiiGuard` روی JSON نهایی (ساختار decode‌شده): نام کلیدهای ممنوع (`customer_id`، `phone*`، `email*`، `first/last/display/full_name`، `address*`، …) و برای هر **رشته** (نه عدد — درآمد ۱۰ رقمی موبایل نیست): موبایل ایرانی (ارقام لاتین/فارسی/عربی، `+98`/`0098`/بدون صفر)، ایمیل، دنباله‌ی ≥۷ رقم فارسی، و `ai.context.pii_denylist` (پیش‌فرض خالی؛ تست‌ها نام fixture را می‌گذارند). برخورد ⇒ `ContextPiiException` با **مسیر JSON و نوع** (هرگز مقدار) و هیچ خروجی. ⚠ نام محصول/سگمنت/دسته که شبیه موبایل/ایمیل باشد کل context را رد می‌کند (fail-closed)؛ باید در Woo/سگمنت اصلاح شود.
+
+### اصلاح همراه: `AuditServiceTest`
+علت قطعی شد: `AuditService::paginate()` فقط `latest('created_at')` داشت و `audit_logs.created_at` پیش‌فرض DB (`now()`) است که **داخل یک تراکنش برای همه‌ی ردیف‌ها یکی است** (تست‌ها در تراکنش RefreshDatabase) ⇒ tie و ترتیب دلخواه Postgres. اصلاح کم‌ریسک: `->orderByDesc('id')` به‌عنوان tie-break. در production رفتار فقط وقتی عوض می‌شود که دو ردیف دقیقاً همزمان باشند (آن‌وقت جدیدتر اول). تست تازه با سه ردیف هم‌زمان.
+
+### تست
+۱۹ تست Integration روی PostgreSQL واقعی و نقش `ai_readonly` (ساختار و ترتیب، دو نوع تحلیل، اعداد مقایسه با جمع مستقل fixture، تازگی سالم/کهنه/آستانه‌ی قابل‌تنظیم، ۳ حالت `suspected_data_gap`، sweep ۴۱ سقف مختلف با ترتیب کوتاه‌کردن و بخش‌های حیاتی، `ContextTooLargeException`، قطعی‌بودن با ترتیب فیزیکی برعکس، ToolResultها، ۴ حالت PII، بدون HTTP)، ۱۴ تست guard، ۴ تست arch، ۱ تست audit. ۴ mutation (کوتاه‌کردن anomalies اول، حذف PII guard، نادیده‌گرفتن stale، نشکستن سقف) همگی با شکست تست گرفته شدند.
+
+### فایل‌ها
+جدید: `app/Modules/Ai/Context/{ContextBuilder,DataFreshnessReader,ContextPiiGuard,ContextPiiException,ContextTooLargeException}.php`، `Dto/BuiltContext`، `tests/Integration/AiContextBuilderTest.php`، `tests/Feature/Modules/Ai/ContextPiiGuardTest.php`، `tests/Arch/AiContextBoundaryTest.php`. تغییر: `config/ai.php` (`context`)، `.env.example`، چهار ابزار (ترتیب قطعی)، `AuditService`+`AuditServiceTest`، `tests/Support/AiToolsFixture.php` (`loadDaily`).

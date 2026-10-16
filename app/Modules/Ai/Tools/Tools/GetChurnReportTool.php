@@ -28,7 +28,8 @@ final class GetChurnReportTool extends AiTool
         $db = $this->db->connection();
         $rows = $db->table('customer_metrics')->whereNotNull('churn_risk_level')->groupBy('churn_risk_level')
             ->selectRaw('churn_risk_level as level, count(*) as customers, avg(churn_risk_score) as score, avg(recency_days) as recency, sum(coalesce(clv_estimated, clv_historical)) as clv')
-            ->get();
+            ->get()
+            ->sortBy(fn ($r) => array_search((string) $r->level, ['low', 'medium', 'high', 'lost'], true))->values();
         $total = (int) $rows->sum('customers');
         $atRisk = $rows->whereIn('level', ['high', 'lost']);
         $mapped = $rows->map(fn ($r) => [

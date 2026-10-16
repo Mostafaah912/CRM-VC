@@ -37,6 +37,17 @@ return [
     | Analyst tools (P7-04). Every tool is read-only and aggregate-only; these are the shared ceilings.
     | small_group_min: a group of fewer customers is never shown on its own (PRD sets no threshold; 5 is the project default).
     */
+    'context' => [
+        // AI_MAX_CONTEXT_KB (PRD §19: max_context_kb 24) — the final JSON never exceeds this many KiB.
+        'max_kb' => (float) (env('AI_MAX_CONTEXT_KB') ?: 24),
+        // Data older than this many days (complete days behind yesterday, Asia/Tehran) is flagged stale_data.
+        'stale_after_days' => (int) (env('AI_CONTEXT_STALE_AFTER_DAYS') ?: 1),
+        // Rough token estimate = bytes / this. Display/log only (BudgetGuard uses its own conservative 1 token per byte).
+        'bytes_per_token' => 3.0,
+        // Extra strings that must never appear in a context (tests put fixture names here); empty by default.
+        'pii_denylist' => [],
+    ],
+
     'tools' => [
         'max_rows' => 25,
         'max_result_bytes' => 6144,

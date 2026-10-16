@@ -62,6 +62,20 @@ final class AiToolsFixture
         return $c;
     }
 
+    /** Replaces daily_metrics with the given rows (AnomalySeries shape), committed through ai_admin. */
+    public static function loadDaily(array $rows): void
+    {
+        $db = self::admin();
+        $db->table('daily_metrics')->delete();
+
+        foreach (array_chunk($rows, 300) as $chunk) {
+            $db->table('daily_metrics')->insert(array_map(fn ($r) => $r + [
+                'jalali_date' => '1405/01/01', 'product_revenue' => $r['net_revenue'], 'shipping_revenue' => 0, 'aov' => intdiv($r['net_revenue'], max(1, $r['orders_count'])),
+                'revenue_new' => 0, 'revenue_repeat' => 0, 'computed_at' => now(),
+            ], $chunk));
+        }
+    }
+
     public static function wipe(): void
     {
         self::admin()->statement('TRUNCATE '.self::TABLES.' RESTART IDENTITY CASCADE');

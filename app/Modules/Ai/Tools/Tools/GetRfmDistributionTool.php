@@ -26,7 +26,7 @@ final class GetRfmDistributionTool extends AiTool
     public function run(array $arguments): array
     {
         $rows = $this->db->connection()->table('customer_metrics')->whereNotNull('rfm_segment')
-            ->groupBy('rfm_segment')->orderByRaw('count(*) desc')
+            ->groupBy('rfm_segment')->orderByRaw('count(*) desc, rfm_segment')
             ->selectRaw('rfm_segment as segment, count(*) as customers, avg(recency_days) as recency, avg(frequency) as frequency, avg(monetary) as monetary, sum(total_revenue) as revenue')
             ->get();
 

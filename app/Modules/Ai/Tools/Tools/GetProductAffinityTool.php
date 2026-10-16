@@ -41,7 +41,7 @@ final class GetProductAffinityTool extends AiTool
         $limit = (int) ($arguments['limit'] ?? 10);
         $db = $this->db->connection();
         $rows = $db->table('product_affinities')->where('level', $level)->where('co_customers', '>=', SmallGroupMask::min())
-            ->orderByDesc('lift')->orderByDesc('co_customers')->limit($limit)
+            ->orderByDesc('lift')->orderByDesc('co_customers')->orderBy('entity_a_id')->orderBy('entity_b_id')->limit($limit)
             ->get(['entity_a_id', 'entity_b_id', 'co_customers', 'a_customers', 'b_customers', 'confidence', 'lift']);
 
         $names = [];

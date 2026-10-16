@@ -112,6 +112,7 @@ final class AuditService
         return AuditLog::query()
             ->with('user:id,name,email')
             ->latest('created_at')
+            ->orderByDesc('id') // tie-break: inside one transaction every DB-default created_at is identical
             ->paginate($perPage)
             ->through(fn (AuditLog $log): array => [
                 'id' => $log->id,
