@@ -100,6 +100,7 @@ final class ContextBuilder
             array_values($truncations),
             array_map(fn ($section) => strlen($this->encode(is_array($section) ? $section : [$section])), $payload),
             array_values($this->used),
+            (int) $payload['meta']['redactions'],
         );
     }
 
@@ -144,7 +145,7 @@ final class ContextBuilder
         $gapCount = 0;
 
         if ($anomalies !== null) {
-            $suspect = $freshness['stale_data'] === true || $freshness['metrics_failed_recently'] === true;
+            $suspect = $freshness['stale_data'] === true || $freshness['metrics_failed_recently'] === true || $freshness['sync_failed_recently'] === true;
             $anomalies['anomalies'] = array_map(function (array $e) use ($suspect, &$gapCount) {
                 $gap = $suspect && $e['observed'] === 0 && in_array($e['metric'], ['orders_count', 'net_revenue', 'customers_new'], true);
                 $gapCount += $gap ? 1 : 0;
@@ -230,6 +231,9 @@ final class ContextBuilder
                 $payload[$key] = $ordered[$key];
             }
         }
+
+        [$payload, $redactions] = $this->guard->sanitize($payload);
+        $payload['meta']['redactions'] = count($redactions);
 
         return $payload;
     }

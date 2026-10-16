@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use App\Modules\Ai\Context\ContextBuilder;
-use App\Modules\Ai\Context\ContextPiiException;
+use App\Modules\Ai\Context\ContextPiiGuard;
 use App\Modules\Ai\Context\ContextTooLargeException;
 use App\Modules\Ai\Dto\ToolResult;
 use App\Modules\Ai\Enums\AiInsightType;
@@ -55,7 +55,7 @@ it('builds a daily_brief with the sections in a fixed order and an honest summar
     [$c, $p] = ctx();
 
     expect(array_keys($p))->toBe(['meta', 'data_quality', 'truncated', 'truncations', 'kpis', 'anomalies', 'trend', 'customer_health', 'retention_cohort', 'products_affinity'])
-        ->and($p['meta'])->toBe(['schema' => 'analyst.context.v1', 'type' => 'daily_brief', 'currency' => 'IRT', 'money' => 'integer_toman', 'numbers_are_precomputed' => true, 'primary_window_days' => 1])
+        ->and($p['meta'])->toBe(['schema' => 'analyst.context.v1', 'type' => 'daily_brief', 'currency' => 'IRT', 'money' => 'integer_toman', 'numbers_are_precomputed' => true, 'primary_window_days' => 1, 'redactions' => 0])
         ->and($c->type)->toBe('daily_brief')->and($c->truncated)->toBeFalse()->and($c->truncations)->toBe([])
         ->and($c->sizeBytes)->toBe(strlen($c->json))->and($c->maxBytes)->toBe(24 * 1024)->and($c->sizeBytes)->toBeLessThan($c->maxBytes)
         ->and($c->estimatedTokens)->toBe((int) ceil($c->sizeBytes / 3))
@@ -100,7 +100,9 @@ it('reports freshness for a healthy, up-to-date pipeline', function () {
     expect($q['as_of'])->toBe(['iso' => '2026-10-13', 'jalali' => '1405/07/21'])->and($q['data_age_days'])->toBe(0)->and($q['stale_data'])->toBeFalse()->and($q['stale_after_days'])->toBe(1)
         ->and($q['warnings'])->toBe([])->and($q['metrics_failed_recently'])->toBeFalse()->and($q['metrics_last_success']['mode'])->toBe('full')
         ->and($q['metrics_last_success']['at_utc'])->toMatch('/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/')->and($q['pipeline_last_run']['tehran']['jalali'])->toMatch('/^\d{4}\/\d\d\/\d\d$/')
-        ->and($q['sync_status_source'])->toBe('inferred_from_pipeline_last_run')->and($q['suspected_data_gap_events'])->toBe(0)->and($q['interpretation'])->toBe([])->and($q['unavailable_tools'])->toBe([]);
+        ->and($q['sync_status_source'])->toBe('sync_cursors')->and($q['sync_failed_recently'])->toBeFalse()
+        ->and(array_column($q['sync'], 'entity'))->toBe(['catalog', 'orders'])->and($q['sync'][1])->toMatchArray(['entity' => 'orders', 'last_status' => 'completed', 'consecutive_failures' => 0])
+        ->and($q['sync'][1]['last_run']['at_utc'])->toBe('2026-10-13T20:05:00Z')->and($q['suspected_data_gap_events'])->toBe(0)->and($q['interpretation'])->toBe([])->and($q['unavailable_tools'])->toBe([]);
 });
 
 it('flags stale_data with the right data_age_days, and honours the configurable threshold', function () {
@@ -266,25 +268,43 @@ it('returns the ToolResults whose output is inside the context, ready for ai_too
     expect(array_map(fn ($r) => $r->name.json_encode($r->arguments), $cut->toolResults))->not->toEqual(array_map(fn ($r) => $r->name.json_encode($r->arguments), $c->toolResults));   // only what is IN the cut context
 });
 
-it('PII guard: a customer detail that slips into a section makes the build throw and return nothing', function (string $table, array $where, string $column, string $value) {
+it('marks a zero-order anomaly as a suspected data gap when Sync itself is failing, even with fresh data and a healthy metrics run', function () {
+    AiToolsFixture::loadDaily(outageRows($this->series));
+    AiToolsFixture::admin()->table('sync_cursors')->where('entity', 'orders')->update(['last_status' => 'failed', 'consecutive_failures' => 3]);
+
+    [, $p] = ctx();
+    $q = $p['data_quality'];
+    $zeros = array_filter($p['anomalies']['anomalies'], fn ($e) => $e['observed'] === 0);
+
+    expect($q['stale_data'])->toBeFalse()->and($q['metrics_failed_recently'])->toBeFalse()->and($q['sync_failed_recently'])->toBeTrue()->and($q['warnings'])->toBe(['sync_failed_recently'])
+        ->and($q['sync'][1])->toMatchArray(['entity' => 'orders', 'last_status' => 'failed', 'consecutive_failures' => 3])
+        ->and($zeros)->not->toBeEmpty()->and(array_unique(array_column($zeros, 'suspected_data_gap')))->toBe([true]);
+});
+
+it('PII guard: customer-looking TEXT inside a data string is redacted and the run continues; nothing leaks', function (string $table, array $where, string $column, string $value) {
     AiToolsFixture::admin()->table($table)->where($where)->update([$column => $value]);
 
-    $result = null;
+    [$c, $p] = ctx();
 
-    try {
-        $result = builder()->build(AiInsightType::DailyBrief);
-        $this->fail('expected ContextPiiException');
-    } catch (ContextPiiException $e) {
-        expect($e->getMessage())->toContain('Context refused')->and($e->getMessage())->not->toContain($value);
-    }
-
-    expect($result)->toBeNull();
+    expect($c->redactions)->toBeGreaterThanOrEqual(1)->and($p['meta']['redactions'])->toBe($c->redactions)->and($c->json)->toContain('[redacted]')
+        ->and($c->json)->not->toContain($value)->not->toContain('09121234567')->not->toContain('ali.rezaei')->not->toContain('Rezaei')->not->toContain('۰۹۱۲۱۲۳۴۵۶۷');
+    (new ContextPiiGuard)->assertClean($p);   // the verification pass finds nothing left
 })->with([
     'a product named after a mobile number' => ['products', ['woo_product_id' => 11], 'name', 'Linen Dress 09121234567'],
+    'a ten-digit SKU that looks like a mobile' => ['products', ['woo_product_id' => 11], 'name', 'Linen Dress SKU 9123456789'],
     'a segment named after an email' => ['segments', ['name' => 'Big spenders'], 'name', 'VIP ali.rezaei@example.com'],
     'a product named after a customer (denylist)' => ['products', ['woo_product_id' => 12], 'name', 'Silk Scarf for Rezaei'],
     'a category with a Persian-digit phone' => ['product_categories', ['woo_category_id' => 1], 'name', 'دسته ۰۹۱۲۱۲۳۴۵۶۷'],
 ]);
+
+it('counts every redaction and reports nothing else about them', function () {
+    AiToolsFixture::admin()->table('products')->where('woo_product_id', 11)->update(['name' => 'A 09121234567']);
+    AiToolsFixture::admin()->table('products')->where('woo_product_id', 12)->update(['name' => 'B ali.rezaei@example.com']);
+
+    [$c] = ctx();
+
+    expect($c->redactions)->toBeGreaterThanOrEqual(2);
+});
 
 it('makes no HTTP call and uses no AI provider while building', function () {
     builder()->build(AiInsightType::DailyBrief);

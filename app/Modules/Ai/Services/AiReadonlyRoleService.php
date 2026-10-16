@@ -41,6 +41,8 @@ final class AiReadonlyRoleService
         'segments', 'segment_members', 'products', 'product_categories', 'metric_runs',
         // P7-04: get_top_products needs per-product sales; none of PRD §19's nine tables has them. Derived, no PII column.
         'customer_product_purchases',
+        // P7-06 follow-up: DataFreshnessReader reads real Sync health. Columns: entity, cursor_value, last_run_at, last_status, consecutive_failures, updated_at — no PII, no payload.
+        'sync_cursors',
     ];
 
     public function setup(int $statementTimeoutMs = 5000): void

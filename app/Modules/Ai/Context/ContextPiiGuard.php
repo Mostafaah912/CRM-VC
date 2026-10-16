@@ -4,29 +4,62 @@ declare(strict_types=1);
 
 namespace App\Modules\Ai\Context;
 
+use App\Support\Digits;
+use Illuminate\Support\Facades\Log;
+
 /**
- * Defence in depth on the FINAL context (the tools are already aggregate-only). Walks the decoded JSON: forbidden KEY names
- * anywhere; and, for every STRING leaf (numbers are never scanned — a 10-digit revenue must not look like a phone), an Iranian
- * mobile, an email, a run of 7+ Persian/Arabic-Indic digits, or any configured denylist entry. Throws instead of returning
- * a polluted context.
+ * Defence in depth on text that leaves for the model (the tools are already aggregate-only).
+ *
+ * - STRING leaves that look like customer data (an Iranian mobile, an email, 7+ Persian/Arabic-Indic digits in a row, or a
+ *   configured denylist entry) are REPLACED with "[redacted]" and the run continues: such a string is data-shaped text a human
+ *   typed into the shop (a product name, a segment name, a SKU that happens to look like a phone), not a customer record.
+ *   Only the JSON path and the kind are logged — never the value. Numbers are never scanned (a 10-digit revenue is not a phone).
+ * - A forbidden KEY name anywhere (customer_id, phone, email, first_name ...) means a customer record is structurally present:
+ *   that stays fail-closed (ContextPiiException) — nothing is redacted around it, nothing is returned.
+ * assertClean() is the strict verification pass: it throws on ANY hit, so a sanitized payload must pass it.
  */
 final class ContextPiiGuard
 {
+    public const REDACTED = '[redacted]';
+
     private const FORBIDDEN_KEY = '/^(customer_?ids?|phone\w*|mobile\w*|email\w*|first_?name|last_?name|display_?name|full_?name|address\w*|national_?id|postal\w*)$/i';
+
+    /**
+     * @param  array<array-key, mixed>  $payload
+     * @return array{0: array<array-key, mixed>, 1: list<array{path: string, kind: string}>} cleaned payload, redactions made
+     */
+    public function sanitize(array $payload): array
+    {
+        $redactions = [];
+        $clean = $this->clean($payload, '$', $this->denylist(), $redactions);
+
+        foreach ($redactions as $r) {
+            Log::warning('AI text redacted', ['path' => $r['path'], 'kind' => $r['kind']]);
+        }
+
+        return [$clean, $redactions];
+    }
 
     /** @param array<array-key, mixed> $payload */
     public function assertClean(array $payload): void
     {
-        /** @var list<string> $denylist */
-        $denylist = array_values(array_filter((array) config('ai.context.pii_denylist', []), 'is_string'));
-        $this->walk($payload, '$', $denylist);
+        $denylist = $this->denylist();
+        $this->check($payload, '$', $denylist);
+    }
+
+    /** @return list<string> */
+    private function denylist(): array
+    {
+        return array_values(array_filter((array) config('ai.context.pii_denylist', []), 'is_string'));
     }
 
     /**
      * @param  array<array-key, mixed>  $node
      * @param  list<string>  $denylist
+     * @param  list<array{path: string, kind: string}>  $redactions
+     * @return array<array-key, mixed>
      */
-    private function walk(array $node, string $path, array $denylist): void
+    private function clean(array $node, string $path, array $denylist, array &$redactions): array
     {
         foreach ($node as $key => $value) {
             $here = $path.'.'.$key;
@@ -36,13 +69,33 @@ final class ContextPiiGuard
             }
 
             if (is_array($value)) {
-                $this->walk($value, $here, $denylist);
-            } elseif (is_string($value)) {
-                $kind = $this->kind($value, $denylist);
+                $node[$key] = $this->clean($value, $here, $denylist, $redactions);
+            } elseif (is_string($value) && ($kind = $this->kind($value, $denylist)) !== null) {
+                $node[$key] = self::REDACTED;
+                $redactions[] = ['path' => $here, 'kind' => $kind];
+            }
+        }
 
-                if ($kind !== null) {
-                    throw new ContextPiiException("Context refused: {$kind} found at {$here}.");
-                }
+        return $node;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $node
+     * @param  list<string>  $denylist
+     */
+    private function check(array $node, string $path, array $denylist): void
+    {
+        foreach ($node as $key => $value) {
+            $here = $path.'.'.$key;
+
+            if (is_string($key) && preg_match(self::FORBIDDEN_KEY, $key) === 1) {
+                throw new ContextPiiException("Context refused: forbidden key at {$here}.");
+            }
+
+            if (is_array($value)) {
+                $this->check($value, $here, $denylist);
+            } elseif (is_string($value) && ($kind = $this->kind($value, $denylist)) !== null) {
+                throw new ContextPiiException("Context refused: {$kind} found at {$here}.");
             }
         }
     }
@@ -50,7 +103,7 @@ final class ContextPiiGuard
     /** @param list<string> $denylist */
     private function kind(string $value, array $denylist): ?string
     {
-        $ascii = strtr($value, self::digitMap());
+        $ascii = Digits::toAscii($value);
 
         return match (true) {
             preg_match('/(?<!\d)(?:\+?98|0098|0)?9\d{9}(?!\d)/', $ascii) === 1 => 'mobile number',
@@ -71,23 +124,5 @@ final class ContextPiiGuard
         }
 
         return false;
-    }
-
-    /**
-     * Persian (U+06F0..) and Arabic-Indic (U+0660..) digits to ASCII, built from code points — this class only CONSUMES
-     * such digits to catch phone numbers; P6-12's arch rule forbids them as literals in app/.
-     *
-     * @return array<string, string>
-     */
-    private static function digitMap(): array
-    {
-        $map = [];
-
-        foreach (range(0, 9) as $digit) {
-            $map[mb_chr(0x06F0 + $digit)] = (string) $digit;
-            $map[mb_chr(0x0660 + $digit)] = (string) $digit;
-        }
-
-        return $map;
     }
 }

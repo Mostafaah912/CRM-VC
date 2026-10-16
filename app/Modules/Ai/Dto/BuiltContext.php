@@ -26,5 +26,6 @@ final readonly class BuiltContext
         public array $truncations,
         public array $sectionBytes,
         public array $toolResults,
+        public int $redactions = 0,
     ) {}
 }

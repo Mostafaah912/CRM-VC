@@ -19,7 +19,7 @@ use RuntimeException;
  */
 final class AiToolsFixture
 {
-    public const TABLES = 'customers, products, product_categories, segments, daily_metrics, cohort_snapshots, product_affinities, metric_runs';
+    public const TABLES = 'customers, products, product_categories, segments, daily_metrics, cohort_snapshots, product_affinities, metric_runs, sync_cursors';
 
     /** Strings that must never appear in any tool output. */
     public const PII = ['علی', 'رضایی', 'Rezaei', 'ali.rezaei@example.com', '09121234567', '۰۹۱۲۱۲۳۴۵۶۷', '+989121234567', 'خیابان ولیعصر', 'Tehran Vali-asr'];
@@ -125,6 +125,10 @@ final class AiToolsFixture
             ]);
         }
 
+        $db->table('sync_cursors')->insert([
+            ['entity' => 'orders', 'cursor_value' => '2026-10-13 20:00:00+00', 'last_run_at' => '2026-10-13 20:05:00+00', 'last_status' => 'completed', 'consecutive_failures' => 0],
+            ['entity' => 'catalog', 'cursor_value' => '2026-10-13 19:00:00+00', 'last_run_at' => '2026-10-13 19:05:00+00', 'last_status' => 'completed', 'consecutive_failures' => 0],
+        ]);
         $db->table('metric_runs')->insert(['mode' => 'full', 'status' => 'completed', 'thresholds' => json_encode(['p50' => 30, 'p75' => 60, 'p90' => 90, 'sample_size' => 99, 'note' => 'ignored']), 'finished_at' => now()]);
 
         // daily_metrics: 40 consecutive days ending 2026-10-14, 2 orders and 200 000 net revenue per day.

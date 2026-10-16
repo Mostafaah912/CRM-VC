@@ -15,8 +15,9 @@ use Carbon\CarbonImmutable;
  *   - pipeline_last_run: max(daily_metrics.computed_at). The nightly chain is a Bus::chain that STOPS at the first failure
  *     (PRD §22), so when Sync fails daily_metrics is not rebuilt and this goes stale;
  *   - metrics runs: last finished run without an error, and whether the newest failed run is newer than it.
- * The role cannot read sync_cursors/sync_logs, so Sync health is INFERRED from the pipeline_last_run + data age (documented);
- * `sync_status_source` says so in the output.
+ * - Sync health is read from sync_cursors (granted to the role: entity, cursor_value, last_run_at, last_status,
+ *   consecutive_failures, updated_at — no PII, no payload). A failed last run or consecutive_failures > 0 on ANY entity is
+ *   `sync_failed_recently`.
  */
 final class DataFreshnessReader
 {
@@ -36,6 +37,16 @@ final class DataFreshnessReader
         $failedRecently = $failure !== null && ($success === null || $failure->id > $success->id);
         $pipeline = $connection->table('daily_metrics')->max('computed_at');
 
+        $cursors = $connection->table('sync_cursors')->orderBy('entity')->get(['entity', 'cursor_value', 'last_run_at', 'last_status', 'consecutive_failures']);
+        $sync = $cursors->map(fn ($c) => [
+            'entity' => (string) $c->entity,
+            'last_status' => $c->last_status === null ? null : (string) $c->last_status,
+            'consecutive_failures' => (int) $c->consecutive_failures,
+            'last_run' => $this->stamp($c->last_run_at),
+            'cursor' => $this->stamp($c->cursor_value),
+        ])->values()->all();
+        $syncFailed = $cursors->contains(fn ($c) => (int) $c->consecutive_failures > 0 || $c->last_status === 'failed');
+
         $warnings = [];
 
         if ($stale) {
@@ -44,6 +55,10 @@ final class DataFreshnessReader
 
         if ($failedRecently) {
             $warnings[] = 'metrics_run_failed_recently';
+        }
+
+        if ($syncFailed) {
+            $warnings[] = 'sync_failed_recently';
         }
 
         return [
@@ -55,7 +70,9 @@ final class DataFreshnessReader
             'metrics_last_success' => $success === null ? null : ['mode' => (string) $success->mode] + ($this->stamp($success->finished_at) ?? []),
             'metrics_last_failure' => $failure === null ? null : ['mode' => (string) $failure->mode] + ($this->stamp($failure->finished_at ?? $failure->started_at) ?? []),
             'metrics_failed_recently' => $failedRecently,
-            'sync_status_source' => 'inferred_from_pipeline_last_run',
+            'sync' => $sync,
+            'sync_failed_recently' => $syncFailed,
+            'sync_status_source' => 'sync_cursors',
             'warnings' => $warnings,
         ];
     }
