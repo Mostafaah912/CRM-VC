@@ -156,6 +156,10 @@ return [
     */
     'pricing' => [
         'default' => ['input' => '0', 'output' => '0'],
-        'models' => [],
+        'models' => [
+            // USD per 1M tokens. Introductory price, valid through 2026-12-31. From 2027-01-01 Google's official pricing page
+            // lists 1.50 input / 7.50 output — change both numbers on that date, or BudgetGuard will under-count spend by half.
+            'gemini-3.8-flash' => ['input' => '0.75', 'output' => '3.75'],
+        ],
     ],
 ];
