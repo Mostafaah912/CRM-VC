@@ -16,11 +16,13 @@ use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Segments\Listeners\RebuildSegmentsAfterMetricsRecomputed;
+use App\Modules\Sync\Events\CatalogSyncFailed;
 use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
 use App\Support\AiBudgetAlerts;
 use App\Support\AiGenerationAlerts;
+use App\Support\SyncFailureAlerts;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
@@ -84,6 +86,9 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(AiBudgetWarning::class, [AiBudgetAlerts::class, 'onWarning']);
         Event::listen(AiBudgetExceeded::class, [AiBudgetAlerts::class, 'onExceeded']);
         Event::listen(AiGenerationFailed::class, [AiGenerationAlerts::class, 'onFailed']);
+
+        // The catalog step of the nightly chain is fail-soft: its failure is an alert, not a stopped chain.
+        Event::listen(CatalogSyncFailed::class, [SyncFailureAlerts::class, 'onCatalogFailed']);
     }
 
     /**

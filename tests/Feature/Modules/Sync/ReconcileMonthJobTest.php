@@ -6,6 +6,7 @@ use App\Modules\Analytics\Jobs\BuildAffinityJob;
 use App\Modules\Metrics\Jobs\RecomputeMetricsJob;
 use App\Modules\Sync\Enums\ReconciliationStatus;
 use App\Modules\Sync\Enums\SyncEntity;
+use App\Modules\Sync\Jobs\CatalogSyncJob;
 use App\Modules\Sync\Jobs\ReconcileMonthJob;
 use App\Modules\Sync\Jobs\SyncEntityJob;
 use App\Modules\Sync\Jobs\SyncPageJob;
@@ -84,6 +85,7 @@ it('keeps the queue\'s retry_after above every whole-data job\'s timeout project
         (new SyncPageJob(1, 1))->timeout,
         (new RecomputeMetricsJob)->timeout,
         (new BuildAffinityJob)->timeout,
+        (new CatalogSyncJob)->timeout,   // 1800 since the P7-08 follow-up (a live catalog run MEASURED 911 s)
     );
 
     expect((int) config('queue.connections.redis.retry_after'))->toBeGreaterThan($longest);

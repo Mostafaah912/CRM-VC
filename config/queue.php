@@ -69,9 +69,10 @@ return [
             'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
             'queue' => env('REDIS_QUEUE', 'default'),
             // Must exceed the longest job timeout by a margin, or a running job is re-reserved and run twice. The
-            // longest is now 900s (RecomputeMetricsJob, BuildAffinityJob — P6-09 found this stale at 330s, the
-            // ReconcileMonthJob-only margin from P2-11, once metrics/analytics jobs with 900s timeouts existed).
-            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 930),
+            // longest is now 1800s (CatalogSyncJob — P7-08 follow-up: a live catalog run measured 911s, 310 sequential
+            // Woo requests; before that 900s: RecomputeMetricsJob, BuildAffinityJob — P6-09 found this stale at 330s).
+            // Always keep it >= the longest timeout + 30s, and the Horizon supervisor timeout between the two.
+            'retry_after' => (int) env('REDIS_QUEUE_RETRY_AFTER', 1830),
             'block_for' => null,
             'after_commit' => false,
         ],

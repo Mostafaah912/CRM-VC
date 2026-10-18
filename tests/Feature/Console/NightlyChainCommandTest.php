@@ -9,9 +9,13 @@ use App\Modules\Customers\Models\Customer;
 use App\Modules\Metrics\Jobs\RecomputeMetricsJob;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Segments\Jobs\RebuildAllSegmentsJob;
+use App\Modules\Sync\Exceptions\WooRequestException;
 use App\Modules\Sync\Jobs\CatalogSyncJob;
 use App\Modules\Sync\Jobs\ReconcileRecentMonthsJob;
 use App\Modules\Sync\Jobs\SyncEntityJob;
+use App\Modules\Sync\Services\WooClient;
+use App\Modules\Sync\Support\SyncWindow;
+use App\Modules\Sync\Support\WooPage;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\DB;
@@ -84,4 +88,76 @@ it('delivers a fresh cohort_month to BuildCohortSnapshotsJob because RecomputeMe
     $cohortMonth = DB::table('customer_metrics')->where('customer_id', $customer->id)->value('cohort_month');
     expect($cohortMonth)->not->toBeNull();
     expect(DB::table('cohort_snapshots')->where('cohort_month', $cohortMonth)->where('period_number', 0)->value('cohort_size'))->toBe(1);
+});
+
+/*
+| P7-08 follow-up. PRD §22 wants the chain to stop at the first failure "so nothing runs on incomplete data" — and that stays true for every
+| DATA step. The catalog is the one exception: it is a mirror of Woo's product list that none of the metrics steps read (RecomputeMetrics,
+| daily metrics, cohorts, segments and reconciliation work from orders), so last night's copy serves; a catalog timeout used to stop the whole
+| chain every night. Only the catalog step is fail-soft; a failing data step still stops everything after it.
+*/
+
+it('wires the catalog step fail-soft and every other step as before', function () {
+    Bus::fake();
+
+    Artisan::call('hm:nightly-chain');
+
+    Bus::assertChained([
+        fn (CatalogSyncJob $job) => $job->failSoft === true,
+        SyncEntityJob::class,
+        RecomputeMetricsJob::class,
+        BuildCustomerPurchaseAggregatesJob::class,
+        BuildDailyMetricsJob::class,
+        BuildCohortSnapshotsJob::class,
+        RebuildAllSegmentsJob::class,
+        ReconcileRecentMonthsJob::class,
+    ]);
+});
+
+it('a catalog failure does NOT stop the chain: the next step still runs (and a fail-hard step would have stopped it)', function () {
+    app()->instance(WooClient::class, new class implements WooClient
+    {
+        public function page(string $endpoint, int $page, ?SyncWindow $window = null, array $query = []): WooPage
+        {
+            throw new WooRequestException('timeout', $endpoint, null, 5, true);
+        }
+
+        public function pages(string $endpoint, ?SyncWindow $window = null, array $query = []): Generator
+        {
+            throw new WooRequestException('timeout', $endpoint, null, 5, true);
+            yield;
+        }
+    });
+    $GLOBALS['chain_probe'] = 0;
+    $probe = function () {
+        $GLOBALS['chain_probe']++;
+    };
+
+    Bus::chain([new CatalogSyncJob(failSoft: true), $probe])->dispatch();
+    expect($GLOBALS['chain_probe'])->toBe(1);
+
+    $GLOBALS['chain_probe'] = 0;
+
+    try {
+        Bus::chain([new CatalogSyncJob(failSoft: false), $probe])->dispatch();
+    } catch (WooRequestException) {
+    }
+
+    expect($GLOBALS['chain_probe'])->toBe(0);   // the control: without fail-soft the chain stops, which is what happened every night
+});
+
+it('still stops the chain when a DATA step fails', function () {
+    $GLOBALS['chain_probe'] = 0;
+    $probe = function () {
+        $GLOBALS['chain_probe']++;
+    };
+
+    try {
+        Bus::chain([function () {
+            throw new RuntimeException('metrics failed');
+        }, $probe])->dispatch();
+    } catch (RuntimeException) {
+    }
+
+    expect($GLOBALS['chain_probe'])->toBe(0);
 });

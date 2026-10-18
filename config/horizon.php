@@ -208,11 +208,11 @@ return [
             'maxJobs' => 0,
             'memory' => 128,
             'tries' => 1,
-            // Must be >= the longest job's own $timeout (900s, RecomputeMetricsJob/BuildAffinityJob) and stay
-            // below queue.php's redis retry_after (930s) — P6-09 found this stale at 60s, well under jobs that
-            // now legitimately run for minutes (ARCHITECTURE.md, "must be resolved before enabling the
-            // production scheduler").
-            'timeout' => 900,
+            // Must be >= the longest job's own $timeout (1800s, CatalogSyncJob — measured 911s live in the P7-08
+            // follow-up; 900s for RecomputeMetricsJob/BuildAffinityJob) and stay below queue.php's redis
+            // retry_after (1830s) — P6-09 found this stale at 60s, well under jobs that now legitimately run for
+            // minutes (ARCHITECTURE.md, "must be resolved before enabling the production scheduler").
+            'timeout' => 1800,
             'nice' => 0,
         ],
     ],

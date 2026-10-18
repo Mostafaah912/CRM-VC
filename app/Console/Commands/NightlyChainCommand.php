@@ -56,7 +56,7 @@ final class NightlyChainCommand extends Command
     public function handle(): int
     {
         Bus::chain([
-            new CatalogSyncJob,
+            new CatalogSyncJob(failSoft: true),
             new SyncEntityJob(SyncEntity::Orders, SyncMode::Incremental),
             new RecomputeMetricsJob('full'),
             new BuildCustomerPurchaseAggregatesJob,
