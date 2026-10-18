@@ -128,11 +128,85 @@ final class OutputValidator
             }
         }
 
+        foreach ($answer['key_metrics'] as $i => $item) {
+            $ref = $item['metric_refs'][0] ?? null;
+
+            if ($ref === null || ! $this->resolves($ref, $context)) {
+                continue;   // already reported above
+            }
+
+            $actual = $this->valueAt($ref, $context);
+
+            if (is_int($actual) || is_float($actual)) {
+                $stated = $this->statedNumber($item['value']);
+
+                if ($stated === null) {
+                    $errors[] = "key_metrics.{$i}.value: must state the number found at its first reference";
+                } elseif (! $this->matches($stated, $actual)) {
+                    $errors[] = "key_metrics.{$i}.value: does not match the number at its first reference";
+                }
+            }
+        }
+
         foreach ($answer['anomalies_explained'] as $i => $item) {
             if (! str_starts_with($item['ref'], 'anomalies.anomalies.') || ! $this->resolves($item['ref'], $context)) {
                 $errors[] = "anomalies_explained.{$i}.ref: must be the path of an anomaly in the data";
             }
         }
+    }
+
+    /**
+     * Numeric reconciliation of key_metrics (only these: free text cannot be checked reliably — "a bit more than a tenth" has no
+     * single number to compare). The FIRST metric_ref decides. Rules: the first number in `value` after dropping thousands
+     * separators (',' and the Arabic one), spaces and unit words; an unsigned statement may be the absolute value of a negative
+     * metric ("12%" for -12), a signed one must have the right sign; rounding is allowed to the precision STATED (83% for 83.33,
+     * 83.3 for 83.33) but never beyond (84% for 83.33 fails, and money, being integers, must match exactly). A reference that is not a
+     * plain number (an object, a list, a string) is not compared.
+     *
+     * @return array{value: float, decimals: int, signed: bool}|null
+     */
+    private function statedNumber(string $text): ?array
+    {
+        $clean = str_replace([',', mb_chr(0x066C), ' ', "\u{00A0}"], '', $text);
+
+        if (preg_match('/([+\-\x{2212}]?)(\d+)(?:\.(\d+))?/u', $clean, $m) !== 1) {
+            return null;
+        }
+
+        $value = (float) ($m[2].(isset($m[3]) ? '.'.$m[3] : ''));
+
+        return ['value' => $m[1] === '' || $m[1] === '+' ? $value : -$value, 'decimals' => strlen($m[3] ?? ''), 'signed' => $m[1] !== ''];
+    }
+
+    /** @param array{value: float, decimals: int, signed: bool} $stated */
+    private function matches(array $stated, int|float $actual): bool
+    {
+        $tolerance = 0.5 * 10 ** -$stated['decimals'] + 1e-9;
+        $candidates = $stated['signed'] ? [$stated['value']] : [$stated['value'], -$stated['value']];
+
+        foreach ($candidates as $candidate) {
+            if (abs($candidate - $actual) <= $tolerance) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @param array<string, mixed> $context */
+    private function valueAt(string $ref, array $context): mixed
+    {
+        $node = $context;
+
+        foreach (explode('.', $ref) as $segment) {
+            if (! is_array($node)) {
+                return null;
+            }
+
+            $node = array_key_exists($segment, $node) ? $node[$segment] : ($node[(int) $segment] ?? null);
+        }
+
+        return $node;
     }
 
     /** @param array<string, mixed> $context */

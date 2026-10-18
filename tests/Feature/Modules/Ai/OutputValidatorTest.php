@@ -123,3 +123,62 @@ it('the schema sent to the provider stays inside the Gemini-safe JSON-Schema sub
         ->and($schema['properties']['insights']['items']['properties'])->toHaveKeys(['text', 'kind', 'severity'])
         ->and($schema['properties']['recommendations']['items']['properties'])->toHaveKeys(['action', 'rationale', 'effort']);
 });
+
+describe('numeric reconciliation of key_metrics.value with the number at its first metric_ref (P7-08)', function () {
+    // The sample context: current.net_revenue = 8800000, current.orders = 44, change_percent.net_revenue = 10.0, change_percent.orders = 10.0
+    function metricCase(string $ref, string $value): array
+    {
+        $answer = AnalystSamples::answer();
+        $answer['key_metrics'] = [['label' => 'x', 'value' => $value, 'change' => '', 'metric_refs' => [$ref, 'kpis.windows.0.result.current.orders']]];
+        $context = AnalystSamples::contextPayload();
+        $context['kpis']['windows'][0]['result']['change_percent']['refunds'] = -12.5;
+        $context['kpis']['windows'][0]['result']['current']['label'] = 'text';
+
+        return app(OutputValidator::class)->validate($answer, $context);
+    }
+
+    it('accepts the same number in the formats a Persian answer uses', function (string $ref, string $value) {
+        expect(metricCase($ref, $value)['errors'])->toBe([]);
+    })->with([
+        'latin thousands separators + unit' => ['kpis.windows.0.result.current.net_revenue', '8,800,000 تومان'],
+        'no separator' => ['kpis.windows.0.result.current.net_revenue', '8800000'],
+        'persian digits + arabic thousands separator' => ['kpis.windows.0.result.current.net_revenue', '۸٬۸۰۰٬۰۰۰ تومان'],
+        'spaces as separators' => ['kpis.windows.0.result.current.net_revenue', '8 800 000'],
+        'count' => ['kpis.windows.0.result.current.orders', '44 سفارش'],
+        'percent with sign and one decimal' => ['kpis.windows.0.result.change_percent.net_revenue', '+10.0%'],
+        'percent rounded to an integer' => ['kpis.windows.0.result.change_percent.net_revenue', '10%'],
+        'negative percent, signed' => ['kpis.windows.0.result.change_percent.refunds', '-12.5%'],
+        'negative percent as the unsigned size of a drop' => ['kpis.windows.0.result.change_percent.refunds', '12.5% کاهش'],
+        'negative percent rounded to the stated precision' => ['kpis.windows.0.result.change_percent.refunds', '-12%'],
+        'negative percent, one decimal rounding' => ['kpis.windows.0.result.change_percent.refunds', '12.5'],
+    ]);
+
+    it('rejects a number that is not the one at the reference', function (string $ref, string $value) {
+        $r = metricCase($ref, $value);
+
+        expect($r['payload'])->toBeNull()->and($r['errors'])->toContain('key_metrics.0.value: does not match the number at its first reference');
+    })->with([
+        'money off by one' => ['kpis.windows.0.result.current.net_revenue', '8,800,001 تومان'],
+        'money in millions (a rounding the prompt forbids)' => ['kpis.windows.0.result.current.net_revenue', '8.8'],
+        'wrong count' => ['kpis.windows.0.result.current.orders', '45'],
+        'percent rounded the wrong way' => ['kpis.windows.0.result.change_percent.net_revenue', '11%'],
+        'percent more precise than the truth allows' => ['kpis.windows.0.result.change_percent.net_revenue', '10.4%'],
+        'sign flipped on a signed statement' => ['kpis.windows.0.result.change_percent.refunds', '+12.5%'],
+        'another metric\'s number' => ['kpis.windows.0.result.current.net_revenue', '44'],
+    ]);
+
+    it('rejects a value with no number at all, but does not compare a reference that is not a number', function () {
+        $none = metricCase('kpis.windows.0.result.current.net_revenue', 'بالا');
+        $text = metricCase('kpis.windows.0.result.current.label', 'هر چیزی');
+
+        expect($none['errors'])->toContain('key_metrics.0.value: must state the number found at its first reference')->and($text['errors'])->toBe([]);
+    });
+
+    it('checks only the FIRST reference', function () {
+        $answer = AnalystSamples::answer();
+        $answer['key_metrics'][0]['value'] = '44';
+        $answer['key_metrics'][0]['metric_refs'] = ['kpis.windows.0.result.current.orders', 'kpis.windows.0.result.current.net_revenue'];
+
+        expect(app(OutputValidator::class)->validate($answer, AnalystSamples::contextPayload())['errors'])->toBe([]);
+    });
+});

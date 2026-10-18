@@ -5,6 +5,7 @@ namespace App\Providers;
 use App\Modules\Ai\Anomaly\AnomalyDetector;
 use App\Modules\Ai\Events\AiBudgetExceeded;
 use App\Modules\Ai\Events\AiBudgetWarning;
+use App\Modules\Ai\Events\AiGenerationFailed;
 use App\Modules\Ai\Services\AiProvider;
 use App\Modules\Ai\Services\AiProviderFactory;
 use App\Modules\Ai\Services\AiUsageService;
@@ -19,6 +20,7 @@ use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
 use App\Support\AiBudgetAlerts;
+use App\Support\AiGenerationAlerts;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
@@ -57,7 +59,7 @@ class AppServiceProvider extends ServiceProvider
 
         // Lazy for the same reason as WooClient: no AI key must never break app boot. Always wrapped in BudgetedAiProvider (P7-03): no un-budgeted path.
         $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => new BudgetedAiProvider(
-            $app->make(AiProviderFactory::class)->make(),
+            fn (): AiProvider => $app->make(AiProviderFactory::class)->make(),
             $app->make(BudgetGuard::class),
             $app->make(AiUsageService::class),
         ));
@@ -81,6 +83,7 @@ class AppServiceProvider extends ServiceProvider
         // P7-03: Ai raises budget events; the alert itself (a Core concern) is raised outside the module.
         Event::listen(AiBudgetWarning::class, [AiBudgetAlerts::class, 'onWarning']);
         Event::listen(AiBudgetExceeded::class, [AiBudgetAlerts::class, 'onExceeded']);
+        Event::listen(AiGenerationFailed::class, [AiGenerationAlerts::class, 'onFailed']);
     }
 
     /**

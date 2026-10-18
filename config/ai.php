@@ -9,6 +9,9 @@
 */
 return [
     // `?:` not an env() default: a copied .env.example has these keys present-but-empty, which env() returns as ''.
+    // P7-08: master switch. OFF by default — nothing calls a provider until a human turns this on (jobs become silent no-ops).
+    'enabled' => filter_var(env('AI_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+
     'provider' => env('AI_PROVIDER') ?: 'gemini',
     'model' => env('AI_MODEL'),
 
@@ -46,6 +49,30 @@ return [
         'bytes_per_token' => 3.0,
         // Extra strings that must never appear in a context (tests put fixture names here); empty by default.
         'pii_denylist' => [],
+    ],
+
+    /*
+    | Scheduled generation (P7-08, PRD §22: daily 07:00 GenerateDailyBriefJob, Sat 07:30 GenerateWeeklyReviewJob, Asia/Tehran, queue `ai`).
+    | These are separate scheduler entries, NOT part of hm:nightly-chain (a Bus::chain stops at the first failure; an AI failure must
+    | never break the data chain). `max_data_age_days`: older data is not worth paying for — generation is refused and an alert raised.
+    | `chain_start_hour`: a scheduled run first requires today's full metrics run (started at/after this Tehran hour) to have completed.
+    | `weekly_day`: 0 = Sunday ... 6 = Saturday (the Jalali week starts on Saturday, so Saturday reviews the week that just ended Friday).
+    */
+    'generation' => [
+        'max_data_age_days' => (int) (env('AI_MAX_DATA_AGE_DAYS') ?: 3),
+        'daily_at' => env('AI_DAILY_AT') ?: '07:00',
+        'weekly_at' => env('AI_WEEKLY_AT') ?: '07:30',
+        'weekly_day' => env('AI_WEEKLY_DAY') === null || env('AI_WEEKLY_DAY') === '' ? 6 : (int) env('AI_WEEKLY_DAY'),
+        'chain_start_hour' => 3,
+    ],
+
+    /*
+    | Manual (UI/CLI-with-a-user) generation throttle, per requester: only calls that actually reach the provider count,
+    | a cache hit is free. Stops repeated clicks from burning the monthly budget.
+    */
+    'manual' => [
+        'max_requests' => (int) (env('AI_MANUAL_MAX_PER_HOUR') ?: 5),
+        'per_minutes' => 60,
     ],
 
     /*

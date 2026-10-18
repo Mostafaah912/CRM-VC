@@ -12,6 +12,7 @@ use App\Modules\Ai\Exceptions\AiConfigurationException;
 use App\Modules\Ai\Exceptions\AiRateLimitException;
 use App\Modules\Ai\Services\AiProvider;
 use App\Modules\Ai\Services\AiProviderFactory;
+use App\Modules\Ai\Services\BudgetedAiProvider;
 use App\Modules\Ai\Services\FakeAiProvider;
 use Illuminate\Support\Facades\Http;
 
@@ -36,7 +37,13 @@ it('defaults to gemini', function () {
 it('fails loudly, and only when asked, for an unknown provider or a missing key/model', function () {
     config(['ai.provider' => 'gemini', 'ai.model' => null, 'ai.providers.gemini.api_key' => null]);
 
-    expect(fn () => app(AiProvider::class))->toThrow(AiConfigurationException::class);   // the budget decorator still builds the real driver lazily
+    // Resolving the budgeted provider never throws (a job or command must be resolvable on a machine with no key yet) ...
+    $provider = app(AiProvider::class);
+    expect($provider)->toBeInstanceOf(BudgetedAiProvider::class);
+    // ... the real driver is built on the first call, which then fails loudly — before any network.
+    Http::preventStrayRequests();
+    config(['ai.pricing.models' => ['x' => ['input' => '1', 'output' => '1']], 'ai.budget.allow_unpriced' => true]);
+    expect(fn () => $provider->generate(new AiRequest('s', [AiMessage::user('q')])))->toThrow(AiConfigurationException::class);
     expect(fn () => app(AiProviderFactory::class)->make('nonsense'))->toThrow(AiConfigurationException::class);
 });
 

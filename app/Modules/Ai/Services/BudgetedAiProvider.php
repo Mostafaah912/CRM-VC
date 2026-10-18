@@ -6,6 +6,7 @@ namespace App\Modules\Ai\Services;
 
 use App\Modules\Ai\Dto\AiRequest;
 use App\Modules\Ai\Dto\AiResponse;
+use Closure;
 use Throwable;
 
 /**
@@ -15,8 +16,15 @@ use Throwable;
  */
 final class BudgetedAiProvider implements AiProvider
 {
+    private ?AiProvider $resolved = null;
+
+    /**
+     * @param  AiProvider|Closure(): AiProvider  $inner  a Closure is called on the FIRST generate(), never at construction: building the real
+     *                                                   driver throws when the key/model is missing, and merely RESOLVING the analyst (a job, a command)
+     *                                                   must not — "AI is off" and "not configured yet" are reported by AnalystReadiness, not by a crash.
+     */
     public function __construct(
-        private readonly AiProvider $inner,
+        private readonly AiProvider|Closure $inner,
         private readonly BudgetGuard $guard,
         private readonly AiUsageService $usage,
     ) {}
@@ -26,7 +34,7 @@ final class BudgetedAiProvider implements AiProvider
         $reservation = $this->guard->reserve($request, (string) config('ai.model'));
 
         try {
-            $response = $this->inner->generate($request);
+            $response = $this->provider()->generate($request);
             $this->usage->record($response);
         } catch (Throwable $e) {
             $this->guard->release($reservation);
@@ -38,5 +46,10 @@ final class BudgetedAiProvider implements AiProvider
         $this->guard->warnIfNeeded();
 
         return $response;
+    }
+
+    private function provider(): AiProvider
+    {
+        return $this->resolved ??= $this->inner instanceof Closure ? ($this->inner)() : $this->inner;
     }
 }

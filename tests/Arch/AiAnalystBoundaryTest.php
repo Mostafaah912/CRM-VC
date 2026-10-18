@@ -53,3 +53,53 @@ it('passes every provider call through the AiProvider interface only (the genera
 
     expect($code)->toContain('private readonly AiProvider $provider')->and(substr_count($code, '->generate('))->toBe(1);
 });
+
+it('lets only AnalystService write ai_insights / ai_tool_calls', function () {
+    $writers = [];
+
+    foreach (Scanner::phpFiles(['app']) as $file) {
+        $code = Scanner::phpCode($file);
+
+        if (str_contains($code, 'Ai\\Models\\AiToolCall') || Scanner::relative($file) === 'app/Modules/Ai/Models/AiToolCall.php' || preg_match('/\bAiInsight::query\(\)\s*->\s*(create|update|insert|delete|where\([^)]*\)\s*->\s*(update|delete))/', $code) === 1) {
+            $writers[] = Scanner::relative($file);
+        }
+    }
+
+    expect($writers)->toEqualCanonicalizing(['app/Modules/Ai/Models/AiToolCall.php', 'app/Modules/Ai/Services/AnalystService.php']);
+});
+
+it('keeps the scheduled jobs thin: they resolve AnalystService, call runScheduled, log — no queries, no models, no provider', function () {
+    $jobs = [Scanner::root().'/app/Modules/Ai/Jobs/GenerateDailyBriefJob.php', Scanner::root().'/app/Modules/Ai/Jobs/GenerateWeeklyReviewJob.php'];
+
+    expect(Scanner::violations($jobs, [
+        '/\bDB::/', '/\\\\Models\\\\/', '/->(where|create|update|delete|insert|save)\(/', '/\bAiProvider\b/', '/\bInsightGenerator\b/', '/\bContextBuilder\b/', '/\bHttp::/',
+    ]))->toBeEmpty();
+
+    foreach ($jobs as $job) {
+        expect(substr_count(Scanner::phpCode($job), '$analyst->runScheduled('))->toBe(1);
+    }
+});
+
+it('keeps the commands free of queries, keys and model text', function () {
+    $commands = [Scanner::root().'/app/Console/Commands/AiGenerateCommand.php', Scanner::root().'/app/Console/Commands/AiPingCommand.php'];
+
+    expect(Scanner::violations($commands, ['/\bDB::/', '/\\\\Models\\\\/', '/api_key/i', '/getMessage\(\)/', '/\bHttp::/', '/config\(\s*[\'"]ai\.providers/']))->toBeEmpty();
+});
+
+it('has no code path that calls a provider outside the AiProvider interface, in the whole Ai module (excluding drivers)', function () {
+    $callers = [];
+
+    foreach (Scanner::phpFiles(['app/Modules/Ai']) as $file) {
+        $relative = Scanner::relative($file);
+
+        if (str_starts_with($relative, 'app/Modules/Ai/Drivers/')) {
+            continue;
+        }
+
+        if (preg_match('/\$(this->)?(provider|inner)(\(\))?->generate\(/', Scanner::phpCode($file)) === 1) {
+            $callers[] = $relative;
+        }
+    }
+
+    expect($callers)->toEqualCanonicalizing(['app/Modules/Ai/Analyst/InsightGenerator.php', 'app/Modules/Ai/Services/BudgetedAiProvider.php']);
+});

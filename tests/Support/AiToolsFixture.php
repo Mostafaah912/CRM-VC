@@ -19,6 +19,8 @@ use RuntimeException;
  */
 final class AiToolsFixture
 {
+    private static bool $ready = false;
+
     public const TABLES = 'customers, products, product_categories, segments, daily_metrics, cohort_snapshots, product_affinities, metric_runs, sync_cursors';
 
     /** Strings that must never appear in any tool output. */
@@ -46,6 +48,7 @@ final class AiToolsFixture
             'database.connections.ai_readonly.username' => AiReadonlyRoleService::ROLE,
         ]);
         DB::purge('ai_readonly');
+        self::$ready = true;
 
         return null;
     }
@@ -76,19 +79,37 @@ final class AiToolsFixture
         }
     }
 
+    /**
+     * TRUNCATE needs ACCESS EXCLUSIVE on every table it touches. A test that READ one of them through the default connection
+     * (RefreshDatabase keeps its transaction — and the read lock — open until the test ends) would make that wait forever,
+     * so the wait is bounded: a lock problem fails in seconds with an error instead of hanging the suite.
+     */
     public static function wipe(): void
     {
-        self::admin()->statement('TRUNCATE '.self::TABLES.' RESTART IDENTITY CASCADE');
+        $admin = self::admin();
+        $admin->statement("SET lock_timeout = '5s'");
+        $admin->statement('TRUNCATE '.self::TABLES.' RESTART IDENTITY CASCADE');
     }
 
     public static function teardown(): void
     {
         DB::purge('ai_readonly');
 
-        try {
-            self::wipe();
-        } catch (\Throwable) {
+        if (! self::$ready) {
+            return;   // boot() skipped the test (no admin connection): there is nothing of ours to clean
         }
+
+        self::$ready = false;
+
+        // End the test's own open transaction FIRST (RefreshDatabase would roll it back later anyway): it may hold read locks on the
+        // very tables the wipe truncates (e.g. metric_runs, read by MetricRunService through the default connection).
+        $connection = DB::connection();
+
+        while ($connection->transactionLevel() > 0) {
+            $connection->rollBack();
+        }
+
+        self::wipe();
     }
 
     /**

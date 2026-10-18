@@ -1,0 +1,57 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Modules\Ai\Jobs;
+
+use App\Modules\Ai\Enums\AiInsightType;
+use App\Modules\Ai\Services\AnalystService;
+use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Contracts\Queue\ShouldQueue;
+use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\InteractsWithQueue;
+use Illuminate\Support\Facades\Log;
+use Throwable;
+
+/**
+ * PRD §22 "daily 07:00 GenerateDailyBriefJob" (queue `ai`). Thin: resolves AnalystService and calls runScheduled() — every refusal
+ * (AI off, missing key/price, chain not finished, stale data, budget, invalid answer) is decided there and returns an outcome; only a
+ * RETRYABLE provider error (rate limit / timeout / 5xx after the driver's own short retries) is rethrown so the queue retries it, with
+ * backoff. tries are small on purpose: every attempt can cost money. Unique, with uniqueFor > timeout (PRD §22).
+ */
+final class GenerateDailyBriefJob implements ShouldBeUnique, ShouldQueue
+{
+    use Dispatchable, InteractsWithQueue, Queueable;
+
+    public int $tries = 3;
+
+    public int $timeout = 240;
+
+    public int $uniqueFor = 900;
+
+    /** @var list<int> */
+    public array $backoff = [300, 900];
+
+    public function __construct()
+    {
+        $this->onQueue('ai');
+    }
+
+    public function uniqueId(): string
+    {
+        return 'ai-daily-brief';
+    }
+
+    public function handle(AnalystService $analyst): void
+    {
+        $outcome = $analyst->runScheduled(AiInsightType::DailyBrief);
+
+        Log::info('GenerateDailyBriefJob finished', ['status' => $outcome->status, 'reason' => $outcome->reason, 'insight_id' => $outcome->insightId]);
+    }
+
+    public function failed(Throwable $e): void
+    {
+        Log::error('GenerateDailyBriefJob failed', ['exception' => $e::class]);
+    }
+}

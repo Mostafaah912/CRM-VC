@@ -19,7 +19,7 @@ it('binds AiProvider only as BudgetedAiProvider wrapping the factory driver', fu
     $code = Scanner::phpCode(Scanner::root().'/app/Providers/AppServiceProvider.php');
 
     expect($code)->toContain('bind(AiProvider::class')
-        ->and($code)->toMatch('/bind\(AiProvider::class[^;]*new BudgetedAiProvider\(\s*\$app->make\(AiProviderFactory::class\)->make\(\)/s')
+        ->and($code)->toMatch('/bind\(AiProvider::class[^;]*new BudgetedAiProvider\(\s*fn \(\): AiProvider => \$app->make\(AiProviderFactory::class\)->make\(\)/s')
         ->and(substr_count($code, 'AiProviderFactory::class'))->toBe(1);
 });
 
@@ -51,11 +51,11 @@ it('has exactly three AiProvider implementations: the budget decorator, the fake
     ]);
 });
 
-it('makes BudgetedAiProvider reserve before calling the inner provider and never call it otherwise', function () {
+it('makes BudgetedAiProvider reserve before calling the inner provider and never call it otherwise (the inner is resolved lazily, on first use)', function () {
     $code = Scanner::phpCode(Scanner::root().'/app/Modules/Ai/Services/BudgetedAiProvider.php');
 
     expect(strpos($code, '->reserve('))->toBeInt()
-        ->and(strpos($code, '->inner->generate('))->toBeGreaterThan(strpos($code, '->reserve('))
+        ->and(strpos($code, '->provider()->generate('))->toBeGreaterThan(strpos($code, '->reserve('))
         ->and(substr_count($code, '->generate('))->toBe(1);
 });
 

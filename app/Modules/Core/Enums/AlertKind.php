@@ -13,4 +13,6 @@ enum AlertKind: string
     case FailedJobsThreshold = 'failed_jobs_threshold';
     case AiBudgetThreshold = 'ai_budget_threshold';
     case NightlyChainTimeout = 'nightly_chain_timeout';
+    /** P7-08: a scheduled/manual AI generation was refused or failed (stale data, invalid answer, provider error). Not in PRD §22's list. */
+    case AiGenerationFailure = 'ai_generation_failure';
 }

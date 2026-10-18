@@ -21,10 +21,14 @@ final class ResponseCache
     /** @return array<string, mixed>|null the stored payload of a fresh row with this key */
     public function lookup(string $key): ?array
     {
+        return $this->find($key)?->payload;
+    }
+
+    /** The fresh row itself (P7-08 returns it on a hit). */
+    public function find(string $key): ?AiInsight
+    {
         $ttl = max(1, (int) config('ai.cache.ttl_minutes', 1440));
 
-        $row = AiInsight::query()->where('cache_key', $key)->where('created_at', '>=', now()->subMinutes($ttl))->orderByDesc('id')->first();
-
-        return $row?->payload;
+        return AiInsight::query()->where('cache_key', $key)->where('created_at', '>=', now()->subMinutes($ttl))->orderByDesc('id')->first();
     }
 }
