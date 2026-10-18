@@ -52,7 +52,7 @@ function groundedAnswer(string $contextJson, array $override = []): array
         ],
         'insights' => [['text' => 'تعداد سفارش‌ها ثبت شد.', 'kind' => 'fact', 'severity' => 'info', 'metric_refs' => ['kpis.windows.0.result.change_percent.orders']]],
         'risks' => [], 'opportunities' => [],
-        'recommendations' => [['action' => 'روند را دنبال کن.', 'rationale' => 'داده‌ی کافی نیست.', 'effort' => 'low', 'priority' => 'low']],
+        'recommendations' => [['action' => 'روند را دنبال کن.', 'rationale' => 'داده‌ی کافی نیست.', 'effort' => 'low', 'priority' => 'low', 'metric_refs' => ['meta.type']]],
         'anomalies_explained' => [], 'data_gaps' => [], 'data_quality_note' => '', 'confidence' => 'medium',
     ], $override);
 }
@@ -124,10 +124,10 @@ it('stores the insight and its tool calls with exact values — one run, one tra
 
     expect($r->fromCache)->toBeFalse()->and($fake->callCount())->toBe(1)->and(DB::table('ai_insights')->count())->toBe(1)
         ->and($row->type)->toBe('daily_brief')->and($row->scope)->toBe('day:2026-10-13')->and($row->period_start)->toBe('2026-10-13')->and($row->period_end)->toBe('2026-10-13')
-        ->and($row->provider)->toBe('fake')->and($row->model)->toBe('test-model')->and($row->prompt_version)->toBe('analyst.daily.v2')
+        ->and($row->provider)->toBe('fake')->and($row->model)->toBe('test-model')->and($row->prompt_version)->toBe('analyst.daily.v3')
         ->and($row->input_tokens)->toBe(3000)->and($row->output_tokens)->toBe(700)->and($row->cost_usd)->toBe('0.00400')->and($row->duration_ms)->toBeInt()
         ->and($row->requested_by)->toBeNull()->and(strlen($row->cache_key))->toBeLessThanOrEqual(120)->and($row->cache_key)->toBe($r->generated->cacheKey)
-        ->and($row->cache_key)->toStartWith('daily_brief|analyst.daily.v2|')
+        ->and($row->cache_key)->toStartWith('daily_brief|analyst.daily.v3|')
         ->and(json_decode($row->payload, true))->toEqual(groundedAnswer($context->json))
         // ai_tool_calls: one row per ToolResult that is inside the context, all pointing at this insight
         ->and($calls->count())->toBe(count($context->toolResults))->and($r->toolCalls)->toBe($calls->count())
@@ -151,7 +151,7 @@ it('a weekly review is about the last Saturday-to-Friday week', function () {
     analyst()->weeklyReview();
     $row = DB::table('ai_insights')->first();
 
-    expect($row->type)->toBe('weekly_review')->and($row->scope)->toBe('week:2026-10-10..2026-10-16')->and($row->period_start)->toBe('2026-10-10')->and($row->period_end)->toBe('2026-10-16')->and($row->prompt_version)->toBe('analyst.weekly.v2');
+    expect($row->type)->toBe('weekly_review')->and($row->scope)->toBe('week:2026-10-10..2026-10-16')->and($row->period_start)->toBe('2026-10-10')->and($row->period_end)->toBe('2026-10-16')->and($row->prompt_version)->toBe('analyst.weekly.v3');
 });
 
 it('stores requested_by for a manual run', function () {

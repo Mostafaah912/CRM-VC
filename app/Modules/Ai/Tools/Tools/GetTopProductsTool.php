@@ -51,7 +51,12 @@ final class GetTopProductsTool extends AiTool
         $total = $db->table('customer_product_purchases')->sum('revenue');
         $names = $rows->isEmpty() ? [] : $db->table('products')->whereIn('id', $rows->pluck('product_id')->all())->pluck('name', 'id')->all();
 
+        $first = $db->table('daily_metrics')->min('date');
+        $end = Period::end($db);
+
         return [
+            // Lifetime, not the report window: say so explicitly so the model never reads these as "yesterday's" sales.
+            'period' => ['basis' => 'lifetime_all_orders', 'from' => $first === null ? null : ToolFormat::date((string) $first), 'to' => $end === null ? null : ToolFormat::date($end->toDateString())],
             'ranked_by' => $by,
             'products' => $rows->map(fn ($r) => [
                 'product_id' => (int) $r->product_id,

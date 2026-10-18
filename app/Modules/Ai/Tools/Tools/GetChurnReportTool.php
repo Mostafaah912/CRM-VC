@@ -40,6 +40,12 @@ final class GetChurnReportTool extends AiTool
             'avg_recency_days' => ToolFormat::int($r->recency),
         ])->values()->all();
 
+        $risk = $db->table('customer_metrics')->whereIn('churn_risk_level', ['high', 'lost'])->whereNotNull('clv_confidence')->groupBy('clv_confidence')
+            ->selectRaw('clv_confidence as level, count(*) as customers')->get()
+            ->sortBy(fn ($c) => array_search((string) $c->level, ['high', 'medium', 'low'], true))->values();
+        $riskTotal = (int) $risk->sum('customers');
+        $riskConfidence = $risk->map(fn ($c) => ['level' => (string) $c->level, 'customers' => (int) $c->customers, 'share_percent' => ToolFormat::percent($c->customers, $riskTotal)])->all();
+
         $run = $db->table('metric_runs')->whereNotNull('finished_at')->whereNull('error')->whereNotNull('thresholds')->orderByDesc('id')->first(['thresholds', 'finished_at']);
         $thresholds = $run === null ? [] : (array) json_decode((string) $run->thresholds, true);
 
@@ -47,6 +53,8 @@ final class GetChurnReportTool extends AiTool
             'classified_customers' => $total,
             'levels' => SmallGroupMask::apply($mapped, 'level'),
             'value_at_risk' => (int) $atRisk->sum('customers') >= SmallGroupMask::min() ? ToolFormat::toman($atRisk->sum('clv')) : null,
+            'value_at_risk_means' => 'estimated_lifetime_value_of_high_and_lost_churn_customers_not_a_confirmed_loss',
+            'value_at_risk_clv_confidence' => SmallGroupMask::apply($riskConfidence, 'level'),
             'thresholds_days' => array_intersect_key(array_map('intval', array_filter($thresholds, 'is_numeric')), array_flip(['p50', 'p75', 'p90'])),
         ];
     }

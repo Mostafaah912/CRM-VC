@@ -58,15 +58,15 @@ final class GetDashboardMetricsTool extends AiTool
             'period' => ['days' => $days, 'from' => ToolFormat::date($start->toDateString()), 'to' => ToolFormat::date($end->toDateString())],
             'current' => $current,
             'previous' => $previous,
-            'change_percent' => [
-                'orders' => $this->change($current['orders'], $previous['orders']),
-                'net_revenue' => $this->change($current['net_revenue'], $previous['net_revenue']),
-                'aov' => $this->change($current['aov'], $previous['aov']),
-            ],
+            // Every figure in `current` has its precomputed change — the model must never derive one (null = previous was zero).
+            'change_percent' => array_combine(array_keys($current), array_map(fn (string $k) => $this->change($current[$k], $previous[$k]), array_keys($current))),
             'customer_base' => [
                 'customers_with_orders' => (int) $base->customers,
                 'repeat_customers' => (int) $base->repeaters,
                 'repeat_rate_percent' => ToolFormat::percent($base->repeaters, $base->customers),
+                'repeat_rate_means' => 'share_of_customers_with_2_or_more_orders',
+                'one_time_customers' => (int) $base->customers - (int) $base->repeaters,
+                'one_time_customers_percent' => ToolFormat::percent((int) $base->customers - (int) $base->repeaters, $base->customers),
             ],
         ];
     }

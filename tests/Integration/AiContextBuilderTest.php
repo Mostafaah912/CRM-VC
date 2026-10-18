@@ -50,7 +50,7 @@ beforeEach(function () {
     AiToolsFixture::seed();
     $this->series = AnomalySeries::make('2026-06-01', '2026-10-13', [CTX_SPIKE_DAY => ['orders_count' => 130, 'net_revenue' => 26_000_000]]);
     AiToolsFixture::loadDaily($this->series);
-    config(['ai.context.pii_denylist' => ['Rezaei', 'علی رضایی', 'ali.rezaei']]);
+    config(['ai.context.pii_denylist' => ['Rezaei', 'علی رضایی', 'ali.rezaei'], 'ai.context.min_product_coverage_percent' => 0, 'ai.tools.affinity_min_support' => 5]);   // the fixture's purchases are a sliver of its daily revenue; coverage has its own tests
 });
 
 afterEach(function () {
@@ -412,4 +412,42 @@ it('NEVER stays silent when a KPI window ends on a different day than as_of: per
         ->and($p['data_quality']['period_anchor']['mismatch'])->toBeTrue()
         ->and($p['data_quality']['period_anchor']['kpi_and_trend_end'])->toContain('2026-10-14')
         ->and($p['data_quality']['interpretation'])->toHaveKey('period_anchor_mismatch');
+});
+
+/*
+| P7-08b — product coverage: the share of product revenue attributed to a product is reported, and below the threshold it is a permanent
+| warning (`product_coverage_low`) that also reaches the model's interpretation block.
+*/
+it('reports product coverage and raises product_coverage_low below the threshold', function () {
+    $attributed = (int) AiToolsFixture::admin()->table('customer_product_purchases')->sum('revenue');
+    $total = (int) AiToolsFixture::admin()->table('daily_metrics')->sum('product_revenue');
+    config(['ai.context.min_product_coverage_percent' => 90]);
+    [, $p] = ctx();
+    $q = $p['data_quality'];
+
+    expect($q['product_coverage']['attributed_percent'])->toBe(round($attributed / $total * 100, 2))
+        ->and($q['product_coverage']['unattributed_percent'])->toBe(round(100 - round($attributed / $total * 100, 2), 2))
+        ->and($q['product_coverage']['min_percent'])->toEqual(90)
+        ->and($q['warnings'])->toContain('product_coverage_low')->and($q['interpretation'])->toHaveKey('product_coverage_low');
+});
+
+it('raises no coverage warning when coverage meets the threshold or the check is disabled (0)', function () {
+    config(['ai.context.min_product_coverage_percent' => 0]);
+    [, $p] = ctx();
+
+    expect($p['data_quality']['warnings'])->toBe([])->and($p['data_quality']['product_coverage']['attributed_percent'])->toBeFloat();
+
+    config(['ai.context.min_product_coverage_percent' => 0.0001]);
+    [, $p] = ctx();
+
+    expect($p['data_quality']['warnings'])->toBe([]);
+});
+
+it('states the period of top_products explicitly and carries support and the min support into the affinity section', function () {
+    [, $p] = ctx();
+
+    expect($p['products_affinity']['top_products']['period']['basis'])->toBe('lifetime_all_orders')
+        ->and($p['products_affinity']['affinity_product'])->toHaveKeys(['min_support', 'support_means'])->and($p['products_affinity']['affinity_product']['pairs'][0])->toHaveKey('support')
+        ->and($p['customer_health']['churn'])->toHaveKeys(['value_at_risk_means', 'value_at_risk_clv_confidence'])
+        ->and($p['kpis']['windows'][0]['result']['customer_base'])->toHaveKeys(['one_time_customers_percent', 'repeat_rate_means']);
 });

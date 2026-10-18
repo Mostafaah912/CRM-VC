@@ -50,8 +50,9 @@ final class OutputSchema
                     'properties' => [
                         'action' => ['type' => 'string'], 'rationale' => ['type' => 'string'],
                         'effort' => ['type' => 'string', 'enum' => ['low', 'medium', 'high']], 'priority' => ['type' => 'string', 'enum' => ['low', 'medium', 'high']],
+                        'metric_refs' => $refs,
                     ],
-                    'required' => ['action', 'rationale', 'effort', 'priority'],
+                    'required' => ['action', 'rationale', 'effort', 'priority', 'metric_refs'],
                 ]],
                 'anomalies_explained' => ['type' => 'array', 'description' => 'One entry per anomaly in the data block that matters. ref = path of that anomaly, e.g. anomalies.anomalies.0.', 'items' => [
                     'type' => 'object',
@@ -82,7 +83,7 @@ final class OutputSchema
             'insights' => ['maxItems' => 8], 'insights.*.text' => ['maxLength' => 400], 'insights.*.metric_refs' => ['maxItems' => 6],
             'risks' => ['maxItems' => 5], 'risks.*.text' => ['maxLength' => 400], 'risks.*.metric_refs' => ['maxItems' => 6],
             'opportunities' => ['maxItems' => 5], 'opportunities.*.text' => ['maxLength' => 400], 'opportunities.*.metric_refs' => ['maxItems' => 6],
-            'recommendations' => ['maxItems' => 5], 'recommendations.*.action' => ['maxLength' => 300], 'recommendations.*.rationale' => ['maxLength' => 400],
+            'recommendations' => ['maxItems' => 5], 'recommendations.*.action' => ['maxLength' => 300], 'recommendations.*.rationale' => ['maxLength' => 400], 'recommendations.*.metric_refs' => ['maxItems' => 6],
             'anomalies_explained' => ['maxItems' => 10], 'anomalies_explained.*.interpretation' => ['maxLength' => 400], 'anomalies_explained.*.ref' => ['maxLength' => 120],
             'data_gaps' => ['maxItems' => 5], 'data_gaps.*' => ['maxLength' => 300],
             'data_quality_note' => ['maxLength' => 500],

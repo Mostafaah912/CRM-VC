@@ -63,7 +63,7 @@ it('accepts a valid answer on the first call and reports tokens, cost and model'
 
     $g = insightGenerator($fake)->generate(AiInsightType::DailyBrief, AnalystSamples::context());
 
-    expect($g->source)->toBe('model')->and($g->attempts)->toBe(1)->and($g->payload)->toBe(AnalystSamples::answer())->and($g->promptVersion)->toBe('analyst.daily.v2')
+    expect($g->source)->toBe('model')->and($g->attempts)->toBe(1)->and($g->payload)->toBe(AnalystSamples::answer())->and($g->promptVersion)->toBe('analyst.daily.v3')
         ->and($g->type)->toBe('daily_brief')->and($g->inputTokens)->toBe(1000)->and($g->outputTokens)->toBe(400)->and($g->costUsd)->toBe('0.00100')->and($g->model)->toBe('m1')
         ->and($g->redactions)->toBe(0)->and($g->responses)->toHaveCount(1)->and($fake->callCount())->toBe(1)
         ->and($fake->calls()[0]->responseSchema)->not->toBeNull()->and($fake->calls()[0]->tools)->toBe([]);
@@ -144,14 +144,14 @@ describe('cache', function () {
         expect($cache->key('daily_brief', 'analyst.daily.v1', 'gemini-x', $json))->toBe($base)
             ->and(strlen($base))->toBeLessThanOrEqual(120)->and(strlen($cache->key('weekly_review', 'analyst.weekly.v1', str_repeat('m', 80), $json.'x')))->toBeLessThanOrEqual(120)
             ->and($cache->key('weekly_review', 'analyst.daily.v1', 'gemini-x', $json))->not->toBe($base)
-            ->and($cache->key('daily_brief', 'analyst.daily.v2', 'gemini-x', $json))->not->toBe($base)
+            ->and($cache->key('daily_brief', 'analyst.daily.v3', 'gemini-x', $json))->not->toBe($base)
             ->and($cache->key('daily_brief', 'analyst.daily.v1', 'gemini-y', $json))->not->toBe($base)
             ->and($cache->key('daily_brief', 'analyst.daily.v1', 'gemini-x', str_replace('2026-10-13', '2026-10-14', $json)))->not->toBe($base);
     });
 
     it('a fresh hit returns the stored payload with ZERO provider calls', function () {
         $context = AnalystSamples::context();
-        $key = app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v2', 'test-model', $context->json);
+        $key = app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v3', 'test-model', $context->json);
         storeInsightRow($key, AnalystSamples::answer());
         $fake = new FakeAiProvider;
 
@@ -164,7 +164,7 @@ describe('cache', function () {
     it('misses when the context, model or prompt version differs, and when the row is older than the TTL', function () {
         $context = AnalystSamples::context();
         $cache = app(ResponseCache::class);
-        $key = $cache->key('daily_brief', 'analyst.daily.v2', 'test-model', $context->json);
+        $key = $cache->key('daily_brief', 'analyst.daily.v3', 'test-model', $context->json);
         storeInsightRow($key, AnalystSamples::answer(), CarbonImmutable::now()->subMinutes(1441));   // default TTL is 1440 minutes
 
         expect($cache->lookup($key))->toBeNull();
@@ -188,7 +188,7 @@ describe('cache', function () {
 
     it('`force` bypasses a fresh hit', function () {
         $context = AnalystSamples::context();
-        storeInsightRow(app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v2', 'test-model', $context->json), ['stale' => true]);
+        storeInsightRow(app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v3', 'test-model', $context->json), ['stale' => true]);
         $fake = (new FakeAiProvider)->queue(okResponse(AnalystSamples::answer()));
 
         $g = insightGenerator($fake)->generate(AiInsightType::DailyBrief, $context, force: true);
@@ -224,7 +224,7 @@ describe('budget', function () {
 
     it('a cache hit spends nothing: no provider call, no usage row, no reservation', function () {
         $context = AnalystSamples::context();
-        storeInsightRow(app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v2', 'test-model', $context->json), AnalystSamples::answer());
+        storeInsightRow(app(ResponseCache::class)->key('daily_brief', 'analyst.daily.v3', 'test-model', $context->json), AnalystSamples::answer());
         $fake = new FakeAiProvider;
 
         $g = insightGenerator(budgetedWrapper($fake))->generate(AiInsightType::DailyBrief, $context);

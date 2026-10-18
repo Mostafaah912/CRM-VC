@@ -45,6 +45,9 @@ return [
         'max_kb' => (float) (env('AI_MAX_CONTEXT_KB') ?: 24),
         // Data older than this many days (complete days behind yesterday, Asia/Tehran) is flagged stale_data.
         'stale_after_days' => (int) (env('AI_CONTEXT_STALE_AFTER_DAYS') ?: 1),
+        // Below this share of product revenue attributed to a product (customer_product_purchases vs daily_metrics.product_revenue,
+        // lifetime) data_quality carries the permanent warning `product_coverage_low`. 0 disables it.
+        'min_product_coverage_percent' => (float) (env('AI_MIN_PRODUCT_COVERAGE_PERCENT') ?: 90),
         // Rough token estimate = bytes / this. Display/log only (BudgetGuard uses its own conservative 1 token per byte).
         'bytes_per_token' => 3.0,
         // Extra strings that must never appear in a context (tests put fixture names here); empty by default.
@@ -80,8 +83,8 @@ return [
     | tests/fixtures/ai_prompt_lock.json — switching is a one-line, reviewable change.
     */
     'prompts' => [
-        'daily_brief' => 'analyst.daily.v2',
-        'weekly_review' => 'analyst.weekly.v2',
+        'daily_brief' => 'analyst.daily.v3',
+        'weekly_review' => 'analyst.weekly.v3',
     ],
 
     /*
@@ -106,6 +109,10 @@ return [
         'max_result_bytes' => 6144,
         'max_string_length' => 64,
         'small_group_min' => 5,
+        // get_product_affinity hides pairs bought together by fewer customers/baskets than this (never below small_group_min).
+        // Chosen from the dev distribution (docs/architecture/sprint-7.md): product-level co-purchase median 13, p90 25, max 49;
+        // 20 keeps the top ~20% (61 of 302 pairs) — a pair seen by 10-13 customers is anecdote, not a bundle.
+        'affinity_min_support' => (int) (env('AI_AFFINITY_MIN_SUPPORT') ?: 20),
     ],
 
     /*

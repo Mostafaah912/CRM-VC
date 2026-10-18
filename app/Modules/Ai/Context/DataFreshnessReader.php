@@ -61,6 +61,17 @@ final class DataFreshnessReader
             $warnings[] = 'sync_failed_recently';
         }
 
+        // Share of product revenue that is attributed to a product (order lines without a product link never reach
+        // customer_product_purchases). Lifetime on both sides; the AI role cannot read order_items, so this is the honest proxy.
+        $attributed = (int) $connection->table('customer_product_purchases')->sum('revenue');
+        $productRevenue = (int) $connection->table('daily_metrics')->sum('product_revenue');
+        $coverage = $productRevenue > 0 ? ToolFormat::percent(min($attributed, $productRevenue), $productRevenue) : null;
+        $minCoverage = (float) config('ai.context.min_product_coverage_percent', 90);
+
+        if ($coverage !== null && $minCoverage > 0 && $coverage < $minCoverage) {
+            $warnings[] = 'product_coverage_low';
+        }
+
         return [
             'as_of' => $report->asOf === null ? null : ToolFormat::date($report->asOf),
             'data_age_days' => $age,
@@ -73,6 +84,7 @@ final class DataFreshnessReader
             'sync' => $sync,
             'sync_failed_recently' => $syncFailed,
             'sync_status_source' => 'sync_cursors',
+            'product_coverage' => ['basis' => 'lifetime_product_revenue_attributed_to_a_product', 'attributed_percent' => $coverage, 'unattributed_percent' => $coverage === null ? null : round(100 - $coverage, 2), 'min_percent' => $minCoverage],
             'warnings' => $warnings,
         ];
     }

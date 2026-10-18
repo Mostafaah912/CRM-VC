@@ -46,6 +46,7 @@ final class GetCustomerSummaryTool extends AiTool
             'one_time_customers' => $customers - (int) $r->repeaters,
             'repeat_customers' => (int) $r->repeaters,
             'repeat_rate_percent' => ToolFormat::percent($r->repeaters, $customers),
+            'one_time_customers_percent' => ToolFormat::percent($customers - (int) $r->repeaters, $customers),
             'avg_orders' => round((float) $r->orders, 2),
             'avg_aov' => ToolFormat::toman($r->aov),
             'avg_clv_historical' => ToolFormat::toman($r->clv),

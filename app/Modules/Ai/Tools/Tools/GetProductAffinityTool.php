@@ -19,7 +19,7 @@ final class GetProductAffinityTool extends AiTool
 
     public function description(): string
     {
-        return 'Strongest co-purchase pairs by lift at one level: category, product, variation (ids only, no names available) or basket (counts are baskets, not customers). Pairs bought together by fewer than 5 are never shown.';
+        return 'Strongest co-purchase pairs by lift at one level: category, product, variation (ids only, no names available) or basket (counts are baskets, not customers). Pairs with a support (co_count) below the configured minimum are never shown; a pair is only a bundle idea when its support is shown and high.';
     }
 
     public function properties(): array
@@ -40,7 +40,8 @@ final class GetProductAffinityTool extends AiTool
         $level = (string) ($arguments['level'] ?? 'product');
         $limit = (int) ($arguments['limit'] ?? 10);
         $db = $this->db->connection();
-        $rows = $db->table('product_affinities')->where('level', $level)->where('co_customers', '>=', SmallGroupMask::min())
+        $minSupport = max(SmallGroupMask::min(), (int) config('ai.tools.affinity_min_support', 20));
+        $rows = $db->table('product_affinities')->where('level', $level)->where('co_customers', '>=', $minSupport)
             ->orderByDesc('lift')->orderByDesc('co_customers')->orderBy('entity_a_id')->orderBy('entity_b_id')->limit($limit)
             ->get(['entity_a_id', 'entity_b_id', 'co_customers', 'a_customers', 'b_customers', 'confidence', 'lift']);
 
@@ -55,9 +56,12 @@ final class GetProductAffinityTool extends AiTool
         return [
             'level' => $level,
             'unit' => $level === 'basket' ? 'baskets' : 'customers',
+            'min_support' => $minSupport,
+            'support_means' => $level === 'basket' ? 'baskets_containing_both' : 'customers_who_bought_both',
             'pairs' => $rows->map(fn ($r) => [
                 'a' => ['id' => (int) $r->entity_a_id, 'name' => $names[$r->entity_a_id] ?? null],
                 'b' => ['id' => (int) $r->entity_b_id, 'name' => $names[$r->entity_b_id] ?? null],
+                'support' => (int) $r->co_customers,
                 'co_count' => (int) $r->co_customers,
                 'a_count' => (int) $r->a_customers,
                 'b_count' => (int) $r->b_customers,

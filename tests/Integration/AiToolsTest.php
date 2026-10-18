@@ -60,8 +60,11 @@ it('get_dashboard_metrics: window sums, previous-window comparison, customer bas
             'shipping_revenue' => 600_000, 'aov' => 100_000, 'customer_days_new' => 30, 'customer_days_repeat' => 30, 'revenue_new' => 3_000_000, 'revenue_repeat' => 3_000_000,
         ])
         ->and($r['previous']['orders'])->toBe(20)->and($r['previous']['net_revenue'])->toBe(2_000_000)
-        ->and($r['change_percent'])->toBe(['orders' => 200.0, 'net_revenue' => 200.0, 'aov' => 0.0])
-        ->and($r['customer_base'])->toBe(['customers_with_orders' => 12, 'repeat_customers' => 10, 'repeat_rate_percent' => 83.33]);
+        ->and($r['change_percent'])->toBe(array_replace(array_fill_keys(array_keys($r['current']), 200.0), ['aov' => 0.0]))   // every figure has its precomputed change (revenue_new too)
+        ->and($r['customer_base'])->toBe([
+            'customers_with_orders' => 12, 'repeat_customers' => 10, 'repeat_rate_percent' => 83.33, 'repeat_rate_means' => 'share_of_customers_with_2_or_more_orders',
+            'one_time_customers' => 2, 'one_time_customers_percent' => 16.67,
+        ]);
 });
 
 it('get_sales_trend: day / week / month buckets conserve the totals', function () {
@@ -104,6 +107,32 @@ it('get_retention_report: pools mature periods of large-enough cohorts only', fu
         ->and($r['periods'])->toBe([['period' => 1, 'cohorts' => 1, 'cohort_customers' => 10, 'retention_percent' => 50.0]]);
 });
 
+it('get_product_affinity: pairs below the configured minimum support are dropped, support is shown, and the minimum never goes below the small-group floor', function () {
+    config(['ai.tools.affinity_min_support' => 12]);
+    $r = tool('get_product_affinity', ['level' => 'basket']);
+
+    expect($r['min_support'])->toBe(12)->and($r['support_means'])->toBe('baskets_containing_both')
+        ->and(array_map(fn ($p) => $p['support'] >= 12 && $p['support'] === $p['co_count'], $r['pairs']))->each->toBeTrue();
+
+    config(['ai.tools.affinity_min_support' => 2]);   // below small_group_min (5): the floor wins
+    expect(tool('get_product_affinity')['min_support'])->toBe(5);
+
+    config(['ai.tools.affinity_min_support' => 1000]);
+    expect(tool('get_product_affinity')['pairs'])->toBe([]);
+});
+
+it('get_top_products states its period (lifetime) explicitly', function () {
+    $r = tool('get_top_products');
+
+    expect($r['period']['basis'])->toBe('lifetime_all_orders')->and($r['period']['to'])->toHaveKeys(['iso', 'jalali'])->and($r['period']['from'])->toHaveKeys(['iso', 'jalali']);
+});
+
+it('get_churn_report: value_at_risk comes with its definition and the CLV-confidence distribution of the at-risk customers', function () {
+    $r = tool('get_churn_report');
+
+    expect($r['value_at_risk_means'])->toBe('estimated_lifetime_value_of_high_and_lost_churn_customers_not_a_confirmed_loss')->and($r)->toHaveKey('value_at_risk_clv_confidence');
+});
+
 it('get_cohort_report: matrix with immature periods null and the 3-customer cohort hidden', function () {
     $r = tool('get_cohort_report');
 
@@ -114,6 +143,7 @@ it('get_cohort_report: matrix with immature periods null and the 3-customer coho
 });
 
 it('get_product_affinity: by level, with names, never a pair under 5', function () {
+    config(['ai.tools.affinity_min_support' => 5]);
     $product = tool('get_product_affinity');
     $category = tool('get_product_affinity', ['level' => 'category']);
     $basket = tool('get_product_affinity', ['level' => 'basket']);

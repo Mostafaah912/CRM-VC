@@ -27,8 +27,11 @@ it('fails when a prompt file is edited without a new version', function () {
 it('fails when the output schema or its limits change without a new prompt version', function () {
     $schema = hash('sha256', json_encode(OutputSchema::schema()).json_encode(OutputSchema::limits()));
 
-    foreach (app(PromptRepository::class)->all() as $prompt) {
-        expect(promptLock()[$prompt->version]['schema_sha256'])->toBe($schema, "the output schema changed under {$prompt->version}: bump the prompt versions");
+    // Only the versions IN USE are bound to the current schema; superseded versions keep the hash of the schema they shipped with.
+    foreach (['daily_brief', 'weekly_review'] as $type) {
+        $version = config("ai.prompts.{$type}");
+
+        expect(promptLock()[$version]['schema_sha256'])->toBe($schema, "the output schema changed under {$version}: bump the prompt versions");
     }
 });
 
@@ -73,15 +76,22 @@ it('keeps the superseded v1 prompts on disk, byte-for-byte as locked', function 
     }
 });
 
-it('makes v2 the default and v2 prompts carry the new rules', function () {
+it('makes v3 the default and the v3 prompts carry the new rules', function () {
     $repo = app(PromptRepository::class);
 
-    expect($repo->for(AiInsightType::DailyBrief)->version)->toBe('analyst.daily.v2')
-        ->and($repo->for(AiInsightType::WeeklyReview)->version)->toBe('analyst.weekly.v2');
+    expect($repo->for(AiInsightType::DailyBrief)->version)->toBe('analyst.daily.v3')
+        ->and($repo->for(AiInsightType::WeeklyReview)->version)->toBe('analyst.weekly.v3');
 
-    foreach (['analyst.daily.v2', 'analyst.weekly.v2'] as $v) {
+    foreach (['analyst.daily.v3', 'analyst.weekly.v3'] as $v) {
         $text = file_get_contents(resource_path("prompts/{$v}.md"));
 
-        expect($text)->toContain('period_anchor_mismatch')->toContain('حداکثر medium')->toContain('ممنوع');
+        expect($text)->toContain('one_time_customers_percent')->toContain('product_coverage_low')->toContain('value_at_risk_clv_confidence')
+            ->toContain('support')->toContain('period_anchor_mismatch')->toContain('حداکثر medium');
+    }
+});
+
+it('keeps v2 on disk, byte-for-byte as locked', function () {
+    foreach (['analyst.daily.v2', 'analyst.weekly.v2'] as $version) {
+        expect(collect(app(PromptRepository::class)->all())->firstWhere('version', $version)->sha256)->toBe(promptLock()[$version]['prompt_sha256']);
     }
 });

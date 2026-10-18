@@ -237,3 +237,78 @@ it('lists every reason when several apply', function () {
 
     expect(cappedBy($c, ['anomalies_explained' => []])['meta']['adjustments'][0]['reasons'])->toBe(['clv_confidence_mostly_low', 'anomaly_unexplained', 'data_quality_warnings']);
 });
+
+/*
+| P7-08b — key_metrics.change reconciliation, recommendations grounding, and the SOFT ungrounded-number check.
+*/
+function withKeyMetric(array $overrides): array
+{
+    $answer = AnalystSamples::answer();
+    $answer['key_metrics'][0] = array_replace($answer['key_metrics'][0], $overrides);
+
+    return $answer;
+}
+
+it('accepts a change that equals the change_percent in the data, signed or absolute, to the stated precision', function (string $change) {
+    expect(validateAnswer(withKeyMetric(['change' => $change]))['errors'])->toBe([]);
+})->with(['+10.0%', '10%', '+10%', '10.00%', 'رشد +10.0 درصد']);
+
+it('rejects a change that does not match the data (change_percent here is 10.0)', function (string $change) {
+    $r = validateAnswer(withKeyMetric(['change' => $change]));
+
+    expect($r['payload'])->toBeNull()->and($r['errors'])->toBe(['key_metrics.0.change: does not match the change_percent in the data']);
+})->with(['+12.5%', '-10.0%', '11%', '+10.1%']);
+
+it('computes the change from the current/previous pair beside the first ref when no change_percent ref is given', function () {
+    $ok = validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.current.net_revenue'], 'change' => '+10.0%']));
+    $bad = validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.current.net_revenue'], 'change' => '+25%']));
+
+    expect($ok['errors'])->toBe([])->and($bad['errors'])->toBe(['key_metrics.0.change: does not match the change_percent in the data']);
+});
+
+it('rejects a change that has a number but nothing in the data to verify it, and allows an empty or non-numeric one', function () {
+    $unverifiable = validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.previous.net_revenue'], 'value' => '8,000,000 تومان', 'change' => '+10%']));
+
+    expect($unverifiable['errors'])->toBe(['key_metrics.0.change: states a number but the data has no change_percent (or current/previous pair) to verify it; leave it empty'])
+        ->and(validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.previous.net_revenue'], 'value' => '8,000,000', 'change' => '']))['errors'])->toBe([])
+        ->and(validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.previous.net_revenue'], 'value' => '8,000,000', 'change' => '—']))['errors'])->toBe([]);
+});
+
+it('requires every recommendation to carry grounded metric_refs, like a fact', function () {
+    $none = AnalystSamples::answer();
+    $none['recommendations'][0]['metric_refs'] = [];
+    $bogus = AnalystSamples::answer();
+    $bogus['recommendations'][0]['metric_refs'] = ['kpis.windows.0.result.nope'];
+    $missing = AnalystSamples::answer();
+    unset($missing['recommendations'][0]['metric_refs']);
+
+    expect(validateAnswer($none)['errors'])->toBe(['recommendations.0.metric_refs: at least one reference is required here'])
+        ->and(validateAnswer($bogus)['errors'])->toBe(['recommendations.0.metric_refs.0: unknown reference (not a path in the data)'])
+        ->and(validateAnswer($missing)['errors'])->toBe(['recommendations.0.metric_refs: required']);
+});
+
+it('records numbers in free text that exist nowhere in the data, and caps confidence — it never rejects', function () {
+    $answer = AnalystSamples::answer();
+    $answer['confidence'] = 'high';
+    $answer['summary'] = 'درآمد 8,800,000 تومان بود و 37.5 درصد مشتریان بازگشتند.';
+    $answer['insights'][1]['text'] = 'حدود 88 درصد سفارش‌ها تکراری است.';
+    $r = validateAnswer($answer);
+
+    expect($r['errors'])->toBe([])->and($r['payload']['meta']['ungrounded_numbers'])->toBe(['37.5', '88'])
+        ->and($r['payload']['confidence'])->toBe('medium')->and($r['payload']['meta']['adjustments'][0]['reasons'])->toBe(['ungrounded_numbers']);
+});
+
+it('does not flag numbers the data states: exact, absolute value, digits in dates, rounded or scaled (million) forms, thousands separators', function () {
+    $answer = AnalystSamples::answer();
+    $answer['summary'] = 'درآمد 8,800,000 تومان یعنی 8.8 میلیون تومان؛ روز 1405/07/21 (2026-10-13)، حدود 44 سفارش از 40 و 10 درصد رشد، حدود 130 سفارش در ناهنجاری و 2 سفارش یا بیشتر.';
+    $answer['risks'][0]['text'] = 'مقدار مورد انتظار 43 بود (کمتر از 130)؛ 77 درصد.';
+    $r = validateAnswer($answer);
+
+    expect($r['payload']['meta']['ungrounded_numbers'] ?? [])->toBe(['77']);   // 77 is the only invented one
+});
+
+it('keeps confidence as given and adds no meta when every free-text number is grounded', function () {
+    $r = validateAnswer(AnalystSamples::answer());
+
+    expect($r['payload'])->not->toHaveKey('meta');
+});

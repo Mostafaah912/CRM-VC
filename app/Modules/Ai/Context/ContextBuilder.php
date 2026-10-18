@@ -228,6 +228,7 @@ final class ContextBuilder
                 'suspected_data_gap' => 'zero_values_may_be_missing_data_not_business_decline',
                 'stale_data' => 'latest_numbers_may_not_include_recent_days',
                 'period_anchor_mismatch' => $mismatch ? 'figures_may_describe_a_different_day_than_as_of_do_not_compare_them' : null,
+                'product_coverage_low' => in_array('product_coverage_low', $freshness['warnings'], true) ? 'product_rankings_and_affinities_cover_only_part_of_product_revenue_state_this' : null,
             ]) : [],
             'unavailable_tools' => $unavailable,
         ];

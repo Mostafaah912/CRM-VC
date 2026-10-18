@@ -49,7 +49,7 @@ final class AnalystSamples
             ],
             'risks' => [['text' => 'جهش ناگهانی سفارش‌ها باید بررسی شود.', 'severity' => 'warning', 'metric_refs' => ['anomalies.anomalies.0.observed']]],
             'opportunities' => [['text' => 'محصول پرفروش را در صفحه‌ی اصلی نمایش بده.', 'metric_refs' => ['products_affinity.top_products.products.0.buyers']]],
-            'recommendations' => [['action' => 'موجودی محصول پرفروش را بررسی کن.', 'rationale' => 'تقاضا بالاست.', 'effort' => 'low', 'priority' => 'high']],
+            'recommendations' => [['action' => 'موجودی محصول پرفروش را بررسی کن.', 'rationale' => 'تقاضا بالاست.', 'effort' => 'low', 'priority' => 'high', 'metric_refs' => ['products_affinity.top_products.products.0.buyers']]],
             'anomalies_explained' => [['ref' => 'anomalies.anomalies.0', 'interpretation' => 'جهش سفارش؛ علت نامشخص است.', 'is_data_issue' => false]],
             'data_gaps' => ['علت جهش سفارش‌ها در داده نیست.'],
             'data_quality_note' => '',

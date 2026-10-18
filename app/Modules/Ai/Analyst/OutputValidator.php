@@ -39,7 +39,13 @@ final class OutputValidator
         }
 
         [$clean, $redactions] = $this->guard->sanitize($answer);
-        $clean = $this->capConfidence($clean, $context);
+        $ungrounded = $this->ungroundedNumbers($clean, $context);
+
+        if ($ungrounded !== []) {
+            $clean['meta']['ungrounded_numbers'] = $ungrounded;
+        }
+
+        $clean = $this->capConfidence($clean, $context, $ungrounded !== []);
 
         return ['payload' => $clean, 'errors' => [], 'redactions' => count($redactions)];
     }
@@ -53,7 +59,7 @@ final class OutputValidator
      * @param  array<string, mixed>  $context
      * @return array<string, mixed>
      */
-    private function capConfidence(array $answer, array $context): array
+    private function capConfidence(array $answer, array $context, bool $hasUngrounded = false): array
     {
         if (($answer['confidence'] ?? null) !== 'high') {
             return $answer;
@@ -86,6 +92,10 @@ final class OutputValidator
 
         if (($context['data_quality']['warnings'] ?? []) !== []) {
             $reasons[] = 'data_quality_warnings';
+        }
+
+        if ($hasUngrounded) {
+            $reasons[] = 'ungrounded_numbers';
         }
 
         if ($reasons === []) {
@@ -169,7 +179,7 @@ final class OutputValidator
      */
     private function ground(array $answer, array $context, array &$errors): void
     {
-        foreach (['key_metrics', 'insights', 'risks', 'opportunities'] as $section) {
+        foreach (['key_metrics', 'insights', 'risks', 'opportunities', 'recommendations'] as $section) {
             foreach ($answer[$section] as $i => $item) {
                 foreach ($item['metric_refs'] as $j => $ref) {
                     if (! $this->resolves($ref, $context)) {
@@ -177,7 +187,7 @@ final class OutputValidator
                     }
                 }
 
-                if (($section === 'key_metrics' || ($section === 'insights' && $item['kind'] === 'fact')) && $item['metric_refs'] === []) {
+                if (($section === 'key_metrics' || $section === 'recommendations' || ($section === 'insights' && $item['kind'] === 'fact')) && $item['metric_refs'] === []) {
                     $errors[] = "{$section}.{$i}.metric_refs: at least one reference is required here";
                 }
             }
@@ -201,6 +211,8 @@ final class OutputValidator
                     $errors[] = "key_metrics.{$i}.value: does not match the number at its first reference";
                 }
             }
+
+            $this->reconcileChange($item, $i, $context, $errors);
         }
 
         foreach ($answer['anomalies_explained'] as $i => $item) {
@@ -208,6 +220,138 @@ final class OutputValidator
                 $errors[] = "anomalies_explained.{$i}.ref: must be the path of an anomaly in the data";
             }
         }
+    }
+
+    /**
+     * key_metrics.change must be a number the DATA states: the change_percent at any of the item's refs, or the change computed from the
+     * `current`/`previous` pair beside its first ref. The same rounding rule as `value`. A change with a number but nothing in the data
+     * to check it against is rejected too (the model must not invent or derive one); an empty/non-numeric change (e.g. "—") is fine.
+     *
+     * @param  array<string, mixed>  $item
+     * @param  array<string, mixed>  $context
+     * @param  list<string>  $errors
+     */
+    private function reconcileChange(array $item, int $i, array $context, array &$errors): void
+    {
+        $stated = $this->statedNumber((string) $item['change']);
+
+        if ($stated === null) {
+            return;
+        }
+
+        $candidates = [];
+
+        foreach ($item['metric_refs'] as $ref) {
+            if (preg_match('/(^|\.)change_percent\.[A-Za-z0-9_]+$/', $ref) === 1 && $this->resolves($ref, $context) && is_numeric($v = $this->valueAt($ref, $context))) {
+                $candidates[] = (float) $v;
+            }
+        }
+
+        $first = $item['metric_refs'][0] ?? '';
+
+        if (preg_match('/^(.*\.)current\.([A-Za-z0-9_]+)$/', $first, $m) === 1) {
+            $now = $this->valueAt($first, $context);
+            $before = $this->valueAt($m[1].'previous.'.$m[2], $context);
+
+            if (is_numeric($now) && is_numeric($before) && (float) $before !== 0.0) {
+                $candidates[] = ((float) $now - (float) $before) / (float) $before * 100;
+            }
+        }
+
+        if ($candidates === []) {
+            $errors[] = "key_metrics.{$i}.change: states a number but the data has no change_percent (or current/previous pair) to verify it; leave it empty";
+
+            return;
+        }
+
+        foreach ($candidates as $candidate) {
+            if ($this->matches($stated, $candidate)) {
+                return;
+            }
+        }
+
+        $errors[] = "key_metrics.{$i}.change: does not match the change_percent in the data";
+    }
+
+    /**
+     * SOFT check of free-text numbers (decision: record and cap confidence, never reject — a rejection loop costs money and we want the
+     * real-run evidence first). Every numeric token in headline/summary/texts/actions/rationales/interpretations must exist in the
+     * context: as a number there, as a digit run inside a context string (dates, ids), as the absolute value, or as a rounded /
+     * scaled (thousand, million, billion) form of one. Integers 0-2 are ignored (definitions such as "2 or more orders").
+     *
+     * @param  array<string, mixed>  $answer
+     * @param  array<string, mixed>  $context
+     * @return list<string>
+     */
+    private function ungroundedNumbers(array $answer, array $context): array
+    {
+        $known = [];
+        $collect = function (mixed $node) use (&$collect, &$known): void {
+            if (is_array($node)) {
+                foreach ($node as $v) {
+                    $collect($v);
+                }
+            } elseif (is_int($node) || is_float($node)) {
+                $known[] = abs((float) $node);
+            } elseif (is_string($node) && preg_match_all('/\d+(?:\.\d+)?/', $node, $m) > 0) {
+                foreach ($m[0] as $digits) {
+                    $known[] = (float) $digits;
+                }
+            }
+        };
+        $collect($context);
+        $known = array_values(array_unique($known));
+
+        $texts = [$answer['headline'], $answer['summary'], $answer['data_quality_note'], ...$answer['data_gaps']];
+
+        foreach (['insights' => ['text'], 'risks' => ['text'], 'opportunities' => ['text'], 'recommendations' => ['action', 'rationale'], 'anomalies_explained' => ['interpretation']] as $section => $fields) {
+            foreach ($answer[$section] as $item) {
+                foreach ($fields as $field) {
+                    $texts[] = $item[$field];
+                }
+            }
+        }
+
+        $found = [];
+
+        foreach ($texts as $text) {
+            $clean = preg_replace('/(?<=\d)[,\x{066C}](?=\d{3})/u', '', (string) $text);
+
+            if (preg_match_all('/\d+(?:\.\d+)?/', (string) $clean, $m) < 1) {
+                continue;
+            }
+
+            foreach ($m[0] as $token) {
+                $decimals = strlen(explode('.', $token)[1] ?? '');
+                $value = (float) $token;
+
+                if ($decimals === 0 && $value <= 2) {
+                    continue;
+                }
+
+                if (! $this->isKnownNumber($value, $decimals, $known)) {
+                    $found[$token] = true;
+                }
+            }
+        }
+
+        return array_slice(array_map('strval', array_keys($found)), 0, 20);
+    }
+
+    /** @param list<float> $known */
+    private function isKnownNumber(float $value, int $decimals, array $known): bool
+    {
+        $tolerance = 0.5 * 10 ** -$decimals + 1e-9;
+
+        foreach ($known as $n) {
+            foreach ([1, 1e3, 1e6, 1e9] as $scale) {
+                if (abs($value - $n / $scale) <= $tolerance && ($scale === 1 || $decimals > 0 || $n >= $scale)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
