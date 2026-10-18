@@ -76,6 +76,15 @@ return [
     ],
 
     /*
+    | Which prompt VERSION each analysis type uses (P7-07; v2 since the first real run). Old versions stay on disk and in
+    | tests/fixtures/ai_prompt_lock.json — switching is a one-line, reviewable change.
+    */
+    'prompts' => [
+        'daily_brief' => 'analyst.daily.v2',
+        'weekly_review' => 'analyst.weekly.v2',
+    ],
+
+    /*
     | Analyst request (P7-07). max_output_tokens is deliberately generous (Persian text is token-heavy); the budget guard prices
     | the worst case from it, so lowering it also lowers the per-call worst-case spend.
     */

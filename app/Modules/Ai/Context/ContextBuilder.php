@@ -206,9 +206,29 @@ final class ContextBuilder
 
         $unavailable = array_values(array_unique($unavailable));
         sort($unavailable);
+
+        // Never silent: every KPI window and the trend must end on the SAME complete day the freshness block reports (Period::end is the
+        // single anchor, so a mismatch means a bug or a tool reading a different day — which is exactly how the first real run compared
+        // today's unfinished row with a complete day).
+        $asOf = $freshness['as_of']['iso'] ?? null;
+        $ends = array_values(array_filter(array_merge(
+            array_map(fn (array $w) => $w['result']['period']['to']['iso'] ?? null, $windows),
+            [$sections['trend']['to']['iso'] ?? null],
+        )));
+        $mismatch = $asOf !== null && array_filter($ends, fn (string $to) => $to !== $asOf) !== [];
+
+        if ($mismatch) {
+            $freshness['warnings'] = [...$freshness['warnings'], 'period_anchor_mismatch'];
+        }
+
         $quality = $freshness + [
+            'period_anchor' => ['as_of' => $asOf, 'kpi_and_trend_end' => array_values(array_unique($ends)), 'mismatch' => $mismatch],
             'suspected_data_gap_events' => $gapCount,
-            'interpretation' => $gapCount > 0 || $freshness['warnings'] !== [] ? ['suspected_data_gap' => 'zero_values_may_be_missing_data_not_business_decline', 'stale_data' => 'latest_numbers_may_not_include_recent_days'] : [],
+            'interpretation' => $gapCount > 0 || $freshness['warnings'] !== [] ? array_filter([
+                'suspected_data_gap' => 'zero_values_may_be_missing_data_not_business_decline',
+                'stale_data' => 'latest_numbers_may_not_include_recent_days',
+                'period_anchor_mismatch' => $mismatch ? 'figures_may_describe_a_different_day_than_as_of_do_not_compare_them' : null,
+            ]) : [],
             'unavailable_tools' => $unavailable,
         ];
 

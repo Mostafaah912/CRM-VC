@@ -7,6 +7,7 @@ namespace App\Modules\Ai\Anomaly;
 use App\Modules\Ai\Dto\AnomalyReport;
 use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Tools\AiReadonlyDb;
+use App\Modules\Ai\Tools\Tools\Period;
 use Carbon\CarbonImmutable;
 
 /**
@@ -25,13 +26,12 @@ final class AnomalyDetector implements AnomalySource
         $days = max(1, min($days, $config->maxLookbackDays));
         $yesterday = CarbonImmutable::now('Asia/Tehran')->startOfDay()->subDay();
         $connection = $this->db->connection();
-        $latest = $connection->table('daily_metrics')->where('date', '<=', $yesterday->toDateString())->max('date');
+        $asOf = Period::end($connection);   // the ONE complete-day anchor shared with the KPI tools and the freshness reader
 
-        if ($latest === null) {
+        if ($asOf === null) {
             return new AnomalyReport('no_data', null, null, $config->windowDays, 0, 0, []);
         }
 
-        $asOf = CarbonImmutable::parse((string) $latest, 'Asia/Tehran')->startOfDay();
         $from = $asOf->subDays($days - 1 + $config->windowDays)->toDateString();
 
         $rows = $connection->table('daily_metrics')->whereBetween('date', [$from, $asOf->toDateString()])->orderBy('date')

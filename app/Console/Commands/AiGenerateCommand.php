@@ -63,6 +63,9 @@ final class AiGenerateCommand extends Command
         $this->line(sprintf('findings: %d insights, %d risks, %d opportunities, %d recommendations', count($payload['insights'] ?? []), count($payload['risks'] ?? []), count($payload['opportunities'] ?? []), count($payload['recommendations'] ?? [])));
         $this->line(sprintf('model: %s/%s | prompt: %s | tokens in/out: %d/%d | cost: %s USD | %d ms | tool calls stored: %d', $insight->provider, $insight->model, $insight->prompt_version, $insight->input_tokens, $insight->output_tokens, $insight->cost_usd, (int) $insight->duration_ms, $result->toolCalls));
 
+        $reasoning = $result->generated === null ? 0 : array_sum(array_map(fn ($r) => $r->reasoningTokens, $result->generated->responses));
+        $this->line(sprintf('confidence: %s | reasoning tokens (inside out): %d | adjustments: %s', $payload['confidence'] ?? '-', $reasoning, json_encode($payload['meta']['adjustments'] ?? [], JSON_UNESCAPED_UNICODE)));
+
         if ($result->generated !== null && $result->generated->redactions > 0) {
             $this->warn("{$result->generated->redactions} piece(s) of text in the answer were redacted.");
         }

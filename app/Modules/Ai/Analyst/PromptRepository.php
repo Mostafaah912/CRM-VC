@@ -9,22 +9,25 @@ use App\Modules\Ai\Enums\AiInsightType;
 use RuntimeException;
 
 /**
- * Prompts live in resources/prompts/*.md, one file per analysis type, each with a `version` in its front matter
+ * Prompts live in resources/prompts/*.md, one file per analysis type AND version (the default version is chosen in config/ai.php 'prompts'), each with a `version` in its front matter
  * (.claude/rules/ai.md: changing a prompt bumps its version — tests/Feature/Modules/Ai/PromptVersionGuardTest.php enforces it).
  * File format: front matter (version, type), then `<!-- system -->` and `<!-- user -->` sections; `{{context}}` marks where the
  * data block goes in the user message.
  */
 final class PromptRepository
 {
+    /** The prompt currently IN USE for a type: the version named in config('ai.prompts'). Older versions stay on disk (and in the lock) untouched. */
     public function for(AiInsightType $type): Prompt
     {
+        $wanted = config("ai.prompts.{$type->value}");
+
         foreach ($this->all() as $prompt) {
-            if ($prompt->type === $type->value) {
+            if ($prompt->type === $type->value && $prompt->version === $wanted) {
                 return $prompt;
             }
         }
 
-        throw new RuntimeException("No prompt file for analysis type [{$type->value}].");
+        throw new RuntimeException("No prompt file [{$wanted}] for analysis type [{$type->value}] (config ai.prompts.{$type->value}).");
     }
 
     /** @return list<Prompt> */

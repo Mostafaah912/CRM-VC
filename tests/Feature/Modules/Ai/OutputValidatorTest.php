@@ -182,3 +182,58 @@ describe('numeric reconciliation of key_metrics.value with the number at its fir
         expect(app(OutputValidator::class)->validate($answer, AnalystSamples::contextPayload())['errors'])->toBe([]);
     });
 });
+
+/*
+| Confidence cap (first real run: the model said `high` on a partial-day comparison). Enforced in code, recorded in payload.meta.
+*/
+function cappedBy(array $context, array $answerChanges = []): array
+{
+    return app(OutputValidator::class)->validate(array_replace(AnalystSamples::answer(), ['confidence' => 'high'], $answerChanges), $context)['payload'];
+}
+
+it('keeps high when the evidence supports it, and adds no meta', function () {
+    $p = cappedBy(AnalystSamples::contextPayload());
+
+    expect($p['confidence'])->toBe('high')->and($p)->not->toHaveKey('meta');
+});
+
+it('never lets a medium or low answer rise', function () {
+    $r = app(OutputValidator::class)->validate(array_replace(AnalystSamples::answer(), ['confidence' => 'low']), array_replace_recursive(AnalystSamples::contextPayload(), ['data_quality' => ['warnings' => ['stale_data']]]));
+
+    expect($r['payload']['confidence'])->toBe('low')->and($r['payload'])->not->toHaveKey('meta');
+});
+
+it('downgrades high to medium when most customers have low CLV confidence, and records why', function () {
+    $c = AnalystSamples::contextPayload();
+    $c['customer_health']['customer_base']['clv_confidence'] = [['level' => 'high', 'customers' => 10], ['level' => 'low', 'customers' => 30]];
+    $p = cappedBy($c);
+
+    expect($p['confidence'])->toBe('medium')->and($p['meta']['adjustments'])->toBe([['field' => 'confidence', 'from' => 'high', 'to' => 'medium', 'reasons' => ['clv_confidence_mostly_low']]]);
+});
+
+it('does not downgrade when low CLV confidence is only a minority (exactly half is not "most")', function () {
+    $c = AnalystSamples::contextPayload();
+    $c['customer_health']['customer_base']['clv_confidence'] = [['level' => 'high', 'customers' => 20], ['level' => 'low', 'customers' => 20]];
+
+    expect(cappedBy($c)['confidence'])->toBe('high');
+});
+
+it('downgrades high to medium when an anomaly in the data is left unexplained', function () {
+    $p = cappedBy(AnalystSamples::contextPayload(), ['anomalies_explained' => []]);
+
+    expect($p['confidence'])->toBe('medium')->and($p['meta']['adjustments'][0]['reasons'])->toBe(['anomaly_unexplained']);
+});
+
+it('downgrades high to medium on any data_quality warning, including period_anchor_mismatch', function () {
+    $c = array_replace_recursive(AnalystSamples::contextPayload(), ['data_quality' => ['warnings' => ['period_anchor_mismatch']]]);
+    $p = cappedBy($c);
+
+    expect($p['confidence'])->toBe('medium')->and($p['meta']['adjustments'][0]['reasons'])->toBe(['data_quality_warnings']);
+});
+
+it('lists every reason when several apply', function () {
+    $c = array_replace_recursive(AnalystSamples::contextPayload(), ['data_quality' => ['warnings' => ['stale_data']]]);
+    $c['customer_health']['customer_base']['clv_confidence'] = [['level' => 'low', 'customers' => 9]];
+
+    expect(cappedBy($c, ['anomalies_explained' => []])['meta']['adjustments'][0]['reasons'])->toBe(['clv_confidence_mostly_low', 'anomaly_unexplained', 'data_quality_warnings']);
+});

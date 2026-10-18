@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Modules\Ai\Analyst\OutputSchema;
 use App\Modules\Ai\Analyst\PromptRepository;
+use App\Modules\Ai\Enums\AiInsightType;
 
 /*
 | .claude/rules/ai.md: "Changing a prompt bumps its version." tests/fixtures/ai_prompt_lock.json records, per version, the sha256 of the
@@ -31,12 +32,18 @@ it('fails when the output schema or its limits change without a new prompt versi
     }
 });
 
-it('keeps versions well-formed: unique, <= 20 characters (ai_insights.prompt_version), named after their file, one prompt per type', function () {
+it('keeps versions well-formed: unique, <= 20 characters (ai_insights.prompt_version), named after their file, exactly one configured default per type that exists on disk', function () {
     $prompts = app(PromptRepository::class)->all();
     $versions = array_map(fn ($p) => $p->version, $prompts);
     $types = array_map(fn ($p) => $p->type, $prompts);
 
-    expect($versions)->toBe(array_values(array_unique($versions)))->and($types)->toBe(array_values(array_unique($types)))->and($types)->toEqualCanonicalizing(['daily_brief', 'weekly_review']);
+    expect($versions)->toBe(array_values(array_unique($versions)))->and(array_values(array_unique($types)))->toEqualCanonicalizing(['daily_brief', 'weekly_review']);
+
+    foreach (['daily_brief', 'weekly_review'] as $type) {
+        $default = config("ai.prompts.{$type}");
+
+        expect(array_values(array_filter($prompts, fn ($p) => $p->type === $type && $p->version === $default)))->toHaveCount(1, "ai.prompts.{$type} must name exactly one prompt file of that type");
+    }
 
     foreach ($prompts as $p) {
         expect(strlen($p->version))->toBeLessThanOrEqual(20)->and(file_exists(resource_path("prompts/{$p->version}.md")))->toBeTrue();
@@ -57,4 +64,24 @@ it('detects a tampered prompt (self-test of the guard)', function () {
     }
 
     expect(collect(app(PromptRepository::class)->all())->firstWhere('version', 'analyst.daily.v1')->sha256)->toBe(promptLock()['analyst.daily.v1']['prompt_sha256']);
+});
+
+it('keeps the superseded v1 prompts on disk, byte-for-byte as locked', function () {
+    foreach (['analyst.daily.v1', 'analyst.weekly.v1'] as $version) {
+        expect(file_exists(resource_path("prompts/{$version}.md")))->toBeTrue()
+            ->and(collect(app(PromptRepository::class)->all())->firstWhere('version', $version)->sha256)->toBe(promptLock()[$version]['prompt_sha256']);
+    }
+});
+
+it('makes v2 the default and v2 prompts carry the new rules', function () {
+    $repo = app(PromptRepository::class);
+
+    expect($repo->for(AiInsightType::DailyBrief)->version)->toBe('analyst.daily.v2')
+        ->and($repo->for(AiInsightType::WeeklyReview)->version)->toBe('analyst.weekly.v2');
+
+    foreach (['analyst.daily.v2', 'analyst.weekly.v2'] as $v) {
+        $text = file_get_contents(resource_path("prompts/{$v}.md"));
+
+        expect($text)->toContain('period_anchor_mismatch')->toContain('حداکثر medium')->toContain('ممنوع');
+    }
 });

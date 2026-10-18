@@ -39,8 +39,63 @@ final class OutputValidator
         }
 
         [$clean, $redactions] = $this->guard->sanitize($answer);
+        $clean = $this->capConfidence($clean, $context);
 
         return ['payload' => $clean, 'errors' => [], 'redactions' => count($redactions)];
+    }
+
+    /**
+     * The model may not claim `high` when the evidence does not support it — enforced HERE, not trusted to the prompt. high becomes medium when
+     * (a) most customers' CLV confidence is low, (b) an anomaly in the data was not explained, or (c) data_quality carries any warning
+     * (stale data, failed run, period_anchor_mismatch). The change is recorded in payload.meta.adjustments (never silent).
+     *
+     * @param  array<string, mixed>  $answer
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    private function capConfidence(array $answer, array $context): array
+    {
+        if (($answer['confidence'] ?? null) !== 'high') {
+            return $answer;
+        }
+
+        $reasons = [];
+        $levels = $context['customer_health']['customer_base']['clv_confidence'] ?? [];
+        $low = 0;
+        $total = 0;
+
+        foreach (is_array($levels) ? $levels : [] as $row) {
+            $n = is_array($row) && is_int($row['customers'] ?? null) ? $row['customers'] : 0;
+            $total += $n;
+            $low += ($row['level'] ?? null) === 'low' ? $n : 0;
+        }
+
+        if ($total > 0 && $low * 2 > $total) {
+            $reasons[] = 'clv_confidence_mostly_low';
+        }
+
+        $explained = array_map(fn (array $e) => $e['ref'], $answer['anomalies_explained']);
+
+        foreach (array_keys($context['anomalies']['anomalies'] ?? []) as $i) {
+            if (! in_array("anomalies.anomalies.{$i}", $explained, true)) {
+                $reasons[] = 'anomaly_unexplained';
+
+                break;
+            }
+        }
+
+        if (($context['data_quality']['warnings'] ?? []) !== []) {
+            $reasons[] = 'data_quality_warnings';
+        }
+
+        if ($reasons === []) {
+            return $answer;
+        }
+
+        $answer['confidence'] = 'medium';
+        $answer['meta']['adjustments'][] = ['field' => 'confidence', 'from' => 'high', 'to' => 'medium', 'reasons' => $reasons];
+
+        return $answer;
     }
 
     /**

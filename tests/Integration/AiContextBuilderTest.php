@@ -5,9 +5,15 @@ declare(strict_types=1);
 use App\Modules\Ai\Context\ContextBuilder;
 use App\Modules\Ai\Context\ContextPiiGuard;
 use App\Modules\Ai\Context\ContextTooLargeException;
+use App\Modules\Ai\Context\DataFreshnessReader;
 use App\Modules\Ai\Dto\ToolResult;
 use App\Modules\Ai\Enums\AiInsightType;
+use App\Modules\Ai\Tools\AiTool;
+use App\Modules\Ai\Tools\ToolRegistry;
+use App\Modules\Ai\Tools\Tools\GetDashboardMetricsTool;
 use Carbon\CarbonImmutable;
+use Illuminate\Container\Container;
+use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Http;
 use Tests\Support\AiToolsFixture;
 use Tests\Support\AnomalySeries;
@@ -311,4 +317,99 @@ it('makes no HTTP call and uses no AI provider while building', function () {
     builder()->build(AiInsightType::WeeklyReview);
 
     Http::assertNothingSent();
+});
+
+/*
+| The anchor bug (first real run): KPI tools anchored on the latest daily_metrics row, which was TODAY's unfinished one, while
+| freshness/anomalies said "yesterday". Period::end() is now the single anchor: the latest row on or before yesterday (Tehran).
+*/
+function addPartialToday(): void
+{
+    $db = AiToolsFixture::admin();
+    $row = (array) $db->table('daily_metrics')->where('date', '2026-10-13')->first();
+    $db->table('daily_metrics')->insert(array_replace($row, ['date' => '2026-10-14', 'jalali_date' => '1405/07/22', 'orders_count' => 1, 'net_revenue' => 50_000, 'revenue' => 50_000, 'product_revenue' => 50_000, 'aov' => 50_000]));
+}
+
+it('ignores the incomplete today row: every KPI window and the trend end on the same complete day as as_of', function () {
+    addPartialToday();
+    [, $p] = ctx();
+
+    expect($p['data_quality']['as_of']['iso'])->toBe('2026-10-13')
+        ->and($p['kpis']['windows'][0]['result']['period']['to']['iso'])->toBe('2026-10-13')
+        ->and($p['kpis']['windows'][1]['result']['period']['to']['iso'])->toBe('2026-10-13')
+        ->and($p['trend']['to']['iso'])->toBe('2026-10-13')
+        ->and($p['data_quality']['period_anchor'])->toBe(['as_of' => '2026-10-13', 'kpi_and_trend_end' => ['2026-10-13'], 'mismatch' => false])
+        ->and($p['data_quality']['warnings'])->toBe([]);
+});
+
+it('anchors the anomaly detector on the same complete day, not on today', function () {
+    addPartialToday();
+    [, $p] = ctx();
+
+    expect(json_encode($p['anomalies']))->not->toContain('2026-10-14')->and($p['anomalies']['status'])->toBe('ok');
+});
+
+it('uses the latest complete day when yesterday has no row (never rolls forward to today)', function () {
+    addPartialToday();
+    AiToolsFixture::admin()->table('daily_metrics')->where('date', '2026-10-13')->delete();
+    [, $p] = ctx();
+
+    expect($p['kpis']['windows'][0]['result']['period']['to']['iso'])->toBe('2026-10-12')->and($p['data_quality']['as_of']['iso'])->toBe('2026-10-12');
+});
+
+it('NEVER stays silent when a KPI window ends on a different day than as_of: period_anchor_mismatch is a warning', function () {
+    $drifting = new class(app(GetDashboardMetricsTool::class)) extends AiTool
+    {
+        public function __construct(private readonly GetDashboardMetricsTool $real) {}
+
+        public function name(): string
+        {
+            return $this->real->name();
+        }
+
+        public function description(): string
+        {
+            return $this->real->description();
+        }
+
+        public function properties(): array
+        {
+            return $this->real->properties();
+        }
+
+        public function required(): array
+        {
+            return $this->real->required();
+        }
+
+        public function rules(): array
+        {
+            return $this->real->rules();
+        }
+
+        public function run(array $arguments): array
+        {
+            $r = $this->real->run($arguments);
+            $r['period']['to']['iso'] = '2026-10-14';   // a tool reading a different day than the freshness block
+
+            return $r;
+        }
+    };
+    $container = new Container;
+    $container->bind(GetDashboardMetricsTool::class, fn () => $drifting);
+    $builder = new ContextBuilder(new ToolRegistry(new class($container, app()) extends Container
+    {
+        public function __construct(private readonly Container $overrides, private readonly Application $app) {}
+
+        public function make($abstract, array $parameters = [])
+        {
+            return $this->overrides->bound($abstract) ? $this->overrides->make($abstract) : $this->app->make($abstract, $parameters);
+        }
+    }), app(DataFreshnessReader::class), app(ContextPiiGuard::class));
+    $p = json_decode($builder->build(AiInsightType::DailyBrief)->json, true);
+
+    expect($p['data_quality']['warnings'])->toContain('period_anchor_mismatch')
+        ->and($p['data_quality']['period_anchor']['mismatch'])->toBeTrue()
+        ->and($p['data_quality']['period_anchor']['kpi_and_trend_end'])->toContain('2026-10-14')
+        ->and($p['data_quality']['interpretation'])->toHaveKey('period_anchor_mismatch');
 });
