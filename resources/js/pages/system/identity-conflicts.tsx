@@ -77,7 +77,7 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                         <StatusBadge
                                             status={conflict.status}
                                             labels={conflictStatuses}
-                                            className="whitespace-normal break-words text-center"
+                                            className="text-center break-words whitespace-normal"
                                         />
                                     </TableCell>
                                     <TableCell className="text-sm">
@@ -89,7 +89,7 @@ export default function IdentityConflicts({ conflicts }: Props) {
                                             </span>
                                         )}
                                     </TableCell>
-                                    <TableCell className="text-sm whitespace-normal break-words">
+                                    <TableCell className="text-sm break-words whitespace-normal">
                                         <Tooltip>
                                             <TooltipTrigger asChild>
                                                 <span className="cursor-default">

@@ -306,9 +306,7 @@ export default function OrdersIndex({ orders, filters, options }: Props) {
                                         {order.refunded_total > 0 && (
                                             <span className="text-muted-foreground block text-xs">
                                                 خالص:{' '}
-                                                {formatToman(
-                                                    order.net_revenue,
-                                                )}
+                                                {formatToman(order.net_revenue)}
                                             </span>
                                         )}
                                     </TableCell>
