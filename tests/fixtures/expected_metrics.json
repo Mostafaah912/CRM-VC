@@ -8,7 +8,8 @@
         "clv_horizon_years": 2,
         "realized_statuses": [
             "processing",
-            "completed"
+            "completed",
+            "taroff-4"
         ],
         "churn_thresholds": {
             "source": "fallback",

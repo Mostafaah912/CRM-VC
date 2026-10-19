@@ -50,7 +50,11 @@ return [
     // The store's money unit (P0-00: IRT = Toman, no decimals). An order in any other currency is refused, never converted.
     'currency' => 'IRT',
 
-    'realized_statuses' => ['processing', 'completed'],
+    // `taroff-4` = «ارسال با آنباکس» (shipped via Unbox): a custom status of this store that IS a real, realized sale (product-owner
+    // decision, P7-14). Slugs are stored exactly as Woo's REST API returns them — no `wc-` prefix (orders.status holds `taroff-4`).
+    // Changing this list changes `is_realized` only for orders written AFTER the change: run `php artisan hm:orders-reclassify` (idempotent,
+    // local only) and then a full metrics recompute.
+    'realized_statuses' => ['processing', 'completed', 'taroff-4'],
     'excluded_statuses' => ['pending', 'on-hold', 'cancelled', 'failed', 'trash'],
 
     'webhook_secret' => env('WOO_WEBHOOK_SECRET'),

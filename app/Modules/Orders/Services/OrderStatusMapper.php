@@ -22,7 +22,7 @@ final class OrderStatusMapper
     }
 
     /** @return list<string> */
-    private function realizedStatuses(): array
+    public function realizedStatuses(): array
     {
         $configured = config('woo.realized_statuses');
 

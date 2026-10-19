@@ -41,6 +41,7 @@ it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s
         'app/Console/Commands/IdentityReresolveCommand.php',
         'app/Console/Commands/MetricsRecompute.php',
         'app/Console/Commands/NightlyChainCommand.php',
+        'app/Console/Commands/OrdersReclassifyCommand.php',
         'app/Console/Commands/ReconcileCommand.php',
         'app/Console/Commands/ResolveOrderItemsCommand.php',
         'app/Console/Commands/SyncCommand.php',

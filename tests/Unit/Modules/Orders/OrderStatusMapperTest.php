@@ -48,6 +48,8 @@ it('covers every status Woo has: realized ones are true, all others false', func
     'failed' => ['failed', false],
     'trash' => ['trash', false],
     'refunded' => ['refunded', false],
+    'taroff-4 (ارسال با آنباکس — a custom, realized sale)' => ['taroff-4', true],
+    'taroff-4 with a wc- prefix is a different slug, not realized' => ['wc-taroff-4', false],
     'checkout-draft' => ['checkout-draft', false],
 ]);
 

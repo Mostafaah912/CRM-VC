@@ -192,3 +192,18 @@ it('shows the sidebar link only to a holder of orders.view', function () {
 
     expect($sidebar)->toContain("can('orders', 'view')");
 });
+
+/*
+| P7-14: "realized" is decided in ONE place (OrderStatusMapper, from config) and stored as orders.is_realized; every consumer reads that column. No
+| file under app/ may spell an ORDER status in a query or comparison (customers.status = 'active' and the enums of other tables are not orders).
+*/
+it('hardcodes no order status in any SQL comparison (orders.status / o.status) anywhere under app/', function () {
+    $files = array_values(array_filter(
+        Scanner::phpFiles(['app']),
+        fn (string $f) => ! in_array(Scanner::relative($f), ['app/Modules/Sync/Services/ReconciliationService.php'], true),
+    ));
+
+    expect(Scanner::violations($files, [
+        '/\bo(rders)?\.status\s*(=|!=|<>|IN\b|NOT\s+IN\b)/i',
+    ]))->toBe([]);
+});
