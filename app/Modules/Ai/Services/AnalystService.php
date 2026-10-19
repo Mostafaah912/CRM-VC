@@ -188,6 +188,18 @@ final class AnalystService
         }
     }
 
+    /** The manual limit as the UI shows it: how many more manual generations this user may start in the current window. */
+    public function manualAttemptsRemaining(int $requestedBy): int
+    {
+        return max(0, RateLimiter::remaining($this->throttleKey($requestedBy), max(1, (int) config('ai.manual.max_requests', 5))));
+    }
+
+    /** Refuses early (before a job is queued) with the same exception generate() would raise later. */
+    public function assertManualAllowed(int $requestedBy): void
+    {
+        $this->throttle($requestedBy);
+    }
+
     private function throttle(?int $requestedBy): void
     {
         if ($requestedBy === null) {

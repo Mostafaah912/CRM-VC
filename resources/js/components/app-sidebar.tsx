@@ -9,6 +9,7 @@ import {
     ListFilter,
     Package,
     ScrollText,
+    Sparkles,
     ShoppingCart,
     Target,
     Users,
@@ -29,6 +30,7 @@ import {
 } from '@/components/ui/sidebar';
 import { useCan } from '@/hooks/use-can';
 import { dashboard } from '@/routes';
+import { index as analystIndex } from '@/routes/ai/analyst';
 import { index as customersIndex } from '@/routes/customers';
 import { rfm as metricsRfm, guide as metricsGuide } from '@/routes/metrics';
 import { index as ordersIndex } from '@/routes/orders';
@@ -111,6 +113,15 @@ export function AppSidebar() {
                       title: 'سگمنت‌ها',
                       href: segmentsIndex(),
                       icon: ListFilter,
+                  },
+              ]
+            : []),
+        ...(can('ai', 'view')
+            ? [
+                  {
+                      title: 'تحلیلگر هوشمند',
+                      href: analystIndex(),
+                      icon: Sparkles,
                   },
               ]
             : []),

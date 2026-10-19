@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Models\User;
 use App\Modules\Ai\Context\ContextBuilder;
 use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Enums\AiInsightType;
@@ -14,6 +15,7 @@ use App\Modules\Ai\Exceptions\BudgetExceededException;
 use App\Modules\Ai\Exceptions\ManualRequestThrottledException;
 use App\Modules\Ai\Exceptions\StaleDataException;
 use App\Modules\Ai\Jobs\GenerateDailyBriefJob;
+use App\Modules\Ai\Jobs\GenerateManualInsightJob;
 use App\Modules\Ai\Jobs\GenerateWeeklyReviewJob;
 use App\Modules\Ai\Models\AiToolCall;
 use App\Modules\Ai\Services\AiProvider;
@@ -22,6 +24,7 @@ use App\Modules\Ai\Services\AnalystService;
 use App\Modules\Ai\Services\BudgetedAiProvider;
 use App\Modules\Ai\Services\BudgetGuard;
 use App\Modules\Ai\Services\FakeAiProvider;
+use App\Modules\Ai\Services\ManualGenerationService;
 use App\Modules\Ai\Support\RawResponseCapture;
 use Carbon\CarbonImmutable;
 use Illuminate\Log\Events\MessageLogged;
@@ -494,4 +497,70 @@ it('hm:ai-generate arms the raw capture only with --debug-raw', function () {
 
     $this->artisan('hm:ai-generate', ['type' => 'daily_brief', '--debug-raw' => true])->run();
     expect($capture->armed())->toBeTrue();
+});
+
+/*
+| P7-09a — the queued half of «تولید دستی»: GenerateManualInsightJob -> ManualGenerationService::run() -> AnalystService::generate(requested_by =
+| the user). The outcome lands in the cache state the screen polls, as a stable code + a fixed Persian sentence — never an exception message.
+*/
+it('a manual run stores the insight for the user and ends in state done; a repeat without force is a cache hit', function () {
+    useFake((new FakeAiProvider)->queue(okReply(groundedAnswer(currentContextJson()))));
+    $manual = app(ManualGenerationService::class);
+
+    $user = User::factory()->create();
+
+    (new GenerateManualInsightJob(AiInsightType::DailyBrief, $user->id, false))->handle($manual);
+    $first = $manual->state(AiInsightType::DailyBrief);
+    $row = DB::table('ai_insights')->first();
+
+    expect($first['status'])->toBe('done')->and($first['insight_id'])->toBe($row->id)->and($first['from_cache'])->toBeFalse()->and($row->requested_by)->toBe($user->id);
+
+    (new GenerateManualInsightJob(AiInsightType::DailyBrief, $user->id, false))->handle($manual);
+
+    expect($manual->state(AiInsightType::DailyBrief)['from_cache'])->toBeTrue()->and(DB::table('ai_insights')->count())->toBe(1);
+});
+
+it('a manual run records every known failure as a code and a Persian sentence, and nothing else', function (Closure $arrange, string $code, string $message) {
+    $arrange();
+    $manual = app(ManualGenerationService::class);
+
+    $manual->run(AiInsightType::DailyBrief, 7, true);
+    $state = $manual->state(AiInsightType::DailyBrief);
+
+    expect($state)->toBe(['status' => 'failed', 'code' => $code, 'message' => $message])->and(DB::table('ai_insights')->count())->toBe(0);
+})->with([
+    'budget used up' => [function () {
+        config(['ai.budget.monthly_usd' => '0.000001']);
+        useFake(new FakeAiProvider);
+    }, 'budget_exceeded', 'بودجه‌ی ماهانه‌ی هوش مصنوعی تمام شده است.'],
+    'data too old' => [function () {
+        useFake(new FakeAiProvider);
+        test()->travelTo(CarbonImmutable::parse('2026-10-25 10:00:00', 'Asia/Tehran'));
+    }, 'stale_data', 'داده‌ها قدیمی‌اند؛ تا همگام‌سازی و محاسبه‌ی شبانه انجام نشود تحلیل ساخته نمی‌شود.'],
+    'provider key rejected' => [fn () => useFake((new FakeAiProvider)->queue(new AiAuthenticationException('secret-sk-123 rejected', 'gemini', 403))), 'provider_config', 'کلید یا تنظیمات ارائه‌دهنده‌ی هوش مصنوعی درست نیست؛ به مدیر سیستم اطلاع دهید.'],
+    'provider busy' => [fn () => useFake((new FakeAiProvider)->queue(new AiRateLimitException('limited sk-999', 'gemini', 429, true))), 'provider_busy', 'ارائه‌دهنده موقتاً درخواست‌ها را محدود کرده است؛ چند دقیقه بعد دوباره تلاش کنید.'],
+    'unexpected error with a secret in its message' => [fn () => useFake((new FakeAiProvider)->queue(new RuntimeException('password=hunter2 sk-live-abc'))), 'unexpected', 'خطای غیرمنتظره رخ داد؛ به مدیر سیستم اطلاع دهید.'],
+]);
+
+it('a manual run is throttled per user and says so in Persian', function () {
+    useFake((new FakeAiProvider)->queue(okReply(groundedAnswer(currentContextJson()))));
+    config(['ai.manual.max_requests' => 1]);
+    $manual = app(ManualGenerationService::class);
+
+    $userId = User::factory()->create()->id;
+
+    $manual->run(AiInsightType::DailyBrief, $userId, true);
+    $manual->run(AiInsightType::DailyBrief, $userId, true);
+
+    expect($manual->state(AiInsightType::DailyBrief))->toMatchArray(['status' => 'failed', 'code' => 'throttled']);
+});
+
+it('the job frees the screen when the worker dies: state failed instead of running forever', function () {
+    $manual = app(ManualGenerationService::class);
+    $job = new GenerateManualInsightJob(AiInsightType::DailyBrief, 5, true);
+
+    $job->failed(new RuntimeException('killed'));
+
+    expect($manual->state(AiInsightType::DailyBrief))->toMatchArray(['status' => 'failed', 'code' => 'unexpected'])
+        ->and($job->queue)->toBe('ai')->and($job->uniqueFor)->toBeGreaterThan($job->timeout);
 });

@@ -91,3 +91,17 @@ it('grants identity.review to Owner and Manager only', function () {
         ->and($granted('support'))->not->toContain('identity.review')
         ->and($granted('viewer'))->not->toContain('identity.review');
 });
+
+it('gives ai.view_cost (cost, tokens, model) to Owner and Manager only — Analyst, Support and Viewer never see it (P7-09a)', function () {
+    $has = fn (string $role) => Role::query()->where('name', $role)->firstOrFail()->permissions()->get()->map->key()->contains('ai.view_cost');
+
+    expect($has('owner'))->toBeTrue()->and($has('manager'))->toBeTrue()
+        ->and($has('analyst'))->toBeFalse()->and($has('support'))->toBeFalse()->and($has('viewer'))->toBeFalse();
+});
+
+it('gives the Viewer ai.view and the Analyst ai.view + ai.request — the analyst screen and its manual button (P7-09a)', function () {
+    $keys = fn (string $role) => Role::query()->where('name', $role)->firstOrFail()->permissions()->get()->map->key();
+
+    expect($keys('viewer'))->toContain('ai.view')->not->toContain('ai.request')
+        ->and($keys('analyst'))->toContain('ai.view')->toContain('ai.request');
+});

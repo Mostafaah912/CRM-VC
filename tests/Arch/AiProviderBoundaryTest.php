@@ -18,9 +18,10 @@ function aiOutsideFiles(): array
 }
 
 it('lets no code outside the Ai module name a driver or any Ai class except the container binding the P7-01 setup command and the budget-alert listener (Ai Events only)', function () {
+    // P7-09a: the analyst screen's HTTP layer (thin controllers + form requests) names Ai Services/Enums — that is its job; nothing else outside may.
     $files = array_values(array_filter(
         aiOutsideFiles(),
-        fn (string $f) => ! in_array(Scanner::relative($f), ['app/Providers/AppServiceProvider.php', 'app/Console/Commands/AiSetupReadonlyRoleCommand.php', 'app/Console/Commands/AiPreviewCommand.php', 'routes/console.php', 'app/Console/Commands/AiGenerateCommand.php', 'app/Console/Commands/AiPingCommand.php', 'app/Support/AiGenerationAlerts.php', 'app/Support/AiBudgetAlerts.php'], true),
+        fn (string $f) => ! str_starts_with(Scanner::relative($f), 'app/Http/Controllers/Ai/') && ! str_starts_with(Scanner::relative($f), 'app/Http/Requests/Ai/') && ! in_array(Scanner::relative($f), ['app/Providers/AppServiceProvider.php', 'app/Console/Commands/AiSetupReadonlyRoleCommand.php', 'app/Console/Commands/AiPreviewCommand.php', 'routes/console.php', 'app/Console/Commands/AiGenerateCommand.php', 'app/Console/Commands/AiPingCommand.php', 'app/Support/AiGenerationAlerts.php', 'app/Support/AiBudgetAlerts.php'], true),
     ));
 
     expect(Scanner::violations($files, ['/App\\\\Modules\\\\Ai\\\\/']))->toBeEmpty();
