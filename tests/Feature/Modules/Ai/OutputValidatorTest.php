@@ -251,13 +251,19 @@ function withKeyMetric(array $overrides): array
 
 it('accepts a change that equals the change_percent in the data, signed or absolute, to the stated precision', function (string $change) {
     expect(validateAnswer(withKeyMetric(['change' => $change]))['errors'])->toBe([]);
-})->with(['+10.0%', '10%', '+10%', '10.00%', 'رشد +10.0 درصد']);
+})->with(['+10.0%', '+10%', '+10.00%', ' +10.0 % ']);
 
 it('rejects a change that does not match the data (change_percent here is 10.0)', function (string $change) {
     $r = validateAnswer(withKeyMetric(['change' => $change]));
 
     expect($r['payload'])->toBeNull()->and($r['errors'])->toBe(['key_metrics.0.change: does not match the change_percent in the data']);
-})->with(['+12.5%', '-10.0%', '11%', '+10.1%']);
+})->with(['+12.5%', '-10.0%', '+11%', '+10.1%']);
+
+it('requires change to be a signed percent: a bare number, a missing sign or words around it are rejected', function (string $change) {
+    $r = validateAnswer(withKeyMetric(['change' => $change]));
+
+    expect($r['payload'])->toBeNull()->and($r['errors'])->toBe(['key_metrics.0.change: write it as a signed percent such as +12.5% or -3.1% (or leave it empty)']);
+})->with(['10.0', '10%', '20.57', 'رشد +10.0 درصد', '+10.0 درصد']);
 
 it('computes the change from the current/previous pair beside the first ref when no change_percent ref is given', function () {
     $ok = validateAnswer(withKeyMetric(['metric_refs' => ['kpis.windows.0.result.current.net_revenue'], 'change' => '+10.0%']));

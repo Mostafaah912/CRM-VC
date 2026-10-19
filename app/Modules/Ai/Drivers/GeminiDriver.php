@@ -11,6 +11,7 @@ use App\Modules\Ai\Dto\AiToolCall;
 use App\Modules\Ai\Enums\AiDriver;
 use App\Modules\Ai\Enums\AiMessageRole;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Gemini generateContent (REST, API key in the x-goog-api-key header — never the URL). Function calling
@@ -70,9 +71,16 @@ final class GeminiDriver extends HttpAiDriver
         // Usage first: every refusal/cut-off below was still billed, and the ledger must say so.
         $usage = (array) ($data['usageMetadata'] ?? []);
         $in = (int) ($usage['promptTokenCount'] ?? 0);
-        // Thinking tokens are billed as output (and, per Google's docs, are NOT inside maxOutputTokens' visible share — see sprint-7.md).
-        $reasoning = (int) ($usage['thoughtsTokenCount'] ?? 0);
-        $out = (int) ($usage['candidatesTokenCount'] ?? 0) + $reasoning;
+        // Billed output = everything that is not the prompt: totalTokenCount - promptTokenCount (Google: total = prompt + tool-use prompt + thoughts +
+        // candidates), or candidates + thoughts when that is larger — whichever is bigger, so hidden thinking is never under-counted even when
+        // thoughtsTokenCount is not reported separately. `reasoning` keeps the thoughts figure (derived from the remainder when not reported).
+        $candidates = (int) ($usage['candidatesTokenCount'] ?? 0);
+        $thoughts = (int) ($usage['thoughtsTokenCount'] ?? 0);
+        $out = max($candidates + $thoughts, max(0, (int) ($usage['totalTokenCount'] ?? 0) - $in));
+        $reasoning = max($thoughts, $out - $candidates);
+
+        // Numbers only, never content: which fields Google actually returns decides how usage is read (see sprint-7.md).
+        Log::info('Gemini usageMetadata', array_filter($usage, 'is_int'));
         $usageOnly = $this->billedUsage($in, $out, $durationMs, $reasoning);
         $billed = $in + $out > 0 ? $usageOnly : null;   // nothing to record when the answer carries no usage numbers
 

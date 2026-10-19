@@ -8,6 +8,7 @@ use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Tools\AiReadonlyDb;
 use App\Modules\Ai\Tools\ToolFormat;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\ConnectionInterface;
 
 /**
  * "How much should the analyst trust today's numbers?" — read only from tables the hm_ai_readonly role may SELECT:
@@ -68,6 +69,12 @@ final class DataFreshnessReader
         $coverage = $productRevenue > 0 ? ToolFormat::percent(min($attributed, $productRevenue), $productRevenue) : null;
         $minCoverage = (float) config('ai.context.min_product_coverage_percent', 90);
 
+        $gaps = $this->dailyMetricsGaps($connection, $report->asOf);
+
+        if ($gaps['missing_days'] > 0 || $gaps['zero_order_days'] >= max(1, (int) config('ai.context.zero_days_warn_at', 3))) {
+            $warnings[] = 'daily_metrics_gap';
+        }
+
         if ($coverage !== null && $minCoverage > 0 && $coverage < $minCoverage) {
             $warnings[] = 'product_coverage_low';
         }
@@ -84,8 +91,65 @@ final class DataFreshnessReader
             'sync' => $sync,
             'sync_failed_recently' => $syncFailed,
             'sync_status_source' => 'sync_cursors',
+            'daily_metrics_gaps' => $gaps,
             'product_coverage' => ['basis' => 'lifetime_product_revenue_attributed_to_a_product', 'attributed_percent' => $coverage, 'unattributed_percent' => $coverage === null ? null : round(100 - $coverage, 2), 'min_percent' => $minCoverage],
             'warnings' => $warnings,
+        ];
+    }
+
+    /**
+     * Days WITHOUT a daily_metrics row (and zero-order rows) inside the window the analysis leans on (the anomaly baseline: trend and
+     * the previous KPI windows sit inside it). A missing day is not "no sales" — it is a day nobody computed — so any anomaly, change or
+     * baseline built over a window with holes cannot be trusted as a business signal.
+     *
+     * @return array{window_days: int, window_from: string|null, window_to: string|null, missing_days: int, missing_ranges: list<array{from: string, to: string, days: int}>, zero_order_days: int}
+     */
+    private function dailyMetricsGaps(ConnectionInterface $db, ?string $asOf): array
+    {
+        $none = ['window_days' => 0, 'window_from' => null, 'window_to' => null, 'missing_days' => 0, 'missing_ranges' => [], 'zero_order_days' => 0];
+
+        if ($asOf === null) {
+            return $none;
+        }
+
+        $days = max(14, (int) config('ai.anomaly.window_days', 56));
+        $end = CarbonImmutable::parse($asOf, 'Asia/Tehran');
+        $first = $db->table('daily_metrics')->min('date');
+        $from = $end->subDays($days - 1);
+
+        if ($first === null) {
+            return $none;
+        }
+
+        // The table's own history may start inside the window: days before its first row are "no history", not a hole.
+        $from = $from->max(CarbonImmutable::parse((string) $first, 'Asia/Tehran'));
+        $rows = $db->table('daily_metrics')->whereBetween('date', [$from->toDateString(), $end->toDateString()])->pluck('orders_count', 'date')->all();
+        $ranges = [];
+        $missing = 0;
+
+        for ($d = $from; $d <= $end; $d = $d->addDay()) {
+            if (array_key_exists($d->toDateString(), $rows)) {
+                continue;
+            }
+
+            $missing++;
+            $last = array_key_last($ranges);
+
+            if ($last !== null && $ranges[$last]['to'] === $d->subDay()->toDateString()) {
+                $ranges[$last]['to'] = $d->toDateString();
+                $ranges[$last]['days']++;
+            } else {
+                $ranges[] = ['from' => $d->toDateString(), 'to' => $d->toDateString(), 'days' => 1];
+            }
+        }
+
+        return [
+            'window_days' => (int) $from->diffInDays($end) + 1,
+            'window_from' => $from->toDateString(),
+            'window_to' => $end->toDateString(),
+            'missing_days' => $missing,
+            'missing_ranges' => array_slice($ranges, 0, 5),
+            'zero_order_days' => count(array_filter($rows, fn ($n) => (int) $n === 0)),
         ];
     }
 

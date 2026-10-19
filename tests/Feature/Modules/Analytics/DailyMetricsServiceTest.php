@@ -213,3 +213,65 @@ it('rebuilds every day of a multi-day window, including days with zero orders in
         ->and(dmRow('2026-06-14')->orders_count)->toBe(0)
         ->and(dmRow('2026-06-15')->revenue)->toBe(200_000);
 });
+
+/*
+| P7-12 — rebuildDrifted(): the trailing 3-day window cannot reach days missed during a multi-day outage or built before late-synced
+| orders arrived. Missing rows and rows that disagree with `orders` are found in one statement and the span between them rebuilt.
+*/
+it('rebuildDrifted fills days the trailing window never reaches: a missing row and a stale zero row', function () {
+    $c = Customer::factory()->create();
+    dmMarkFirstOrder($c, '2026-06-01 10:00:00');
+    dmOrder($c, '2026-06-02 12:00:00', ['total' => 100_000]);
+    dmOrder($c, '2026-06-03 12:00:00', ['total' => 200_000]);
+    dmOrder($c, '2026-06-04 12:00:00', ['total' => 300_000]);
+    $asOf = CarbonImmutable::parse('2026-06-05 20:00:00', 'Asia/Tehran');
+
+    DB::table('daily_metrics')->insert(['date' => '2026-06-02', 'jalali_date' => 'x', 'orders_count' => 0, 'revenue' => 0, 'refunds' => 0, 'net_revenue' => 0, 'product_revenue' => 0, 'shipping_revenue' => 0, 'aov' => 0, 'customers_total' => 0, 'customers_new' => 0, 'customers_repeat' => 0, 'revenue_new' => 0, 'revenue_repeat' => 0, 'computed_at' => now()]);   // stale zero; 06-03 and 06-04 have NO row
+    app(DailyMetricsService::class)->rebuild(days: 1, asOf: $asOf);   // the nightly window only covers 06-05
+
+    $summary = app(DailyMetricsService::class)->rebuildDrifted($asOf);
+
+    expect(dmRow('2026-06-02')->orders_count)->toBe(1)->and(dmRow('2026-06-03')->orders_count)->toBe(1)->and(dmRow('2026-06-04')->net_revenue)->toBe(300_000)
+        ->and($summary->daysProcessed)->toBe(3);
+});
+
+it('rebuildDrifted corrects a row whose orders changed after it was built (late sync)', function () {
+    $c = Customer::factory()->create();
+    dmOrder($c, '2026-06-02 12:00:00', ['total' => 100_000]);
+    $asOf = CarbonImmutable::parse('2026-06-03 20:00:00', 'Asia/Tehran');
+    app(DailyMetricsService::class)->rebuild(days: 2, asOf: $asOf);
+    dmOrder($c, '2026-06-02 15:00:00', ['total' => 50_000]);   // arrives after the row was written
+
+    app(DailyMetricsService::class)->rebuildDrifted($asOf);
+
+    expect(dmRow('2026-06-02')->orders_count)->toBe(2)->and(dmRow('2026-06-02')->net_revenue)->toBe(150_000);
+});
+
+it('rebuildDrifted does nothing when every day agrees with orders, and touches no row', function () {
+    $c = Customer::factory()->create();
+    dmOrder($c, '2026-06-02 12:00:00', ['total' => 100_000]);
+    $asOf = CarbonImmutable::parse('2026-06-03 20:00:00', 'Asia/Tehran');
+    app(DailyMetricsService::class)->rebuild(days: 2, asOf: $asOf);
+    DB::table('daily_metrics')->update(['computed_at' => '2000-01-01 00:00:00']);
+
+    $summary = app(DailyMetricsService::class)->rebuildDrifted($asOf);
+
+    expect($summary->daysProcessed)->toBe(0)->and(DB::table('daily_metrics')->where('computed_at', '>', '2001-01-01')->count())->toBe(0);
+});
+
+it('rebuildDrifted with no orders at all is a no-op', function () {
+    expect(app(DailyMetricsService::class)->rebuildDrifted(CarbonImmutable::parse('2026-06-03 20:00:00', 'Asia/Tehran'))->daysProcessed)->toBe(0)
+        ->and(DB::table('daily_metrics')->count())->toBe(0);
+});
+
+it('rebuildDrifted ignores orders dated before woo.sync_epoch (a mis-stored year must not stretch the span into centuries)', function () {
+    config(['woo.sync_epoch' => '2026-01-01T00:00:00+00:00']);
+    $c = Customer::factory()->create();
+    dmOrder($c, '1404-02-02 12:00:00', ['total' => 100_000]);   // Jalali year stored as Gregorian
+    dmOrder($c, '2026-06-02 12:00:00', ['total' => 200_000]);
+    $asOf = CarbonImmutable::parse('2026-06-04 20:00:00', 'Asia/Tehran');
+
+    $summary = app(DailyMetricsService::class)->rebuildDrifted($asOf);
+
+    expect($summary->daysProcessed)->toBe(3)->and(DB::table('daily_metrics')->min('date'))->toBe('2026-06-02')->and(DB::table('daily_metrics')->count())->toBe(3);
+});

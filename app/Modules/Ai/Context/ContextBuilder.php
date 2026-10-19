@@ -146,8 +146,10 @@ final class ContextBuilder
 
         if ($anomalies !== null) {
             $suspect = $freshness['stale_data'] === true || $freshness['metrics_failed_recently'] === true || $freshness['sync_failed_recently'] === true;
-            $anomalies['anomalies'] = array_map(function (array $e) use ($suspect, &$gapCount) {
-                $gap = $suspect && $e['observed'] === 0 && in_array($e['metric'], ['orders_count', 'net_revenue', 'customers_new'], true);
+            // Holes in the baseline window (days nobody computed) make EVERY anomaly in it untrustworthy as a business signal.
+            $holes = ($freshness['daily_metrics_gaps']['missing_days'] ?? 0) > 0 || in_array('daily_metrics_gap', $freshness['warnings'], true);
+            $anomalies['anomalies'] = array_map(function (array $e) use ($suspect, $holes, &$gapCount) {
+                $gap = $holes || ($suspect && $e['observed'] === 0 && in_array($e['metric'], ['orders_count', 'net_revenue', 'customers_new'], true));
                 $gapCount += $gap ? 1 : 0;
 
                 return $e + ['suspected_data_gap' => $gap];
@@ -228,6 +230,7 @@ final class ContextBuilder
                 'suspected_data_gap' => 'zero_values_may_be_missing_data_not_business_decline',
                 'stale_data' => 'latest_numbers_may_not_include_recent_days',
                 'period_anchor_mismatch' => $mismatch ? 'figures_may_describe_a_different_day_than_as_of_do_not_compare_them' : null,
+                'daily_metrics_gap' => in_array('daily_metrics_gap', $freshness['warnings'], true) ? 'days_without_a_row_or_with_zero_orders_in_the_window_are_missing_data_not_no_sales_anomalies_and_changes_over_it_are_suspect' : null,
                 'product_coverage_low' => in_array('product_coverage_low', $freshness['warnings'], true) ? 'product_rankings_and_affinities_cover_only_part_of_product_revenue_state_this' : null,
             ]) : [],
             'unavailable_tools' => $unavailable,

@@ -35,7 +35,7 @@ it('prints the complete request — prompt, sizes, sections, system, user with t
     $out = Artisan::output();
 
     expect($exit)->toBe(0)
-        ->and($out)->toContain('PROMPT   analyst.daily.v3')->toContain('CONTEXT')->toContain('truncated: no')->toContain('redactions: 0')->toContain('FRESH    as_of 2026-10-13')->toContain('data_age_days 0')->toContain('stale_data: no')
+        ->and($out)->toContain('PROMPT   analyst.daily.v4')->toContain('CONTEXT')->toContain('truncated: no')->toContain('redactions: 0')->toContain('FRESH    as_of 2026-10-13')->toContain('data_age_days 0')->toContain('stale_data: no')
         ->toContain('SECTIONS (bytes)')->toContain('kpis')->toContain('products_affinity')->toContain('input tokens')->toContain('maxOutputTokens 4500')
         ->toContain('=== SYSTEM ===')->toContain('تحلیلگر کسب‌وکار')->toContain('=== USER ===')->toContain('<data>')->toContain('"schema":"analyst.context.v1"')->toContain('</data>')
         ->toContain('=== OUTPUT SCHEMA ===')->toContain('"anomalies_explained"')->toContain('"data_quality_note"')
@@ -48,7 +48,7 @@ it('can hide the data and show only the size table', function () {
     Artisan::call('hm:ai-preview', ['type' => 'weekly_review', '--no-data' => true]);
     $out = Artisan::output();
 
-    expect($out)->toContain('PROMPT   analyst.weekly.v3')->toContain('[context JSON omitted: --no-data]')->not->toContain('"schema":"analyst.context.v1"');
+    expect($out)->toContain('PROMPT   analyst.weekly.v4')->toContain('[context JSON omitted: --no-data]')->not->toContain('"schema":"analyst.context.v1"');
 });
 
 it('refuses a type it cannot build', function () {

@@ -28,5 +28,15 @@
         "type": "weekly_review",
         "prompt_sha256": "0d4dc9015488a0efc5219a818e532649918821f0caa34ddc5aabb117d06d3f44",
         "schema_sha256": "bc2da54bbc6fa65d54d918c39988be5de259c49854cb0ffcabcc8399a7e1ff06"
+    },
+    "analyst.daily.v4": {
+        "type": "daily_brief",
+        "prompt_sha256": "26eb58a7b63828191b954e7ebf9d6322c2fc6d98d395e7925dee490d8f3f9eb2",
+        "schema_sha256": "86d2b481306b6acade9d53b40297a2e4934ff107a28a35bc2f9d9208bed29927"
+    },
+    "analyst.weekly.v4": {
+        "type": "weekly_review",
+        "prompt_sha256": "66d692f13a8f3730971d688b25aae1e010df73e67f517761d0bf439bdddb1074",
+        "schema_sha256": "86d2b481306b6acade9d53b40297a2e4934ff107a28a35bc2f9d9208bed29927"
     }
 }

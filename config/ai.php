@@ -15,7 +15,8 @@ return [
     'provider' => env('AI_PROVIDER') ?: 'gemini',
     'model' => env('AI_MODEL'),
 
-    'timeout' => (int) (env('AI_TIMEOUT') ?: 60),
+    // Seconds per HTTP attempt. 120: a v3 answer (~2.4k output tokens + thinking) took 44 s on the live API, 60 left no room for a slow one.
+    'timeout' => (int) (env('AI_TIMEOUT') ?: 120),
     // Extra attempts after the first, only for transient failures (429 / 5xx / timeout).
     'max_retries' => (int) (env('AI_MAX_RETRIES') === null || env('AI_MAX_RETRIES') === '' ? 2 : env('AI_MAX_RETRIES')),
     'retry_backoff_seconds' => [2, 8, 30],
@@ -47,6 +48,8 @@ return [
         'stale_after_days' => (int) (env('AI_CONTEXT_STALE_AFTER_DAYS') ?: 1),
         // Below this share of product revenue attributed to a product (customer_product_purchases vs daily_metrics.product_revenue,
         // lifetime) data_quality carries the permanent warning `product_coverage_low`. 0 disables it.
+        // A window with at least this many zero-order daily rows, or ANY day without a row, raises `daily_metrics_gap`.
+        'zero_days_warn_at' => 3,
         'min_product_coverage_percent' => (float) (env('AI_MIN_PRODUCT_COVERAGE_PERCENT') ?: 90),
         // Rough token estimate = bytes / this. Display/log only (BudgetGuard uses its own conservative 1 token per byte).
         'bytes_per_token' => 3.0,
@@ -83,8 +86,8 @@ return [
     | tests/fixtures/ai_prompt_lock.json — switching is a one-line, reviewable change.
     */
     'prompts' => [
-        'daily_brief' => 'analyst.daily.v3',
-        'weekly_review' => 'analyst.weekly.v3',
+        'daily_brief' => 'analyst.daily.v4',
+        'weekly_review' => 'analyst.weekly.v4',
     ],
 
     /*

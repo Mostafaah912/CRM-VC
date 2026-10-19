@@ -451,3 +451,47 @@ it('states the period of top_products explicitly and carries support and the min
         ->and($p['customer_health']['churn'])->toHaveKeys(['value_at_risk_means', 'value_at_risk_clv_confidence'])
         ->and($p['kpis']['windows'][0]['result']['customer_base'])->toHaveKeys(['one_time_customers_percent', 'repeat_rate_means']);
 });
+
+/*
+| P7-12 — holes in daily_metrics: a day nobody computed is not "no sales". Missing days (count + ranges) and zero-order rows inside the
+| baseline window raise `daily_metrics_gap`, and every anomaly in that window becomes a suspected data gap.
+*/
+it('reports no gaps for a continuous history, and does not count the days before the table starts', function () {
+    [, $p] = ctx();
+    $g = $p['data_quality']['daily_metrics_gaps'];
+
+    expect($g)->toMatchArray(['window_days' => 56, 'missing_days' => 0, 'missing_ranges' => [], 'zero_order_days' => 0, 'window_to' => '2026-10-13'])
+        ->and($p['data_quality']['warnings'])->toBe([]);
+
+    AiToolsFixture::admin()->table('daily_metrics')->where('date', '<', '2026-09-30')->delete();   // history simply starts later
+    [, $p] = ctx();
+
+    expect($p['data_quality']['daily_metrics_gaps'])->toMatchArray(['window_from' => '2026-09-30', 'missing_days' => 0])->and($p['data_quality']['warnings'])->toBe([]);
+});
+
+it('flags missing days with their ranges, raises daily_metrics_gap and marks every anomaly a suspected data gap', function () {
+    AiToolsFixture::admin()->table('daily_metrics')->whereBetween('date', ['2026-10-02', '2026-10-05'])->delete();
+    AiToolsFixture::admin()->table('daily_metrics')->where('date', '2026-10-09')->delete();
+    AiToolsFixture::admin()->table('daily_metrics')->where('date', '2026-10-13')->update(['orders_count' => 130, 'net_revenue' => 26_000_000, 'revenue' => 26_000_000]);   // an anomaly inside the 3-day look-back
+    [$c, $p] = ctx();
+    $q = $p['data_quality'];
+
+    expect($q['daily_metrics_gaps']['missing_days'])->toBe(5)
+        ->and($q['daily_metrics_gaps']['missing_ranges'])->toBe([['from' => '2026-10-02', 'to' => '2026-10-05', 'days' => 4], ['from' => '2026-10-09', 'to' => '2026-10-09', 'days' => 1]])
+        ->and($q['warnings'])->toContain('daily_metrics_gap')->and($q['interpretation'])->toHaveKey('daily_metrics_gap')
+        ->and($q['suspected_data_gap_events'])->toBeGreaterThan(0)
+        ->and(array_unique(array_column($p['anomalies']['anomalies'], 'suspected_data_gap')))->toBe([true]);
+});
+
+it('flags zero-order rows (a stale zero is as bad as a missing row) once they reach the configured count', function () {
+    AiToolsFixture::admin()->table('daily_metrics')->whereBetween('date', ['2026-10-01', '2026-10-03'])->update(['orders_count' => 0, 'net_revenue' => 0, 'revenue' => 0]);
+    [, $p] = ctx();
+
+    expect($p['data_quality']['daily_metrics_gaps']['zero_order_days'])->toBe(3)->and($p['data_quality']['daily_metrics_gaps']['missing_days'])->toBe(0)
+        ->and($p['data_quality']['warnings'])->toContain('daily_metrics_gap');
+
+    config(['ai.context.zero_days_warn_at' => 4]);
+    [, $p] = ctx();
+
+    expect($p['data_quality']['warnings'])->not->toContain('daily_metrics_gap');
+});

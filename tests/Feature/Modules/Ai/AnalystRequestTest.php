@@ -36,7 +36,7 @@ it('puts the context in ONE separate user message inside a <data> fence, never i
         ->and(analystDataBlock($req->messages[0]->content))->toBe($context->json)
         ->and($req->tools)->toBe([])->and($req->responseSchema)->toBe(OutputSchema::schema())
         ->and($req->maxOutputTokens)->toBe(config('ai.analyst.max_output_tokens'))->and($req->temperature)->toBe(0.2)
-        ->and($a->promptVersion)->toBe('analyst.daily.v3')->and($a->type)->toBe('daily_brief')->and($a->contextBytes)->toBe($context->sizeBytes)
+        ->and($a->promptVersion)->toBe('analyst.daily.v4')->and($a->type)->toBe('daily_brief')->and($a->contextBytes)->toBe($context->sizeBytes)
         ->and($a->systemBytes)->toBe(strlen($req->systemPrompt))->and($a->userBytes)->toBe(strlen($req->messages[0]->content))->and($a->estimatedInputTokens)->toBeGreaterThan(1000);
 });
 
@@ -45,7 +45,7 @@ it('uses the weekly prompt and version for a weekly_review, and the configured l
 
     $a = app(AnalystRequestBuilder::class)->build(AiInsightType::WeeklyReview, AnalystSamples::context());
 
-    expect($a->promptVersion)->toBe('analyst.weekly.v3')->and($a->request->maxOutputTokens)->toBe(1500)->and($a->request->temperature)->toBe(0.1)->and($a->request->systemPrompt)->toContain('مرور هفتگی');
+    expect($a->promptVersion)->toBe('analyst.weekly.v4')->and($a->request->maxOutputTokens)->toBe(1500)->and($a->request->temperature)->toBe(0.1)->and($a->request->systemPrompt)->toContain('مرور هفتگی');
 });
 
 it('keeps instructions hidden inside data as DATA: the fence cannot be closed early and the JSON round-trips', function (string $name) {

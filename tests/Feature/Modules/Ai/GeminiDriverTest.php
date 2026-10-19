@@ -303,3 +303,43 @@ it('refuses to be built without a key, base url or model, or with an unsafe mode
 it('rejects an invalid request before any HTTP call', function () {
     new AiRequest('s', []);
 })->throws(InvalidArgumentException::class);
+
+/*
+| P7-12 — billed output = max(candidates + thoughts, totalTokenCount − promptTokenCount): thinking is never under-counted, whether
+| thoughtsTokenCount is reported separately or not. The same number is used on the success path and on the billed-failure path.
+*/
+dataset('usage shapes', [
+    'thoughts reported separately' => [['promptTokenCount' => 100, 'candidatesTokenCount' => 30, 'thoughtsTokenCount' => 20, 'totalTokenCount' => 150], 100, 50, 20],
+    'thoughts NOT reported — recovered from the total' => [['promptTokenCount' => 100, 'candidatesTokenCount' => 30, 'totalTokenCount' => 180], 100, 80, 50],
+    'no total at all — falls back to candidates + thoughts' => [['promptTokenCount' => 100, 'candidatesTokenCount' => 30, 'thoughtsTokenCount' => 20], 100, 50, 20],
+    'total is larger (tool-use prompt tokens) — the larger wins' => [['promptTokenCount' => 100, 'candidatesTokenCount' => 30, 'thoughtsTokenCount' => 20, 'totalTokenCount' => 200], 100, 100, 70],
+    'total smaller than the parts — the parts win' => [['promptTokenCount' => 100, 'candidatesTokenCount' => 30, 'thoughtsTokenCount' => 20, 'totalTokenCount' => 120], 100, 50, 20],
+]);
+
+it('reads billed output from totalTokenCount − promptTokenCount on a successful answer', function (array $usage, int $in, int $out, int $reasoning) {
+    Http::fake(['*' => Http::response(geminiOk([['text' => 'hi']], ['usageMetadata' => $usage]), 200)]);
+
+    $r = gemini()->generate(aiReq());
+
+    expect([$r->inputTokens, $r->outputTokens, $r->reasoningTokens])->toBe([$in, $out, $reasoning]);
+})->with('usage shapes');
+
+it('uses the same billed output when the answer is cut off (the failure path)', function (array $usage, int $in, int $out, int $reasoning) {
+    Http::fake(['*' => Http::response(geminiOk([['text' => '{"a":']], ['usageMetadata' => $usage, 'candidates' => [['finishReason' => 'MAX_TOKENS', 'content' => ['parts' => [['text' => '{"a":']]]]]]), 200)]);
+
+    try {
+        gemini()->generate(aiReq(['type' => 'object', 'properties' => ['a' => ['type' => 'string']]]));
+        $this->fail('expected a cut-off');
+    } catch (AiInvalidResponseException $e) {
+        expect([$e->billed->inputTokens, $e->billed->outputTokens, $e->billed->reasoningTokens])->toBe([$in, $out, $reasoning]);
+    }
+})->with('usage shapes');
+
+it('logs the usageMetadata numbers (and only numbers) once per answer', function () {
+    Http::fake(['*' => Http::response(geminiOk([['text' => 'hi']], ['usageMetadata' => ['promptTokenCount' => 7, 'candidatesTokenCount' => 3, 'totalTokenCount' => 10, 'promptTokensDetails' => [['modality' => 'TEXT', 'tokenCount' => 7]]]]), 200)]);
+
+    gemini()->generate(aiReq());
+    $logs = array_values(array_filter($GLOBALS['ai_logs'], fn ($l) => $l['message'] === 'Gemini usageMetadata'));
+
+    expect($logs)->toHaveCount(1)->and($logs[0]['context'])->toBe(['promptTokenCount' => 7, 'candidatesTokenCount' => 3, 'totalTokenCount' => 10]);
+});

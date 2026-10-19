@@ -76,22 +76,28 @@ it('keeps the superseded v1 prompts on disk, byte-for-byte as locked', function 
     }
 });
 
-it('makes v3 the default and the v3 prompts carry the new rules', function () {
+it('makes v4 the default and the v4 prompts carry the new rules', function () {
     $repo = app(PromptRepository::class);
 
-    expect($repo->for(AiInsightType::DailyBrief)->version)->toBe('analyst.daily.v3')
-        ->and($repo->for(AiInsightType::WeeklyReview)->version)->toBe('analyst.weekly.v3');
+    expect($repo->for(AiInsightType::DailyBrief)->version)->toBe('analyst.daily.v4')
+        ->and($repo->for(AiInsightType::WeeklyReview)->version)->toBe('analyst.weekly.v4');
 
-    foreach (['analyst.daily.v3', 'analyst.weekly.v3'] as $v) {
+    foreach (['analyst.daily.v4', 'analyst.weekly.v4'] as $v) {
         $text = file_get_contents(resource_path("prompts/{$v}.md"));
 
         expect($text)->toContain('one_time_customers_percent')->toContain('product_coverage_low')->toContain('value_at_risk_clv_confidence')
-            ->toContain('support')->toContain('period_anchor_mismatch')->toContain('حداکثر medium');
+            ->toContain('support')->toContain('period_anchor_mismatch')->toContain('حداکثر medium')->toContain('daily_metrics_gap')->toContain('+20.57%')->toContain('خوش‌خبرترین');
     }
 });
 
 it('keeps v2 on disk, byte-for-byte as locked', function () {
     foreach (['analyst.daily.v2', 'analyst.weekly.v2'] as $version) {
+        expect(collect(app(PromptRepository::class)->all())->firstWhere('version', $version)->sha256)->toBe(promptLock()[$version]['prompt_sha256']);
+    }
+});
+
+it('keeps v3 on disk, byte-for-byte as locked', function () {
+    foreach (['analyst.daily.v3', 'analyst.weekly.v3'] as $version) {
         expect(collect(app(PromptRepository::class)->all())->firstWhere('version', $version)->sha256)->toBe(promptLock()[$version]['prompt_sha256']);
     }
 });

@@ -105,5 +105,5 @@ it('treats empty AI_* values (a copied .env.example) as "use the default", not a
         return $c;
     })(['AI_PROVIDER' => '', 'AI_TIMEOUT' => '', 'AI_MAX_RETRIES' => '']);
 
-    expect($cfg['provider'])->toBe('gemini')->and($cfg['timeout'])->toBe(60)->and($cfg['max_retries'])->toBe(2);
+    expect($cfg['provider'])->toBe('gemini')->and($cfg['timeout'])->toBe(120)->and($cfg['max_retries'])->toBe(2);
 });

@@ -27,7 +27,7 @@ final class OutputSchema
                 'summary' => ['type' => 'string', 'description' => 'A short plain-Persian paragraph. Max 700 characters.'],
                 'key_metrics' => ['type' => 'array', 'description' => 'The most important numbers, quoted from the data, never computed.', 'items' => [
                     'type' => 'object',
-                    'properties' => ['label' => ['type' => 'string'], 'value' => ['type' => 'string'], 'change' => ['type' => 'string'], 'metric_refs' => $refs],
+                    'properties' => ['label' => ['type' => 'string'], 'value' => ['type' => 'string'], 'change' => ['type' => 'string', 'description' => 'The given change_percent as a SIGNED percent, e.g. +12.5% or -3.1%; empty string when the data has none.'], 'metric_refs' => $refs],
                     'required' => ['label', 'value', 'change', 'metric_refs'],
                 ]],
                 'insights' => ['type' => 'array', 'description' => 'Findings. kind: fact = direct number, inference = a hypothesis, recommendation = a suggestion.', 'items' => [

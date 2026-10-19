@@ -26,9 +26,12 @@ final class GenerateDailyBriefJob implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 3;
 
-    public int $timeout = 240;
+    // Worst case of ONE run: the insight generator makes up to 2 provider calls (a corrective retry), each up to (max_retries + 1) HTTP
+    // attempts of ai.timeout (120 s) plus the driver backoff (2 + 8 s) = 2 x 370 s = 740 s, plus ~60 s to build the context. The queue's
+    // retry_after (1830) and Horizon's timeout (1800) both sit above this (tests/Feature/Modules/Ai/AiJobTimeoutTest.php).
+    public int $timeout = 900;
 
-    public int $uniqueFor = 900;
+    public int $uniqueFor = 1200;
 
     /** @var list<int> */
     public array $backoff = [300, 900];

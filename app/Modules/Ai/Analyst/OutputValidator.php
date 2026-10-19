@@ -239,6 +239,13 @@ final class OutputValidator
             return;
         }
 
+        // Direction and unit are part of the claim: "+12.5%" / "-3.1%", never a bare "12.5" or "12.5 درصد رشد".
+        if (preg_match('/\A\s*[+\-\x{2212}]\d+(?:\.\d+)?\s*%\s*\z/u', Digits::toAscii((string) $item['change'])) !== 1) {
+            $errors[] = "key_metrics.{$i}.change: write it as a signed percent such as +12.5% or -3.1% (or leave it empty)";
+
+            return;
+        }
+
         $candidates = [];
 
         foreach ($item['metric_refs'] as $ref) {
