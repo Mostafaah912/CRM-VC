@@ -1,5 +1,6 @@
 import { Head, Link } from '@inertiajs/react';
 import { useState } from 'react';
+import { CustomerAnalystPanel } from '@/components/customers/CustomerAnalystPanel';
 import { CustomerNotes } from '@/components/customers/CustomerNotes';
 import { CustomerTabs } from '@/components/customers/CustomerTabs';
 import type { TabId } from '@/components/customers/CustomerTabs';
@@ -365,6 +366,15 @@ export default function CustomerShow({ profile }: Props) {
                             opened={openedTabs}
                             onSelect={selectTab}
                         />
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>تحلیل تجمیعی</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <CustomerAnalystPanel customerId={customer.id} />
                     </CardContent>
                 </Card>
 

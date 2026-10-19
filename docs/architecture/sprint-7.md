@@ -661,3 +661,65 @@ ping موفق (۲۹٫۴ ثانیه برای ۹/۱۰۷ توکن — شبکه کن
 | cancelled | 12 / 15٬555٬380 | 12 / 15٬555٬380 | شمرده نمی‌شود | |
 سفارش گم‌شده‌ی محلی: 0؛ وضعیت متفاوت: 0.
 **اختلاف باقی‌مانده با داشبورد ووکامرس فقط دو چیز است و هر دو تعریفی:** (۱) استرداد ۴۷۹٬۹۸۰ که ووکامرس در روز استرداد (۱۰-۱۸) از این روز کم می‌کند و ما به روز ثبت سفارش اصلی نسبت می‌دهیم (ستون `refunds` ردیف ۱۰-۱۸ صفر است)؛ (۲) «خالص» ووکامرس ارسال (۴٬۳۷۱٬۲۰۰) را حذف می‌کند: 20٬157٬138 − 479٬980 = 19٬677٬158 (ناخالص داشبورد) و − 4٬371٬200 = 15٬305٬958 (خالص داشبورد) — هر سه با اعداد بالا دقیق می‌خوانند. ۴۰ سفارش `taroff-4` همه `is_realized=true`.
+
+## P7-09b — ویجت داشبورد، پنل Customer 360، اثبات GATE 4 و بستن Sprint 7 (۲۰۲۶-۱۰-۱۹)
+
+### ۰) زنجیره‌ی شبانه و کاتالوگ — **فقط گزارش، تغییری ندادم**
+PRD §22 ترتیب را **صریحاً** ثابت کرده است: «daily 03:00 Bus::chain([Products, Variations, Customers, Orders sync, RecomputeMetricsJob('full'), …])» و بلافاصله می‌گوید «ترتیب حیاتی است. `Bus::chain` در اولین شکست متوقف می‌شود — بهتر است چیزی اجرا نشود تا با داده ناقص اجرا شود». ARCHITECTURE.md (P6-09) هم همین را تصمیم ثبت‌شده کرده (کاتالوگ+سفارش‌ها اول؛ ماندن در زنجیره‌ی PRD). پس جداکردن کاتالوگ از زنجیره‌ی متریک **تغییر ترتیب ثابت PRD** است و طبق دستور اجرا نشد. شواهد/ریسک: در تازه‌سازی dev کاتالوگ بعد از ۱۸۰۰ ثانیه توسط worker کشته شد (kill قابل‌گرفتن نیست، fail-soft فقط استثنا را می‌گیرد) و بقیه‌ی زنجیره اجرا نشد؛ این یک ریسک واقعی Sprint 8 است (پیشنهاد در ریسک‌ها: sync افزایشی کاتالوگ با `modified_after`، و در صورت تصمیم PRD، dispatch مستقل کاتالوگ بعد از متریک‌ها).
+
+### ۱) ویجت داشبورد («خلاصه AI»، PRD §18)
+`GET /ai/analyst/widget` (`ai.view`، فقط‌خواندنی) ← `AnalystPageService::widget()`: آخرین `daily_brief` به شکل کوتاه (headline، confidence، «اطمینان کاهش یافت»، دوره‌ی جلالی، `outdated`)، وضعیت زنده‌ی داده (`stale`، `orders_sync_behind` + ساعت از `DataFreshnessReader` — insight خودش `data_quality` را ذخیره نمی‌کند، پس این پرچم **زنده** است)، آماده‌بودن، و مشکل اخیر. `AnalystWidget` یک‌بار هنگام mount می‌خواند (بدون polling) و فقط برای `can('ai','view')` رندر می‌شود؛ حالت‌ها: غیرفعال، آماده‌نبودن، بدون insight، خطا، «مشکل اخیر». لینک به `/ai/analyst`. متن مدل فقط متن و اعداد در `BidiText`. هزینه/مدل/توکن/cache_key هرگز در پاسخ نیست (تست).
+
+### ۲) پنل Customer 360 (تجمیعی)
+PRD §18 برای سایدبار «سگمنت/دسته/بینش AI/یادداشت» می‌گوید و قرارداد دیگری (مثلاً AI برای هر مشتری) ندارد؛ **نسخه‌ی تجمیعی ساخته شد، بدون هیچ فراخوانی AI و بدون ارسال داده‌ی فردی به provider**. `GET /customers/{id}/analyst-panel` (`customers.view`؛ ۴۰۴ برای مشتری ناموجود/نرم‌حذف): `App\Support\CustomerAnalystPanelService` (ارکستراسیون در `app/Support` مثل `HealthCheckService`) = `Segments\CustomerSegmentSummaryService` (سگمنت‌های **فعال** این مشتری با تعداد اعضا و میانگین recency/monetary **خود سگمنت**؛ سگمنت کوچک‌تر از ۵ عضو فقط تعداد می‌دهد، بدون میانگین؛ فقط query builder) + `AnalystPageService::latestInsightPointer()` (id، headline، تاریخ). هر بخش بدون مجوز مربوط (`segments.view` / `ai.view`) **`null`** برمی‌گردد (نه خالی). هیچ نام/تلفن/ایمیل/مقدار فردی در خروجی نیست (تست با داده‌ی متمایز) و تست Arch اجرای AI/provider/raw SQL/ستون‌های هویتی را در این سه فایل ممنوع می‌کند. UI: کارت «تحلیل تجمیعی» در `customers/show`.
+**انحراف:** PRD «بینش AI» را در سایدبار نام می‌برد؛ در Phase 1 این به‌صورت **لینک به آخرین تحلیل کلی** است (نه تحلیل مشتق‌شده‌ی همین مشتری).
+
+### ۳) اثبات GATE 4 — خودکار و تکرارپذیر (`tests/Integration/Gate4AiVerificationTest.php` + `tests/Feature/Modules/Ai/AiDisabledTest.php` + `AiReadonlyRoleTest`)
+- **الف) PII به provider نمی‌رسد (۵ تست):** fixture نام/تلفن/ایمیل/آدرس متمایز در `customers` (که نقش AI نمی‌خواند) **و** متن‌های آزاد قابل‌خواندن (نام همه‌ی محصولات، دسته‌ها و سگمنت‌ها به شماره‌ی موبایل/ایمیل/نام کاشته‌شده). `AnalystService` با `Http::fake` برای **Gemini، Anthropic و OpenAI** (و Fake) اجرا می‌شود؛ URL، header و بدنه‌ی هر درخواست خروجی، ردیف‌های `ai_tool_calls` و payload ذخیره‌شده نسبت به ۱۳ رشته‌ی PII سنجیده می‌شود؛ مدلی که خودش تلفن/ایمیل/نام را در پاسخ **تکرار** کند پیش از ذخیره redact می‌شود؛ cohort سه‌نفره به‌صورت `"<5"` می‌رسد نه `3`. **Mutation (هر دو گرفته شد):** غیرفعال‌کردن `ContextPiiGuard` ← ۵ شکست (سه driver، Fake، echo)؛ غیرفعال‌کردن ماسک گروه کوچک (`SmallGroupMask`) ← ۱ شکست. (در بار اول یک ادعای بی‌اثر پیدا شد: `->not->toContain($a, "پیام")` در Pest پیام را «سوزن دوم» می‌گیرد و هرگز شکست نمی‌خورد؛ با `str_contains(...)->toBeFalse()` جایگزین شد و mutation فقط بعد از آن گرفته شد.)
+- **ب) سقف بودجه (۴ تست):** با سقف کوچک فراخوانی **پیش از هر HTTP** رد می‌شود (`Http::assertNothingSent`) برای مسیر دستی (`BudgetExceededException`) و زمان‌بندی‌شده (`skipped: budget_exceeded`)؛ رزرو درون‌پردازشی: وقتی یک worst case هنوز آزاد نشده، فراخوانی دوم رد می‌شود؛ مدل بدون قیمت fail-closed (`AnalystNotReadyException`/`UnpricedModelException`)؛ ردیف `ai_usage_daily` فقط برای پاسخ واقعی ثبت می‌شود.
+- **ج) read-only:** `AiReadonlyRoleTest` ۷ از ۷ سبز، **۰ skipped** (INSERT/UPDATE/DELETE/DDL از اتصال AI رد می‌شوند).
+- **د) `AI_ENABLED=false` (۵ تست):** پیش‌فرض فرستاده‌شده‌ی config `false`؛ جاب روزانه/هفتگی `skipped: ai_disabled`، جاب دستی `failed/ai_disabled`، endpoint تولید ۴۲۲ و بدون صف، `hm:ai-generate` رد می‌شود؛ همه با `Http::preventStrayRequests()` و `assertNothingSent`.
+
+### ۴) CI (`.github/workflows/tests.yml`) — فقط گزارش
+workflow فقط `composer setup` (شامل `migrate --force`) و `composer ci:check` (`npm run check`، `types:check`، `composer test`) را اجرا می‌کند. **نه سرویس PostgreSQL دارد، نه هیچ‌کدام از `DB_*`، `DB_AI_ADMIN_*` یا `DB_AI_READONLY_PASSWORD`** تعریف شده‌اند، پس migrate و تست‌های واقعی PostgreSQL (و بدنه‌ی GATE 4: `AiReadonlyRoleTest` و `Gate4AiVerificationTest`) در CI یا خطا می‌دهند یا skip می‌شوند. همچنین `npm run check` الان روی ۳۵ فایل قدیمی/پرامپت/fixture خطای فرمت می‌دهد (فقط فایل‌های خودم فرمت شده‌اند؛ پرامپت‌ها نباید فرمت شوند چون hash قفل دارند) — CI با این حالت قرمز می‌شود. **تغییری ندادم**؛ برای deploy باید یک service `postgres` + `DB_AI_ADMIN_*` (CREATEROLE) + `DB_AI_READONLY_PASSWORD` (secret) تعریف و `npm run check` از پرامپت‌ها/fixtureها مستثنا شود.
+
+### ۵) نتیجه‌ی پایان Sprint 7
+فول‌سوئیت **دقیقاً یک بار** در یک پردازش (Redis روشن، بدون پردازش تست دیگر): **۳٬۸۶۵ تست، ۳٬۸۶۵ سبز، ۱۸٬۳۱۳ assertion، ۰ skipped، ۶۰۶ ثانیه**. PHPStan (کل پروژه) ۰ خطا؛ Pint (`--test` کل ریپو) پاک؛ `tsc` سبز؛ `npm run build` با exit 0.
+
+# جمع‌بندی Sprint 7 (AI Analyst، فقط‌خواندنی)
+
+## انجام‌شده
+P7-01 نقش read-only `hm_ai_readonly` + GATE 4 (۷/۷ بدون skip) • P7-02 provider (Gemini کامل، Anthropic/OpenAI ساده) • P7-03 BudgetGuard (سقف سخت، رزرو، fail-closed) • P7-04 ۱۲ ابزار تجمیعی • P7-05 AnomalyEngine (آمار خالص) • P7-06 ContextBuilder + ContextPiiGuard • P7-07 پرامپت‌های نسخه‌دار قفل‌شده + schema + validator + cache • P7-08 AnalystService + جاب‌ها + دستورها • اصلاح لنگر KPI (روز ناقص امروز) و `period_anchor_mismatch` • سقف confidence در کد، `meta.adjustments`، `ungrounded_numbers` • تطبیق عددی `value`/`change` • شکاف بودجه (usage پاسخ نامعتبر-ولی-صورت‌حساب‌شده) • روزهای گم‌شده‌ی `daily_metrics` (`rebuildDrifted`) و `daily_metrics_gap` • پرامپت v4، `thinkingLevel=low`، `--debug-raw` • صفحه‌ی «تحلیلگر هوشمند» + تولید دستی صف‌شده + `ai.view_cost` • `taroff-4` = ارسال با آنباکس (تحقق‌یافته) + `hm:orders-reclassify` • `orders_sync_behind` و گیت همگام‌سازی، definitions • ویجت داشبورد، پنل 360 تجمیعی، اثبات خودکار GATE 4.
+
+## انحراف‌ها از درخواست/PRD (همه ثبت‌شده)
+1. تولید دستی **صف می‌شود** (CLAUDE.md §1، >۲ ثانیه)، نه HTTP.
+2. `explain()` **ساخته نشد** (PRD §19 تعریف نکرده).
+3. مجوز تازه `ai.view_cost` (ماتریس نقش‌ها Manager را از Analyst جدا نمی‌کرد).
+4. پنل 360 **تجمیعی** است؛ «بینش AI» PRD = لینک به آخرین تحلیل کلی.
+5. جداکردن کاتالوگ از زنجیره‌ی شبانه **انجام نشد** (PRD §22 ترتیب را ثابت کرده).
+6. فقط یک خط فراداده‌ی `expected_metrics.json` (`taroff-4` در لیست ثبت‌شده)، با دست و بازبینی‌شده؛ هیچ مقدار GATE 2 تغییر نکرد.
+7. AI در Phase 1 فقط تفسیر می‌کند؛ هیچ ابزار نوشتنی، SMS/کمپین/اتوماسیون ساخته نشد.
+
+## چک‌لیست deploy
+- [ ] `php artisan migrate --force` (Sprint 7 migrationها) و `php artisan db:seed --class=PermissionSeeder` و `--class=RoleSeeder` (مجوز `ai.view_cost`؛ بدون آن هزینه برای هیچ‌کس دیده نمی‌شود).
+- [ ] `php artisan hm:ai-setup-readonly` با `DB_AI_READONLY_PASSWORD` (secret) و `DB_AI_ADMIN_*` (CREATEROLE)؛ بعد `AiReadonlyRoleTest` سبز.
+- [ ] متغیرهای `AI_*`: `AI_ENABLED` (پیش‌فرض false)، `AI_PROVIDER`، `AI_MODEL`، کلید provider، `AI_BUDGET_MONTHLY_USD`، `AI_TIMEOUT=120`، `AI_MAX_ORDERS_SYNC_BEHIND_HOURS`، `AI_GEMINI_THINKING_LEVEL`.
+- [ ] **قیمت Gemini:** `pricing.models.gemini-3.8-flash` = 0.75/3.75 دلار در میلیون توکن **فقط تا ۲۰۲۶-۱۲-۳۱**؛ از ۲۰۲۷-۰۱-۰۱ باید 1.50/7.50 شود وگرنه BudgetGuard نصف می‌شمارد.
+- [ ] **`php artisan horizon:terminate` بعد از هر تغییر config مربوط به worker** (مثل `woo.realized_statuses`): workerهای در حال اجرا config قدیمی را در حافظه دارند و سفارش‌ها را با تعریف قدیمی می‌نویسند (در dev ۱۰ سفارش `taroff-4` را اشتباه نوشتند).
+- [ ] بعد از تغییر لیست وضعیت‌ها: `php artisan hm:orders-reclassify` سپس recompute کامل متریک‌ها (`RecomputeMetricsJob('full')` ← aggregates ← daily_metrics ← cohort ← segments ← affinity).
+- [ ] **صف `ai` بالا باشد** (Horizon با supervisor شامل `ai`، timeout ≥ ۹۰۰ ثانیه، `retry_after` ≥ ۹۳۰): بدون worker تولید دستی در حالت «در صف» می‌ماند.
+- [ ] scheduler: `GenerateDailyBriefJob` 07:00 و `GenerateWeeklyReviewJob` شنبه 07:30 (تهران) با `AI_ENABLED=true`؛ گیت داده/همگام‌سازی (`max_data_age_days`، `max_orders_sync_behind_hours`) فعال است.
+- [ ] **CI:** سرویس `postgres` + `DB_AI_ADMIN_*` + `DB_AI_READONLY_PASSWORD` (secret) در workflow تعریف شود و `npm run check` از `resources/prompts` و `tests/fixtures` مستثنا شود (الان بدون این‌ها CI قرمز/skip است).
+- [ ] `failed_jobs`: ۱۲ ردیف قدیمی (retry/flush نشده)؛ قبل از deploy بررسی و پاک‌سازی عمدی.
+
+## ریسک‌های Sprint 8
+1. **کاتالوگ در زنجیره:** timeout ۱۸۰۰ ثانیه با شبکه‌ی کند کافی نبود و kill غیرقابل‌گرفتن زنجیره را شکست؛ راه‌حل پیشنهادی: sync **افزایشی** کاتالوگ با `modified_after` (به‌جای `Http::pool`)، و در صورت تغییر PRD dispatch مستقل بعد از متریک‌ها.
+2. **~۲۰۹ محصول variable بدون آینه** (Woo ۲۵۱، محلی ۴۲): پوشش محصول و affinity ناقص.
+3. **پوشش محصول ۷۰٫۸٪** (زیر آستانه‌ی ۹۰): هشدار دائمی `product_coverage_low` و سقف confidence=medium تا رفع.
+4. **سه سفارش با `ordered_at` سال ۱۴۰۴ میلادی** (`woo_order_id` 19640، 19642، 19627): احتمالاً سال شمسی در Sync/OrderMapper؛ بررسی نشده.
+5. **تقسیم شبکه Woo/Gemini و محل اجرای worker:** سرور Woo (ایران) و Gemini (نیازمند مسیر دیگر/VPN) را یک worker واحد نمی‌بیند؛ باید تصمیم گرفت صف `ai` روی کدام ماشین/شبکه اجرا شود (و `AI_TIMEOUT`/retry مناسب ۵۰۳ گذرا).
+6. **`explain()`**: نیازمند تعریف PRD (ورودی/خروجی/دسترسی) قبل از ساخت.
+7. **۱۲ ردیف `failed_jobs` قدیمی** و کاهش دقت سنجش «چرا شکست خورد».
+8. قیمت Gemini از ۲۰۲۷-۰۱-۰۱؛ `refunded` (۲۴۶ سفارش) در هیچ لیست config نیست؛ `npm run check` روی فایل‌های قدیمی؛ insightهای ۱–۴ روی تعریف قدیمی «تحقق‌یافته».
+
+**آماده‌ی PR:** شاخه‌ی `sprint/7-ai` برای ادغام در `main` آماده است (معیارهای پذیرش: فول‌سوئیت سبز، GATE 4 اثبات‌شده، PHPStan/Pint/tsc/build سبز). **merge انجام نشد.**

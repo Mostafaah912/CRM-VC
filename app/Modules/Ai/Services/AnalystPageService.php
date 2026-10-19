@@ -85,6 +85,48 @@ final class AnalystPageService
     }
 
     /**
+     * The dashboard widget (P7-09b): the newest daily_brief in short form, the live freshness flags and the readiness — read-only, no cost
+     * fields, no polling. `orders_sync_behind` is the LIVE state of the sync (insights do not store their data_quality).
+     *
+     * @return array<string, mixed>
+     */
+    public function widget(): array
+    {
+        $problem = $this->readiness->generationProblem();
+        $fresh = $this->safeFreshness();
+        $row = AiInsight::query()->where('type', AiInsightType::DailyBrief->value)->orderByDesc('id')->first();
+        $view = $row === null ? null : $this->presenter->present($row, false, $fresh['as_of']);
+
+        return [
+            'enabled' => config('ai.enabled') === true,
+            'readiness' => ['ready' => $problem === null, 'message' => $problem === null ? null : AnalystMessages::forReadiness($problem)],
+            'latest' => $view === null ? null : [
+                'id' => $view['id'],
+                'headline' => $view['headline'],
+                'confidence' => $view['confidence'],
+                'confidence_reduced' => $view['confidence_adjustment'] !== null,
+                'period' => $view['period'],
+                'created_at' => $view['created_at'],
+                'outdated' => $view['outdated'],
+            ],
+            'freshness' => ['stale' => $fresh['stale'], 'orders_sync_behind' => $fresh['orders_behind_hours'] !== null && $fresh['orders_behind_hours'] > 0, 'orders_behind_hours' => $fresh['orders_behind_hours'], 'as_of' => $fresh['as_of_jalali']],
+            'recent_problem' => $this->recentProblem(),
+        ];
+    }
+
+    /**
+     * The newest insight as a pointer for other screens (Customer 360): where to read it, nothing of its content except the headline.
+     *
+     * @return array{id: int, type: string, headline: string, created_at: string}|null
+     */
+    public function latestInsightPointer(): ?array
+    {
+        $row = AiInsight::query()->where('type', AiInsightType::DailyBrief->value)->orderByDesc('id')->first();
+
+        return $row === null ? null : ['id' => $row->id, 'type' => $row->type, 'headline' => (string) ($row->payload['headline'] ?? ''), 'created_at' => TehranDateTime::format($row->created_at)];
+    }
+
+    /**
      * @return array{data: list<array<string, mixed>>, page: int, per_page: int, total: int, last_page: int}
      */
     public function history(AiInsightType $type, int $page, int $perPage, bool $withCost): array
@@ -134,14 +176,14 @@ final class AnalystPageService
         return ['type' => (string) ($a['context']['type'] ?? ''), 'reason' => $a['kind'] === self::ALERT_BUDGET ? 'budget' : $reason, 'message' => $message, 'at' => TehranDateTime::format($a['at'])];
     }
 
-    /** @return array{stale: bool, age: int|null, as_of: string|null, as_of_jalali: string|null} */
+    /** @return array{stale: bool, age: int|null, as_of: string|null, as_of_jalali: string|null, orders_behind_hours: float|null} */
     private function safeFreshness(): array
     {
         try {
             $f = $this->freshness->read();
         } catch (Throwable) {
             // The read-only role/connection may be unavailable (e.g. AI never set up): the page must still render.
-            return ['stale' => false, 'age' => null, 'as_of' => null, 'as_of_jalali' => null];
+            return ['stale' => false, 'age' => null, 'as_of' => null, 'as_of_jalali' => null, 'orders_behind_hours' => null];
         }
 
         return [
@@ -149,6 +191,7 @@ final class AnalystPageService
             'age' => is_int($f['data_age_days']) ? $f['data_age_days'] : null,
             'as_of' => $f['as_of']['iso'] ?? null,
             'as_of_jalali' => $f['as_of']['jalali'] ?? null,
+            'orders_behind_hours' => is_numeric($f['orders_sync']['behind_hours'] ?? null) ? (float) $f['orders_sync']['behind_hours'] : null,
         ];
     }
 }

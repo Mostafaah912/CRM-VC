@@ -108,3 +108,51 @@ export type HistoryPage = {
     total: number;
     last_page: number;
 };
+
+/** GET /ai/analyst/widget — the dashboard widget (short form, no cost fields). */
+export type AnalystWidgetData = {
+    enabled: boolean;
+    readiness: { ready: boolean; message: string | null };
+    latest: {
+        id: number;
+        headline: string;
+        confidence: string;
+        confidence_reduced: boolean;
+        period: { start: string | null; end: string | null };
+        created_at: string;
+        outdated: boolean;
+    } | null;
+    freshness: {
+        stale: boolean;
+        orders_sync_behind: boolean;
+        orders_behind_hours: number | null;
+        as_of: string | null;
+    };
+    recent_problem: {
+        type: string;
+        reason: string;
+        message: string;
+        at: string;
+    } | null;
+};
+
+/** GET /customers/{id}/analyst-panel — aggregates only. null = the viewer lacks that permission. */
+export type CustomerAnalystPanel = {
+    customer_id: number;
+    segments:
+        | {
+              id: number;
+              name: string;
+              type: string;
+              members: number;
+              avg_recency_days: number | null;
+              avg_monetary: number | null;
+          }[]
+        | null;
+    latest_insight: {
+        id: number;
+        type: string;
+        headline: string;
+        created_at: string;
+    } | null;
+};

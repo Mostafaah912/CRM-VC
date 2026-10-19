@@ -15,7 +15,7 @@ function analystControllers(): array
     return Scanner::phpFiles(['app/Http/Controllers/Ai']);
 }
 
-it('has exactly the four analyst controllers, each a thin invokable', function () {
+it('has exactly the six analyst controllers (page, history, status, generate, widget, 360 panel), each a thin invokable', function () {
     $names = array_map(fn (string $f) => Scanner::relative($f), analystControllers());
 
     expect($names)->toBe([
@@ -23,6 +23,8 @@ it('has exactly the four analyst controllers, each a thin invokable', function (
         'app/Http/Controllers/Ai/AnalystHistoryController.php',
         'app/Http/Controllers/Ai/AnalystPageController.php',
         'app/Http/Controllers/Ai/AnalystStatusController.php',
+        'app/Http/Controllers/Ai/AnalystWidgetController.php',
+        'app/Http/Controllers/Ai/CustomerAnalystPanelController.php',
     ]);
 });
 
@@ -41,7 +43,7 @@ it('keeps the controllers free of database, models, config, conditionals and pro
 it('has one Service per controller and one render/response each', function () {
     foreach (analystControllers() as $file) {
         $code = Scanner::phpCode($file);
-        preg_match_all('/use App\\\\Modules\\\\Ai\\\\Services\\\\\w+;/', $code, $services);
+        preg_match_all('/use App\\\\(Modules\\\\\w+\\\\Services|Support)\\\\\w+;/', $code, $services);
 
         expect($services[0])->toHaveCount(1, Scanner::relative($file).' uses more than one Service');
     }
@@ -49,14 +51,14 @@ it('has one Service per controller and one render/response each', function () {
     expect(substr_count(Scanner::phpCode(Scanner::root().'/app/Http/Controllers/Ai/AnalystPageController.php'), 'Inertia::render('))->toBe(1);
 });
 
-it('registers the analyst routes in routes/ai.php: three reads behind ai.view, ONE queueing POST behind ai.request with its own throttle bucket', function () {
+it('registers the analyst routes in routes/ai.php: four reads behind ai.view, the 360 panel read behind customers.view, ONE queueing POST behind ai.request with its own throttle bucket', function () {
     $routes = Scanner::phpCode(Scanner::root().'/routes/ai.php');
 
-    expect(substr_count($routes, 'Route::get('))->toBe(3)
+    expect(substr_count($routes, 'Route::get('))->toBe(5)
         ->and(substr_count($routes, 'Route::post('))->toBe(1)
         ->and($routes)->not->toMatch('/Route::(put|patch|delete|any|match|resource|apiResource)\b/')
-        ->and($routes)->toContain("'permission:ai,view'")->toContain("'permission:ai,request'")->toContain("'throttle:20,1,ai-generate'")
-        ->and(substr_count($routes, "'auth'"))->toBe(2)
+        ->and($routes)->toContain("'permission:ai,view'")->toContain("'permission:customers,view'")->toContain("'permission:ai,request'")->toContain("'throttle:20,1,ai-generate'")
+        ->and(substr_count($routes, "'auth'"))->toBe(3)
         ->and((string) file_get_contents(Scanner::root().'/routes/web.php'))->toContain("require __DIR__.'/ai.php';");
 });
 
@@ -82,4 +84,15 @@ it('renders model text only as text in the analyst UI: no raw HTML injection, no
 
     expect($files)->not->toBeEmpty()
         ->and(Scanner::violations($files, ['/dangerouslySetInnerHTML|innerHTML|insertAdjacentHTML/', '/\b(marked|markdown-it|remark|showdown|DOMPurify|react-markdown)\b/i', '/\bconsole\./'], stripPhpComments: false))->toBe([]);
+});
+
+it('keeps the Customer 360 panel aggregate and AI-free: no provider, no generation, no per-customer metric read, no raw SQL', function () {
+    $files = [Scanner::root().'/app/Support/CustomerAnalystPanelService.php', Scanner::root().'/app/Modules/Segments/Services/CustomerSegmentSummaryService.php', Scanner::root().'/app/Http/Controllers/Ai/CustomerAnalystPanelController.php'];
+
+    expect(Scanner::violations($files, [
+        '/AnalystService\b|ManualGenerationService|AiProvider|BudgetGuard|Drivers\\\\|InsightGenerator|ContextBuilder|Http::|GenerateManualInsightJob/',
+        '/whereRaw|selectRaw|DB::raw|havingRaw|orderByRaw|groupByRaw/',
+        '/Metrics\\\\Models|Orders\\\\Models|Customers\\\\Models\\\\(?!Customer\b)/',
+        '/phone|email|first_name|last_name|display_name|address/i',
+    ]))->toBe([]);
 });
