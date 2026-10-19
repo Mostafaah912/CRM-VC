@@ -15,6 +15,7 @@ use App\Modules\Ai\Exceptions\AiProviderException;
 use App\Modules\Ai\Exceptions\AiRateLimitException;
 use App\Modules\Ai\Exceptions\AiTimeoutException;
 use App\Modules\Ai\Services\AiCostCalculator;
+use App\Modules\Ai\Support\RawResponseCapture;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Log\Events\MessageLogged;
@@ -342,4 +343,51 @@ it('logs the usageMetadata numbers (and only numbers) once per answer', function
     $logs = array_values(array_filter($GLOBALS['ai_logs'], fn ($l) => $l['message'] === 'Gemini usageMetadata'));
 
     expect($logs)->toHaveCount(1)->and($logs[0]['context'])->toBe(['promptTokenCount' => 7, 'candidatesTokenCount' => 3, 'totalTokenCount' => 10]);
+});
+
+/*
+| thinkingLevel (documented REST field for gemini-3.8-flash: generationConfig.thinkingConfig.thinkingLevel, lowercase low|medium|high)
+| and the --debug-raw capture of the raw provider answer.
+*/
+it('sends generationConfig.thinkingConfig.thinkingLevel from config (default low)', function () {
+    Http::fake(['*' => Http::response(geminiOk([['text' => 'hi']]), 200)]);
+    gemini()->generate(aiReq());
+
+    Http::assertSent(fn ($r) => ($r->data()['generationConfig']['thinkingConfig'] ?? null) === ['thinkingLevel' => 'low']);
+    expect((require base_path('config/ai.php'))['gemini']['thinking_level'])->toBe('low');
+});
+
+it('sends the configured level, and sends nothing for an empty or unknown one (never `minimal`, which the model rejects)', function (?string $level, ?array $expected) {
+    config(['ai.gemini.thinking_level' => $level]);
+    Http::fake(['*' => Http::response(geminiOk([['text' => 'hi']]), 200)]);
+    gemini()->generate(aiReq());
+
+    Http::assertSent(fn ($r) => ($r->data()['generationConfig']['thinkingConfig'] ?? null) === $expected);
+})->with([['high', ['thinkingLevel' => 'high']], ['medium', ['thinkingLevel' => 'medium']], ['', null], [null, null], ['minimal', null], ['LOW', null]]);
+
+it('keeps the raw answer only when --debug-raw armed the capture — also for a cut-off answer — and nothing otherwise', function () {
+    $cut = geminiOk([['text' => '{"a":']], ['candidates' => [['finishReason' => 'MAX_TOKENS', 'content' => ['parts' => [['text' => '{"a":']]]]]]);
+    Http::fake(['*' => Http::response($cut, 200)]);
+    $capture = new RawResponseCapture;
+    app()->instance(RawResponseCapture::class, $capture);
+
+    try {
+        gemini()->generate(aiReq(['type' => 'object', 'properties' => ['a' => ['type' => 'string']]]));
+    } catch (AiInvalidResponseException) {
+    }
+
+    expect($capture->files())->toBe([]);   // not armed
+
+    $capture->arm();
+
+    try {
+        gemini()->generate(aiReq(['type' => 'object', 'properties' => ['a' => ['type' => 'string']]]));
+    } catch (AiInvalidResponseException) {
+    }
+
+    expect($capture->files())->toHaveCount(1)->and(str_contains($capture->files()[0], 'storage/app/tmp/ai-raw-gemini-'))->toBeTrue()
+        ->and(json_decode((string) file_get_contents($capture->files()[0]), true))->toBe($cut)
+        ->and(file_get_contents($capture->files()[0]))->not->toContain(GEMINI_SECRET_PROMPT)->not->toContain(GEMINI_TEST_KEY);
+
+    array_map('unlink', $capture->files());
 });

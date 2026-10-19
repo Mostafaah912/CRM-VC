@@ -8,6 +8,7 @@ use App\Modules\Ai\Analyst\AnalystPeriods;
 use App\Modules\Ai\Enums\AiInsightType;
 use App\Modules\Ai\Services\AnalystService;
 use App\Modules\Ai\Support\AiErrorExplainer;
+use App\Modules\Ai\Support\RawResponseCapture;
 use Carbon\CarbonImmutable;
 use Illuminate\Console\Command;
 use Throwable;
@@ -19,11 +20,11 @@ use Throwable;
  */
 final class AiGenerateCommand extends Command
 {
-    protected $signature = 'hm:ai-generate {type=daily_brief : daily_brief or weekly_review} {--force : generate again even if an identical fresh insight exists} {--no-cache : same as --force} {--date= : the Tehran day this brief is about (YYYY-MM-DD); the data itself is always the newest available}';
+    protected $signature = 'hm:ai-generate {type=daily_brief : daily_brief or weekly_review} {--force : generate again even if an identical fresh insight exists} {--no-cache : same as --force} {--debug-raw : keep the raw provider answer (even a cut-off one) in storage/app/tmp for inspection; off by default} {--date= : the Tehran day this brief is about (YYYY-MM-DD); the data itself is always the newest available}';
 
     protected $description = 'Generate (or reuse) an AI insight now, the same way the scheduled job does';
 
-    public function handle(AnalystService $analyst, AnalystPeriods $periods): int
+    public function handle(AnalystService $analyst, AnalystPeriods $periods, RawResponseCapture $raw): int
     {
         $type = AiInsightType::tryFrom((string) $this->argument('type'));
 
@@ -47,13 +48,20 @@ final class AiGenerateCommand extends Command
             $period = $type === AiInsightType::DailyBrief ? $periods->day($day) : $periods->weekly($day->addDays(7));
         }
 
+        if ($this->option('debug-raw')) {
+            $raw->arm();
+        }
+
         try {
             $result = $analyst->generate($type, $period, null, (bool) $this->option('force') || (bool) $this->option('no-cache'));
         } catch (Throwable $e) {
             $this->error(AiErrorExplainer::explain($e));
+            $this->printRaw($raw);
 
             return self::FAILURE;
         }
+
+        $this->printRaw($raw);
 
         $insight = $result->insight;
         $payload = $insight->payload;
@@ -90,5 +98,12 @@ final class AiGenerateCommand extends Command
         }
 
         return $day === null || $day->toDateString() !== $date || $day->isFuture() ? null : $day;
+    }
+
+    private function printRaw(RawResponseCapture $raw): void
+    {
+        foreach ($raw->files() as $file) {
+            $this->line("raw provider answer kept at {$file} (temporary: delete it after looking)");
+        }
     }
 }

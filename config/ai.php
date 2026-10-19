@@ -15,6 +15,12 @@ return [
     'provider' => env('AI_PROVIDER') ?: 'gemini',
     'model' => env('AI_MODEL'),
 
+    // Gemini only. Thinking depth for gemini-3.8-flash (documented REST field generationConfig.thinkingConfig.thinkingLevel): low | medium (Google's
+    // default) | high. 'low' because thinking sits INSIDE max_output_tokens (v4 was cut off at 4500). Empty = send nothing (needed for models without it).
+    'gemini' => [
+        'thinking_level' => env('AI_GEMINI_THINKING_LEVEL') === null ? 'low' : (string) env('AI_GEMINI_THINKING_LEVEL'),
+    ],
+
     // Seconds per HTTP attempt. 120: a v3 answer (~2.4k output tokens + thinking) took 44 s on the live API, 60 left no room for a slow one.
     'timeout' => (int) (env('AI_TIMEOUT') ?: 120),
     // Extra attempts after the first, only for transient failures (429 / 5xx / timeout).
@@ -95,8 +101,8 @@ return [
     | the worst case from it, so lowering it also lowers the per-call worst-case spend.
     */
     'analyst' => [
-        // 3000 cut the first v3 answer off (v3 asks for metric_refs on recommendations and writes longer). 4500 leaves ~2x the observed 2.2-2.6k.
-        'max_output_tokens' => 4500,
+        // 3000 cut the first v3 answer off (v3 asks for metric_refs on recommendations and writes longer). 6000 after v4 was cut off at 4500 too (observed good answers: 2.2-2.6k).
+        'max_output_tokens' => 6000,
         'temperature' => 0.2,
     ],
 

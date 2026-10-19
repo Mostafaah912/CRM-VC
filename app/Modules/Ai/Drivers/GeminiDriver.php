@@ -34,6 +34,14 @@ final class GeminiDriver extends HttpAiDriver
             'temperature' => $request->temperature,
         ];
 
+        // Google's gemini-3.8-flash docs (REST example): generationConfig.thinkingConfig.thinkingLevel, lowercase, low|medium|high (`minimal`
+        // is rejected). Omitted when config('ai.gemini.thinking_level') is empty/invalid, e.g. for a model that does not know the field.
+        $level = config('ai.gemini.thinking_level');
+
+        if (is_string($level) && in_array($level, ['low', 'medium', 'high'], true)) {
+            $generationConfig['thinkingConfig'] = ['thinkingLevel' => $level];
+        }
+
         if ($request->responseSchema !== null) {
             $generationConfig['responseMimeType'] = 'application/json';
             $generationConfig['responseSchema'] = $this->schema($request->responseSchema);

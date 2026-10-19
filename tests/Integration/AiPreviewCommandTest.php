@@ -36,7 +36,7 @@ it('prints the complete request — prompt, sizes, sections, system, user with t
 
     expect($exit)->toBe(0)
         ->and($out)->toContain('PROMPT   analyst.daily.v4')->toContain('CONTEXT')->toContain('truncated: no')->toContain('redactions: 0')->toContain('FRESH    as_of 2026-10-13')->toContain('data_age_days 0')->toContain('stale_data: no')
-        ->toContain('SECTIONS (bytes)')->toContain('kpis')->toContain('products_affinity')->toContain('input tokens')->toContain('maxOutputTokens 4500')
+        ->toContain('SECTIONS (bytes)')->toContain('kpis')->toContain('products_affinity')->toContain('input tokens')->toContain('maxOutputTokens 6000')
         ->toContain('=== SYSTEM ===')->toContain('تحلیلگر کسب‌وکار')->toContain('=== USER ===')->toContain('<data>')->toContain('"schema":"analyst.context.v1"')->toContain('</data>')
         ->toContain('=== OUTPUT SCHEMA ===')->toContain('"anomalies_explained"')->toContain('"data_quality_note"')
         ->and($out)->not->toContain('Rezaei')->not->toContain('09121234567')->not->toContain('ali.rezaei');

@@ -22,6 +22,7 @@ use App\Modules\Ai\Services\AnalystService;
 use App\Modules\Ai\Services\BudgetedAiProvider;
 use App\Modules\Ai\Services\BudgetGuard;
 use App\Modules\Ai\Services\FakeAiProvider;
+use App\Modules\Ai\Support\RawResponseCapture;
 use Carbon\CarbonImmutable;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Artisan;
@@ -482,4 +483,15 @@ describe('hm:ai-generate', function () {
 
         expect(DB::table('ai_insights')->value('scope'))->toBe('day:2026-10-12');
     });
+});
+
+it('hm:ai-generate arms the raw capture only with --debug-raw', function () {
+    $capture = new RawResponseCapture;
+    app()->instance(RawResponseCapture::class, $capture);
+
+    $this->artisan('hm:ai-generate', ['type' => 'daily_brief'])->run();
+    expect($capture->armed())->toBeFalse();
+
+    $this->artisan('hm:ai-generate', ['type' => 'daily_brief', '--debug-raw' => true])->run();
+    expect($capture->armed())->toBeTrue();
 });

@@ -15,6 +15,7 @@ use App\Modules\Ai\Exceptions\AiRateLimitException;
 use App\Modules\Ai\Exceptions\AiTimeoutException;
 use App\Modules\Ai\Services\AiCostCalculator;
 use App\Modules\Ai\Services\AiProvider;
+use App\Modules\Ai\Support\RawResponseCapture;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -86,6 +87,8 @@ abstract class HttpAiDriver implements AiProvider
                     ->post($built['url'], $built['body']);
 
                 if ($response->successful()) {
+                    app(RawResponseCapture::class)->store($this->name(), $response->body());   // no-op unless --debug-raw armed it
+
                     return $this->parseResponse($request, $response, (int) ((hrtime(true) - $started) / 1_000_000));
                 }
 
