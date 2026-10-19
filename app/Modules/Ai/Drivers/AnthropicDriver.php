@@ -9,7 +9,6 @@ use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Dto\AiToolCall;
 use App\Modules\Ai\Enums\AiDriver;
 use App\Modules\Ai\Enums\AiMessageRole;
-use App\Modules\Ai\Exceptions\AiContentBlockedException;
 use App\Modules\Ai\Services\AiCostCalculator;
 use Illuminate\Http\Client\Response;
 
@@ -90,18 +89,25 @@ final class AnthropicDriver extends HttpAiDriver
     {
         $data = $response->json();
 
+        // Usage first: a refusal or a cut-off below was still billed, and the ledger must say so.
+        $usage = is_array($data) ? (array) ($data['usage'] ?? []) : [];
+        $in = (int) ($usage['input_tokens'] ?? 0);
+        $out = (int) ($usage['output_tokens'] ?? 0);
+        $usageOnly = $this->billedUsage($in, $out, $durationMs);
+        $billed = $in + $out > 0 ? $usageOnly : null;   // nothing to record when the answer carries no usage numbers
+
         if (! is_array($data) || ! is_array($data['content'] ?? null)) {
-            throw $this->invalid('no content blocks');
+            throw $this->invalid('no content blocks', $billed);
         }
 
         $stop = $data['stop_reason'] ?? null;
 
         if ($stop === 'refusal') {
-            throw new AiContentBlockedException('AI provider [anthropic] refused to answer.', $this->name(), $response->status());
+            throw $this->blocked('AI provider [anthropic] refused to answer.', $response->status(), $billed);
         }
 
         if ($stop === 'max_tokens') {
-            throw $this->invalid('the answer was cut off at max_tokens');
+            throw $this->invalid('the answer was cut off at max_tokens', $billed);
         }
 
         $text = '';
@@ -120,7 +126,7 @@ final class AnthropicDriver extends HttpAiDriver
         }
 
         if ($text === '' && $toolCalls === []) {
-            throw $this->invalid('no text and no tool call');
+            throw $this->invalid('no text and no tool call', $billed);
         }
 
         $json = null;
@@ -129,13 +135,10 @@ final class AnthropicDriver extends HttpAiDriver
             $json = $this->decodeJsonObject($text);
 
             if ($json === null) {
-                throw $this->invalid('structured output was not a JSON object');
+                throw $this->invalid('structured output was not a JSON object', $billed);
             }
         }
 
-        $in = (int) ($data['usage']['input_tokens'] ?? 0);
-        $out = (int) ($data['usage']['output_tokens'] ?? 0);
-
-        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $this->costs->cost($this->name(), $this->model, $in, $out), $this->model, $this->name(), $durationMs);
+        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $usageOnly->costUsd, $this->model, $this->name(), $durationMs);
     }
 }

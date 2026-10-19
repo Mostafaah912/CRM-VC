@@ -8,6 +8,7 @@ use App\Modules\Ai\Dto\AiRequest;
 use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Exceptions\AiAuthenticationException;
 use App\Modules\Ai\Exceptions\AiConfigurationException;
+use App\Modules\Ai\Exceptions\AiContentBlockedException;
 use App\Modules\Ai\Exceptions\AiInvalidResponseException;
 use App\Modules\Ai\Exceptions\AiProviderException;
 use App\Modules\Ai\Exceptions\AiRateLimitException;
@@ -131,9 +132,20 @@ abstract class HttpAiDriver implements AiProvider
         return is_string($code) && preg_match('/^[A-Za-z_]{1,40}$/', $code) === 1 ? $code : null;
     }
 
-    protected function invalid(string $why): AiInvalidResponseException
+    protected function invalid(string $why, ?AiResponse $billed = null): AiInvalidResponseException
     {
-        return new AiInvalidResponseException("AI provider [{$this->name()}] returned an unusable response: {$why}.", $this->name());
+        return new AiInvalidResponseException("AI provider [{$this->name()}] returned an unusable response: {$why}.", $this->name(), null, false, 1, $billed);
+    }
+
+    /** The usage of an answer that cannot be used, as a text-less AiResponse (see AiProviderException::$billed). */
+    protected function billedUsage(int $in, int $out, int $durationMs, int $reasoning = 0): AiResponse
+    {
+        return new AiResponse(null, null, [], $in, $out, $this->costs->cost($this->name(), $this->model, $in, $out), $this->model, $this->name(), $durationMs, $reasoning);
+    }
+
+    protected function blocked(string $message, int $status, ?AiResponse $billed = null): AiContentBlockedException
+    {
+        return new AiContentBlockedException($message, $this->name(), $status, false, 1, $billed);
     }
 
     /** @return array<string, mixed>|null */

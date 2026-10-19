@@ -92,7 +92,8 @@ return [
     | the worst case from it, so lowering it also lowers the per-call worst-case spend.
     */
     'analyst' => [
-        'max_output_tokens' => 3000,
+        // 3000 cut the first v3 answer off (v3 asks for metric_refs on recommendations and writes longer). 4500 leaves ~2x the observed 2.2-2.6k.
+        'max_output_tokens' => 4500,
         'temperature' => 0.2,
     ],
 
@@ -157,9 +158,11 @@ return [
         'warn_at' => env('AI_BUDGET_WARN_AT') ?: '0.8',
         'monthly_tokens' => env('AI_BUDGET_MONTHLY_TOKENS') ?: null,
         'allow_unpriced' => false,
-        // Hidden "thinking" tokens are billed as output but are NOT counted by max_output_tokens on some models.
-        // The worst case adds this many output tokens per call. Conservative default; tune down once real usage is seen.
-        'reasoning_margin_tokens' => env('AI_REASONING_MARGIN_TOKENS') === null || env('AI_REASONING_MARGIN_TOKENS') === '' ? 4096 : (int) env('AI_REASONING_MARGIN_TOKENS'),
+        // Hidden "thinking" tokens are billed as output. Google's docs for gemini-3.8-flash (Interactions API page): max_output_tokens
+        // "sets the maximum number of tokens a response can generate, including thought tokens" — so for this model thinking is INSIDE
+        // max_output_tokens and the old 4096 margin counted it twice. The generateContent reference page could not be read to confirm the
+        // same for REST, so a smaller safety margin stays (and other models/providers may differ). Env override still wins.
+        'reasoning_margin_tokens' => env('AI_REASONING_MARGIN_TOKENS') === null || env('AI_REASONING_MARGIN_TOKENS') === '' ? 1024 : (int) env('AI_REASONING_MARGIN_TOKENS'),
         'reservation_ttl_seconds' => 300,
         'lock_seconds' => 10,
     ],

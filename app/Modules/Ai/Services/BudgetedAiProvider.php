@@ -6,13 +6,14 @@ namespace App\Modules\Ai\Services;
 
 use App\Modules\Ai\Dto\AiRequest;
 use App\Modules\Ai\Dto\AiResponse;
+use App\Modules\Ai\Exceptions\AiProviderException;
 use Closure;
-use Throwable;
 
 /**
  * THE AiProvider the container hands out (AppServiceProvider): every real call goes through BudgetGuard, with no
  * way around it (tests/Arch/AiBudgetBoundaryTest.php). reserve → call → record usage → release. A provider failure
- * records nothing and frees the reservation.
+ * frees the reservation and records nothing — EXCEPT an unusable answer that carries real usage (AiProviderException::$billed), which is
+ * recorded: that spend happened.
  */
 final class BudgetedAiProvider implements AiProvider
 {
@@ -34,15 +35,23 @@ final class BudgetedAiProvider implements AiProvider
         $reservation = $this->guard->reserve($request, (string) config('ai.model'));
 
         try {
-            $response = $this->provider()->generate($request);
-            $this->usage->record($response);
-        } catch (Throwable $e) {
-            $this->guard->release($reservation);
+            try {
+                $response = $this->provider()->generate($request);
+            } catch (AiProviderException $e) {
+                // The provider ANSWERED but the answer was unusable (cut off, blocked, malformed): the tokens were still charged, so the
+                // ledger records them. No usage (timeout before an answer, 4xx/5xx) records nothing.
+                if ($e->billed !== null) {
+                    $this->usage->record($e->billed);
+                }
 
-            throw $e;
+                throw $e;
+            }
+
+            $this->usage->record($response);
+        } finally {
+            $this->guard->release($reservation);   // every path: success, billed failure, unbilled failure
         }
 
-        $this->guard->release($reservation);
         $this->guard->warnIfNeeded();
 
         return $response;

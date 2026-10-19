@@ -9,7 +9,6 @@ use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Dto\AiToolCall;
 use App\Modules\Ai\Enums\AiDriver;
 use App\Modules\Ai\Enums\AiMessageRole;
-use App\Modules\Ai\Exceptions\AiContentBlockedException;
 use Illuminate\Http\Client\Response;
 
 /** OpenAI Chat Completions. Simple and UNVERIFIED against the live API (P7-02). */
@@ -72,20 +71,28 @@ final class OpenAiDriver extends HttpAiDriver
     protected function parseResponse(AiRequest $request, Response $response, int $durationMs): AiResponse
     {
         $data = $response->json();
+
+        // Usage first: a refusal or a cut-off below was still billed, and the ledger must say so.
+        $usage = is_array($data) ? (array) ($data['usage'] ?? []) : [];
+        $in = (int) ($usage['prompt_tokens'] ?? 0);
+        $out = (int) ($usage['completion_tokens'] ?? 0);
+        $reasoning = (int) ($usage['completion_tokens_details']['reasoning_tokens'] ?? 0);
+        $usageOnly = $this->billedUsage($in, $out, $durationMs, $reasoning);
+        $billed = $in + $out > 0 ? $usageOnly : null;   // nothing to record when the answer carries no usage numbers
         $choice = is_array($data) ? ($data['choices'][0] ?? null) : null;
 
         if (! is_array($choice) || ! is_array($choice['message'] ?? null)) {
-            throw $this->invalid('no choices');
+            throw $this->invalid('no choices', $billed);
         }
 
         $finish = $choice['finish_reason'] ?? null;
 
         if ($finish === 'content_filter' || is_string($choice['message']['refusal'] ?? null)) {
-            throw new AiContentBlockedException('AI provider [openai] refused to answer.', $this->name(), $response->status());
+            throw $this->blocked('AI provider [openai] refused to answer.', $response->status(), $billed);
         }
 
         if ($finish === 'length') {
-            throw $this->invalid('the answer was cut off at the token limit');
+            throw $this->invalid('the answer was cut off at the token limit', $billed);
         }
 
         $text = is_string($choice['message']['content'] ?? null) ? $choice['message']['content'] : '';
@@ -95,20 +102,20 @@ final class OpenAiDriver extends HttpAiDriver
             $function = is_array($call) ? ($call['function'] ?? null) : null;
 
             if (! is_array($function) || ! is_string($call['id'] ?? null) || ! is_string($function['name'] ?? null)) {
-                throw $this->invalid('malformed tool call');
+                throw $this->invalid('malformed tool call', $billed);
             }
 
             $arguments = json_decode((string) ($function['arguments'] ?? '{}'), true);
 
             if (! is_array($arguments)) {
-                throw $this->invalid('tool call arguments are not JSON');
+                throw $this->invalid('tool call arguments are not JSON', $billed);
             }
 
             $toolCalls[] = new AiToolCall($call['id'], $function['name'], $arguments);
         }
 
         if ($text === '' && $toolCalls === []) {
-            throw $this->invalid('no text and no tool call');
+            throw $this->invalid('no text and no tool call', $billed);
         }
 
         $json = null;
@@ -117,14 +124,10 @@ final class OpenAiDriver extends HttpAiDriver
             $json = $this->decodeJsonObject($text);
 
             if ($json === null) {
-                throw $this->invalid('structured output was not a JSON object');
+                throw $this->invalid('structured output was not a JSON object', $billed);
             }
         }
 
-        $in = (int) ($data['usage']['prompt_tokens'] ?? 0);
-        $out = (int) ($data['usage']['completion_tokens'] ?? 0);
-        $reasoning = (int) ($data['usage']['completion_tokens_details']['reasoning_tokens'] ?? 0);
-
-        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $this->costs->cost($this->name(), $this->model, $in, $out), $this->model, $this->name(), $durationMs, $reasoning);
+        return new AiResponse($text === '' ? null : $text, $json, $toolCalls, $in, $out, $usageOnly->costUsd, $this->model, $this->name(), $durationMs, $reasoning);
     }
 }

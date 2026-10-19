@@ -10,7 +10,6 @@ use App\Modules\Ai\Dto\AiResponse;
 use App\Modules\Ai\Dto\AiToolCall;
 use App\Modules\Ai\Enums\AiDriver;
 use App\Modules\Ai\Enums\AiMessageRole;
-use App\Modules\Ai\Exceptions\AiContentBlockedException;
 use Illuminate\Http\Client\Response;
 
 /**
@@ -68,26 +67,35 @@ final class GeminiDriver extends HttpAiDriver
             throw $this->invalid('not a JSON object');
         }
 
+        // Usage first: every refusal/cut-off below was still billed, and the ledger must say so.
+        $usage = (array) ($data['usageMetadata'] ?? []);
+        $in = (int) ($usage['promptTokenCount'] ?? 0);
+        // Thinking tokens are billed as output (and, per Google's docs, are NOT inside maxOutputTokens' visible share — see sprint-7.md).
+        $reasoning = (int) ($usage['thoughtsTokenCount'] ?? 0);
+        $out = (int) ($usage['candidatesTokenCount'] ?? 0) + $reasoning;
+        $usageOnly = $this->billedUsage($in, $out, $durationMs, $reasoning);
+        $billed = $in + $out > 0 ? $usageOnly : null;   // nothing to record when the answer carries no usage numbers
+
         $blockReason = $data['promptFeedback']['blockReason'] ?? null;
 
         if (is_string($blockReason)) {
-            throw new AiContentBlockedException('AI provider [gemini] blocked the prompt.', $this->name(), $response->status());
+            throw $this->blocked('AI provider [gemini] blocked the prompt.', $response->status(), $billed);
         }
 
         $candidate = $data['candidates'][0] ?? null;
 
         if (! is_array($candidate)) {
-            throw $this->invalid('no candidates');
+            throw $this->invalid('no candidates', $billed);
         }
 
         $finish = is_string($candidate['finishReason'] ?? null) ? $candidate['finishReason'] : null;
 
         if (in_array($finish, self::BLOCKED_FINISH_REASONS, true)) {
-            throw new AiContentBlockedException('AI provider [gemini] blocked the answer.', $this->name(), $response->status());
+            throw $this->blocked('AI provider [gemini] blocked the answer.', $response->status(), $billed);
         }
 
         if ($finish === 'MAX_TOKENS') {
-            throw $this->invalid('the answer was cut off at maxOutputTokens');
+            throw $this->invalid('the answer was cut off at maxOutputTokens', $billed);
         }
 
         $text = '';
@@ -111,7 +119,7 @@ final class GeminiDriver extends HttpAiDriver
         }
 
         if ($text === '' && $toolCalls === []) {
-            throw $this->invalid('no text and no tool call');
+            throw $this->invalid('no text and no tool call', $billed);
         }
 
         $json = null;
@@ -120,15 +128,9 @@ final class GeminiDriver extends HttpAiDriver
             $json = $this->decodeJsonObject($text);
 
             if ($json === null) {
-                throw $this->invalid('structured output was not a JSON object');
+                throw $this->invalid('structured output was not a JSON object', $billed);
             }
         }
-
-        $usage = (array) ($data['usageMetadata'] ?? []);
-        $in = (int) ($usage['promptTokenCount'] ?? 0);
-        // Thinking tokens are billed as output.
-        $reasoning = (int) ($usage['thoughtsTokenCount'] ?? 0);
-        $out = (int) ($usage['candidatesTokenCount'] ?? 0) + $reasoning;
 
         return new AiResponse(
             $text === '' ? null : $text,
@@ -136,7 +138,7 @@ final class GeminiDriver extends HttpAiDriver
             $toolCalls,
             $in,
             $out,
-            $this->costs->cost($this->name(), $this->model, $in, $out),
+            $usageOnly->costUsd,
             $this->model,
             $this->name(),
             $durationMs,
