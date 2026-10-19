@@ -100,4 +100,14 @@ jobs:
           php artisan db:seed --class=RoleSeeder --force
 
       - name: Run CI Checks
-        run: composer ci:check
+        run: |
+          set -o pipefail
+          composer ci:check 2>&1 | tee ci.log
+
+      # The Actions log needs a login; annotations do not. On failure, surface the failing lines (test names, exceptions) as annotations.
+      - name: Summarise failures
+        if: failure()
+        run: |
+          grep -nE "FAIL|FAILED|✕|⨯|Exception|Error:|error TS|Tests:|failed|errors" ci.log | tail -40 | while IFS= read -r line; do
+            echo "::error::$(echo "$line" | cut -c1-400)"
+          done
