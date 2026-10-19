@@ -62,6 +62,7 @@ final class AnalystPageService
             'latest' => $latest,
             'generation' => $generation,
             'freshness' => ['stale' => $fresh['stale'], 'data_age_days' => $fresh['age'], 'as_of' => $asOf === null ? null : $fresh['as_of_jalali']],
+            'definitions' => ['realized_statuses' => $this->realizedStatuses()],
             'last_run' => $last === null ? null : ['type' => $last->type, 'at' => TehranDateTime::format($last->created_at), 'manual' => $last->requested_by !== null],
             'recent_problem' => $this->recentProblem(),
             'manual' => [
@@ -98,6 +99,23 @@ final class AnalystPageService
             'total' => $paginator->total(),
             'last_page' => $paginator->lastPage(),
         ];
+    }
+
+    /**
+     * The statuses that make an order «تحقق‌یافته» (config, with Persian labels): the help text beside «درآمد» is built from these, never typed in the UI.
+     *
+     * @return list<array{slug: string, label: string}>
+     */
+    private function realizedStatuses(): array
+    {
+        $labels = (array) config('woo.status_labels', []);
+        $out = [];
+
+        foreach ((array) config('woo.realized_statuses', []) as $slug) {
+            $out[] = ['slug' => (string) $slug, 'label' => (string) ($labels[$slug] ?? $slug)];
+        }
+
+        return $out;
     }
 
     /** @return array{type: string, reason: string, message: string, at: string}|null */

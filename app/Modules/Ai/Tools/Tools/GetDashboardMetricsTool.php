@@ -20,7 +20,7 @@ final class GetDashboardMetricsTool extends AiTool
 
     public function description(): string
     {
-        return 'Headline store KPIs (orders, revenue in Toman, refunds, net revenue, AOV, new vs repeat customers) for the last N days, compared with the previous N days, plus the size and repeat rate of the customer base.';
+        return 'Headline store KPIs (orders, revenue in Toman, refunds, net revenue = «درآمد (شامل ارسال)» = order total minus refunds, including shipping; product_revenue = goods without shipping; shipping_revenue; AOV, new vs repeat customers) for the last N days, compared with the previous N days, plus the size and repeat rate of the customer base.';
     }
 
     public function properties(): array

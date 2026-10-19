@@ -16,6 +16,7 @@ use App\Modules\Ai\Exceptions\AiTimeoutException;
 use App\Modules\Ai\Exceptions\AnalystNotReadyException;
 use App\Modules\Ai\Exceptions\BudgetExceededException;
 use App\Modules\Ai\Exceptions\ManualRequestThrottledException;
+use App\Modules\Ai\Exceptions\OrdersSyncBehindException;
 use App\Modules\Ai\Exceptions\StaleDataException;
 use App\Modules\Ai\Exceptions\UnpricedModelException;
 use Throwable;
@@ -31,6 +32,7 @@ final class AiErrorExplainer
         return match (true) {
             $e instanceof AnalystNotReadyException => "Not ready ({$e->reason}): {$e->getMessage()}",
             $e instanceof StaleDataException => $e->getMessage().' Refresh the data first (sync + nightly chain), or raise AI_MAX_DATA_AGE_DAYS knowing the answer will say the data is stale.',
+            $e instanceof OrdersSyncBehindException => $e->getMessage().' Run the orders sync (hm:sync --entity=orders) and the nightly chain first, or raise AI_MAX_ORDERS_SYNC_BEHIND_HOURS knowing the answer will say the day is incomplete.',
             $e instanceof ManualRequestThrottledException => $e->getMessage(),
             $e instanceof BudgetExceededException => 'Refused by the monthly budget: '.$e->getMessage(),
             $e instanceof UnpricedModelException => 'Refused: '.$e->getMessage(),

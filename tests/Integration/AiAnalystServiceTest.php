@@ -13,6 +13,7 @@ use App\Modules\Ai\Exceptions\AiResponseInvalidException;
 use App\Modules\Ai\Exceptions\AnalystNotReadyException;
 use App\Modules\Ai\Exceptions\BudgetExceededException;
 use App\Modules\Ai\Exceptions\ManualRequestThrottledException;
+use App\Modules\Ai\Exceptions\OrdersSyncBehindException;
 use App\Modules\Ai\Exceptions\StaleDataException;
 use App\Modules\Ai\Jobs\GenerateDailyBriefJob;
 use App\Modules\Ai\Jobs\GenerateManualInsightJob;
@@ -147,6 +148,7 @@ it('stores the insight and its tool calls with exact values — one run, one tra
 it('a weekly review is about the last Saturday-to-Friday week', function () {
     $this->travelTo(CarbonImmutable::parse('2026-10-17 07:30:00', 'Asia/Tehran'));   // Saturday
     AiToolsFixture::loadDaily(AnomalySeries::make('2026-06-01', '2026-10-16'));
+    AiToolsFixture::admin()->table('sync_cursors')->where('entity', 'orders')->update(['cursor_value' => '2026-10-17 03:00:00+00']);   // past the end of 2026-10-16
     AiToolsFixture::admin()->table('metric_runs')->delete();
     AiToolsFixture::admin()->table('metric_runs')->insert(['mode' => 'full', 'status' => 'completed', 'started_at' => '2026-10-17 03:10:00+03:30', 'finished_at' => '2026-10-17 03:20:00+03:30']);
     $json = app(ContextBuilder::class)->build(AiInsightType::WeeklyReview)->json;
@@ -563,4 +565,63 @@ it('the job frees the screen when the worker dies: state failed instead of runni
 
     expect($manual->state(AiInsightType::DailyBrief))->toMatchArray(['status' => 'failed', 'code' => 'unexpected'])
         ->and($job->queue)->toBe('ai')->and($job->uniqueFor)->toBeGreaterThan($job->timeout);
+});
+
+/*
+| P7-15 — the orders-sync gate: "complete day" must be complete in sync. Behind the end of the analysed day by more than the configured hours =
+| refused before any provider call, an alert is raised, a scheduled run is skipped. Same shape as the data-age gate.
+*/
+function ordersCursorAt(string $value): void
+{
+    AiToolsFixture::admin()->table('sync_cursors')->where('entity', 'orders')->update(['cursor_value' => $value]);
+}
+
+it('refuses generation when the orders sync is behind the end of the analysed day by more than the limit — no provider call, an alert', function () {
+    $fake = useFake(new FakeAiProvider);
+    ordersCursorAt('2026-10-13 15:00:00+00');   // day ends 20:30 UTC: 5.5 h behind, limit 1 h
+
+    expect(fn () => analyst()->dailyBrief())->toThrow(OrdersSyncBehindException::class);
+    expect($fake->callCount())->toBe(0)->and(DB::table('ai_insights')->count())->toBe(0)
+        ->and(alertMessages())->toContain('AI daily_brief generation failed: orders_sync_behind');
+});
+
+it('lets a small lag through up to the configured limit, and refuses just above it', function () {
+    useFake((new FakeAiProvider)->queue(okReply(groundedAnswer(currentContextJson()))));
+    ordersCursorAt('2026-10-13 19:30:00+00');   // exactly 1 h behind the day end
+
+    expect(analyst()->dailyBrief()->fromCache)->toBeFalse();
+
+    config(['ai.generation.max_orders_sync_behind_hours' => 0.5]);
+    ordersCursorAt('2026-10-13 19:59:00+00');   // 31 min behind: above 0.5 h
+
+    expect(fn () => analyst()->dailyBrief(null, true))->toThrow(OrdersSyncBehindException::class);
+});
+
+it('skips a scheduled run with the reason orders_sync_behind', function () {
+    useFake(new FakeAiProvider);
+    ordersCursorAt('2026-10-13 12:00:00+00');
+
+    $outcome = analyst()->runScheduled(AiInsightType::DailyBrief);
+
+    expect($outcome->status)->toBe('skipped')->and($outcome->reason)->toBe('orders_sync_behind');
+});
+
+it('a manual run records the Persian sentence and a stable code for it', function () {
+    useFake(new FakeAiProvider);
+    ordersCursorAt('2026-10-13 12:00:00+00');
+    $manual = app(ManualGenerationService::class);
+
+    $manual->run(AiInsightType::DailyBrief, User::factory()->create()->id, true);
+
+    expect($manual->state(AiInsightType::DailyBrief))->toBe(['status' => 'failed', 'code' => 'orders_sync_behind', 'message' => 'همگام‌سازی سفارش‌ها از پایان روز مورد تحلیل عقب است و سفارش‌های آن روز ناقص‌اند؛ پس از همگام‌سازی دوباره تلاش کنید.']);
+});
+
+it('the answer to a behind-sync context cannot claim high confidence (data_quality warning cap)', function () {
+    ordersCursorAt('2026-10-13 15:00:00+00');
+    config(['ai.generation.max_orders_sync_behind_hours' => 24]);   // let it through so the validator sees the warning
+    useFake((new FakeAiProvider)->queue(okReply(groundedAnswer(currentContextJson(), ['confidence' => 'high']))));
+
+    $result = analyst()->dailyBrief();
+
+    expect($result->insight->payload['confidence'])->toBe('medium')->and($result->insight->payload['meta']['adjustments'][0]['reasons'])->toContain('data_quality_warnings');
 });

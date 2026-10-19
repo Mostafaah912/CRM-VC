@@ -469,7 +469,12 @@ export default function Analyst({ data }: Props) {
                                 داده قدیمی: روز تازه‌تری از این تحلیل در داده هست
                             </ToneBadge>
                         )}
-                        <InsightView insight={shown} />
+                        <InsightView
+                            insight={shown}
+                            realizedStatuses={
+                                data.definitions.realized_statuses
+                            }
+                        />
                     </>
                 )}
 

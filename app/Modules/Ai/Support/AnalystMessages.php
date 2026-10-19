@@ -16,6 +16,7 @@ use App\Modules\Ai\Exceptions\AiTimeoutException;
 use App\Modules\Ai\Exceptions\AnalystNotReadyException;
 use App\Modules\Ai\Exceptions\BudgetExceededException;
 use App\Modules\Ai\Exceptions\ManualRequestThrottledException;
+use App\Modules\Ai\Exceptions\OrdersSyncBehindException;
 use App\Modules\Ai\Exceptions\StaleDataException;
 use App\Modules\Ai\Exceptions\UnpricedModelException;
 use Throwable;
@@ -32,6 +33,7 @@ final class AnalystMessages
         return match (true) {
             $e instanceof AnalystNotReadyException => ['code' => $e->reason === 'ai_disabled' ? 'ai_disabled' : 'not_ready', 'message' => self::forReadiness($e->reason)],
             $e instanceof StaleDataException => ['code' => 'stale_data', 'message' => 'داده‌ها قدیمی‌اند؛ تا همگام‌سازی و محاسبه‌ی شبانه انجام نشود تحلیل ساخته نمی‌شود.'],
+            $e instanceof OrdersSyncBehindException => ['code' => 'orders_sync_behind', 'message' => 'همگام‌سازی سفارش‌ها از پایان روز مورد تحلیل عقب است و سفارش‌های آن روز ناقص‌اند؛ پس از همگام‌سازی دوباره تلاش کنید.'],
             $e instanceof ManualRequestThrottledException => ['code' => 'throttled', 'message' => 'سقف درخواست دستی پر شده است؛ بعداً دوباره تلاش کنید.'],
             $e instanceof BudgetExceededException => ['code' => 'budget_exceeded', 'message' => 'بودجه‌ی ماهانه‌ی هوش مصنوعی تمام شده است.'],
             $e instanceof UnpricedModelException => ['code' => 'not_ready', 'message' => self::forReadiness('unpriced_model')],
@@ -67,6 +69,7 @@ final class AnalystMessages
     {
         return match ($reason) {
             'stale_data' => 'تحلیل به‌خاطر قدیمی بودن داده انجام نشد.',
+            'orders_sync_behind' => 'تحلیل به‌خاطر عقب‌ماندن همگام‌سازی سفارش‌ها (روز ناقص) انجام نشد.',
             'invalid_response' => 'پاسخ مدل دوبار نامعتبر بود و ذخیره نشد.',
             'provider_error' => 'ارائه‌دهنده خطا داد.',
             'context_error' => 'ساخت داده‌ی ورودی ناموفق بود.',

@@ -72,6 +72,11 @@ return [
     */
     'generation' => [
         'max_data_age_days' => (int) (env('AI_MAX_DATA_AGE_DAYS') ?: 3),
+        // "A complete day" must also be COMPLETE IN SYNC: if the orders cursor (sync_cursors.orders) is more than this many hours before the END of the
+        // Tehran day being analysed, orders of that day are missing and generation is refused (alert `orders_sync_behind`), like the data-age gate.
+        // Default 1 h: Sync polls every 15 minutes (+10 min overlap), so an hour of lag already means a stalled sync; the first real case (dev,
+        // 2026-10-18) was 5.7 h behind and lost 7 of 24 orders — a larger default would have let it through.
+        'max_orders_sync_behind_hours' => (float) (env('AI_MAX_ORDERS_SYNC_BEHIND_HOURS') ?: 1),
         'daily_at' => env('AI_DAILY_AT') ?: '07:00',
         'weekly_at' => env('AI_WEEKLY_AT') ?: '07:30',
         'weekly_day' => env('AI_WEEKLY_DAY') === null || env('AI_WEEKLY_DAY') === '' ? 6 : (int) env('AI_WEEKLY_DAY'),

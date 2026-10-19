@@ -70,10 +70,11 @@ it('never puts a prompt, a context, a cache key or a raw payload on the screen\'
     expect(Scanner::violations($files, ['/[\'"]cache_key[\'"]\s*=>/', '/[\'"](prompt|system_prompt|context|raw|response_body)[\'"]\s*=>/', '/[\'"]payload[\'"]\s*=>/', '/PromptRepository|ContextBuilder|BuiltContext/']))->toBe([]);
 });
 
+// A config KEY like woo.status_labels is only data; what is forbidden is Woo client / Sync code.
 it('writes nothing to WooCommerce and sends nothing: the analyst page code has no Woo/SMS/campaign/message code', function () {
     $files = array_merge(analystControllers(), [Scanner::root().'/app/Modules/Ai/Services/ManualGenerationService.php', Scanner::root().'/app/Modules/Ai/Services/AnalystPageService.php']);
 
-    expect(Scanner::violations($files, ['/Woo|Sms|Campaign|Mail::|Notification::|Telegram|WhatsApp/i']))->toBe([]);
+    expect(Scanner::violations($files, ['/\bWoo[A-Z]\w*|Modules\\\\Sync|Sms|Campaign|Mail::|Notification::|Telegram|WhatsApp/i']))->toBe([]);
 });
 
 it('renders model text only as text in the analyst UI: no raw HTML injection, no markdown-to-HTML, no console output', function () {

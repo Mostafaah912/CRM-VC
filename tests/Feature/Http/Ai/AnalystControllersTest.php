@@ -262,3 +262,17 @@ it('exposes no explain endpoint (PRD §19 defines none) and no way to pick a typ
     $this->actingAs(Fx::userWith('ai.view', 'ai.request'))->post('/ai/analyst/explain')->assertNotFound();
     expect(app(ManualGenerationService::class)->state(AiInsightType::Explain))->toBe(['status' => 'idle']);
 });
+
+it('gives the screen the realized statuses with Persian labels (taroff-4 = ارسال با آنباکس) from config, for the «درآمد» help text', function () {
+    $this->actingAs(Fx::userWith('ai.view'))->get('/ai/analyst')->assertInertia(fn (Assert $p) => $p
+        ->where('data.definitions.realized_statuses', [
+            ['slug' => 'processing', 'label' => 'در حال پردازش'],
+            ['slug' => 'completed', 'label' => 'تکمیل‌شده'],
+            ['slug' => 'taroff-4', 'label' => 'ارسال با آنباکس'],
+        ]));
+
+    config(['woo.realized_statuses' => ['completed', 'shipped']]);
+
+    $this->actingAs(Fx::userWith('ai.view'))->get('/ai/analyst')->assertInertia(fn (Assert $p) => $p
+        ->where('data.definitions.realized_statuses', [['slug' => 'completed', 'label' => 'تکمیل‌شده'], ['slug' => 'shipped', 'label' => 'shipped']]));
+});

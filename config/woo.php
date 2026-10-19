@@ -57,6 +57,14 @@ return [
     'realized_statuses' => ['processing', 'completed', 'taroff-4'],
     'excluded_statuses' => ['pending', 'on-hold', 'cancelled', 'failed', 'trash'],
 
+    // Persian display labels for order statuses (a store-defined set: unknown slugs are shown as stored). Used by the AI context's definitions
+    // and the analyst screen's help text; the React label map (resources/js/lib/customer-labels.ts) mirrors it.
+    'status_labels' => [
+        'processing' => 'در حال پردازش',
+        'completed' => 'تکمیل‌شده',
+        'taroff-4' => 'ارسال با آنباکس',
+    ],
+
     'webhook_secret' => env('WOO_WEBHOOK_SECRET'),
     'webhook_allowed_ips' => env('WOO_WEBHOOK_ALLOWED_IPS', ''),
 

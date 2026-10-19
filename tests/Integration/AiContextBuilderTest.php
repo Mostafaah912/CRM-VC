@@ -60,7 +60,7 @@ afterEach(function () {
 it('builds a daily_brief with the sections in a fixed order and an honest summary', function () {
     [$c, $p] = ctx();
 
-    expect(array_keys($p))->toBe(['meta', 'data_quality', 'truncated', 'truncations', 'kpis', 'anomalies', 'trend', 'customer_health', 'retention_cohort', 'products_affinity'])
+    expect(array_keys($p))->toBe(['meta', 'definitions', 'data_quality', 'truncated', 'truncations', 'kpis', 'anomalies', 'trend', 'customer_health', 'retention_cohort', 'products_affinity'])
         ->and($p['meta'])->toBe(['schema' => 'analyst.context.v1', 'type' => 'daily_brief', 'currency' => 'IRT', 'money' => 'integer_toman', 'numbers_are_precomputed' => true, 'primary_window_days' => 1, 'redactions' => 0])
         ->and($c->type)->toBe('daily_brief')->and($c->truncated)->toBeFalse()->and($c->truncations)->toBe([])
         ->and($c->sizeBytes)->toBe(strlen($c->json))->and($c->maxBytes)->toBe(24 * 1024)->and($c->sizeBytes)->toBeLessThan($c->maxBytes)
@@ -494,4 +494,84 @@ it('flags zero-order rows (a stale zero is as bad as a missing row) once they re
     [, $p] = ctx();
 
     expect($p['data_quality']['warnings'])->not->toContain('daily_metrics_gap');
+});
+
+/*
+| P7-15 — "complete day" must be complete in SYNC: the orders cursor has to reach the END of the Tehran day `as_of` (2026-10-13, ends 20:30 UTC here).
+| Also the definitions block: what «درآمد» means, which statuses are «تحقق‌یافته», never cut.
+*/
+function setOrdersCursor(string $value): void
+{
+    AiToolsFixture::admin()->table('sync_cursors')->where('entity', 'orders')->update(['cursor_value' => $value]);
+}
+
+it('reports no sync lag when the orders cursor is past the end of the analysed day', function () {
+    [, $p] = ctx();
+
+    expect($p['data_quality']['orders_sync'])->toEqual(['cursor_at_utc' => '2026-10-14T03:00:00Z', 'as_of_day_end_utc' => '2026-10-13T20:30:00Z', 'behind_hours' => 0])
+        ->and($p['data_quality']['warnings'])->not->toContain('orders_sync_behind');
+
+    setOrdersCursor('2026-10-13 20:30:00+00');   // exactly at the end of the day: not behind
+    [, $p] = ctx();
+
+    expect($p['data_quality']['orders_sync']['behind_hours'])->toEqual(0)->and($p['data_quality']['warnings'])->not->toContain('orders_sync_behind');
+});
+
+it('raises the permanent orders_sync_behind warning with the lag in hours, even for one minute', function (string $cursor, float $hours) {
+    setOrdersCursor($cursor);
+    [, $p] = ctx();
+    $q = $p['data_quality'];
+
+    expect($q['orders_sync']['behind_hours'])->toEqual($hours)->and($q['warnings'])->toContain('orders_sync_behind')->and($q['interpretation'])->toHaveKey('orders_sync_behind');
+})->with([
+    'one minute' => ['2026-10-13 20:29:00+00', 0.1],
+    'five and a half hours (the dev case)' => ['2026-10-13 15:00:00+00', 5.5],
+    'a whole day' => ['2026-10-12 20:30:00+00', 24.0],
+]);
+
+it('marks the anomalies of the analysed day as suspected data gaps when the sync is behind — and only those', function () {
+    AiToolsFixture::admin()->table('daily_metrics')->where('date', '2026-10-13')->update(['orders_count' => 130, 'net_revenue' => 26_000_000, 'revenue' => 26_000_000]);
+    [, $healthy] = ctx();
+    setOrdersCursor('2026-10-13 15:00:00+00');
+    [, $behind] = ctx();
+    $today = fn (array $p) => array_values(array_filter($p['anomalies']['anomalies'], fn ($e) => $e['to']['iso'] === '2026-10-13'));
+    $earlier = fn (array $p) => array_values(array_filter($p['anomalies']['anomalies'], fn ($e) => $e['to']['iso'] !== '2026-10-13'));
+
+    expect($today($healthy))->not->toBeEmpty()->and(array_unique(array_column($today($healthy), 'suspected_data_gap')))->toBe([false])
+        ->and(array_unique(array_column($today($behind), 'suspected_data_gap')))->toBe([true])
+        ->and(array_unique(array_column($earlier($behind), 'suspected_data_gap') ?: [false]))->toBe([false]);
+});
+
+it('says nothing about sync lag when there is no orders cursor (unknown, not "behind")', function () {
+    AiToolsFixture::admin()->table('sync_cursors')->where('entity', 'orders')->delete();
+    [, $p] = ctx();
+
+    expect($p['data_quality']['orders_sync']['behind_hours'])->toBeNull()->and($p['data_quality']['warnings'])->not->toContain('orders_sync_behind');
+});
+
+it('states the definitions from config: realized statuses with Persian labels (taroff-4 included), what «درآمد» means, refund attribution', function () {
+    [, $p] = ctx();
+    $d = $p['definitions'];
+
+    expect(array_column($d['realized_order']['statuses'], 'slug'))->toBe(config('woo.realized_statuses'))->and(array_column($d['realized_order']['statuses'], 'slug'))->toContain('taroff-4')
+        ->and(collect($d['realized_order']['statuses'])->firstWhere('slug', 'taroff-4')['label_fa'])->toBe('ارسال با آنباکس')
+        ->and($d['net_revenue'])->toBe(['label_fa' => 'درآمد (شامل ارسال)', 'formula' => 'order_total_minus_refunded_total', 'includes_shipping_and_tax' => true])
+        ->and($d['product_revenue']['label_fa'])->toBe('درآمد کالا (بدون ارسال)')->and($d['shipping_revenue']['label_fa'])->toBe('ارسال')
+        ->and($d['refunds']['attributed_to'])->toBe('the_day_the_order_was_placed_not_the_day_of_the_refund')
+        ->and(array_keys($p)[0])->toBe('meta')->and(array_keys($p)[1])->toBe('definitions');
+});
+
+it('follows a changed config: a new realized status appears in the definitions, with its stored slug when it has no label', function () {
+    config(['woo.realized_statuses' => ['processing', 'completed', 'taroff-4', 'brand-new']]);
+    [, $p] = ctx();
+
+    expect(collect($p['definitions']['realized_order']['statuses'])->firstWhere('slug', 'brand-new'))->toBe(['slug' => 'brand-new', 'label_fa' => 'brand-new']);
+});
+
+it('never cuts the definitions, even when the context is squeezed to its floor', function () {
+    [$full] = ctx();
+    config(['ai.context.max_kb' => ($full->sizeBytes - 4000) / 1024]);
+    [$c, $p] = ctx();
+
+    expect($c->truncated)->toBeTrue()->and($p['definitions']['net_revenue']['label_fa'])->toBe('درآمد (شامل ارسال)')->and($p['data_quality']['orders_sync'])->toHaveKey('behind_hours');
 });

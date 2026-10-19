@@ -24,6 +24,7 @@ use App\Modules\Ai\Exceptions\AiResponseInvalidException;
 use App\Modules\Ai\Exceptions\AnalystNotReadyException;
 use App\Modules\Ai\Exceptions\BudgetExceededException;
 use App\Modules\Ai\Exceptions\ManualRequestThrottledException;
+use App\Modules\Ai\Exceptions\OrdersSyncBehindException;
 use App\Modules\Ai\Exceptions\StaleDataException;
 use App\Modules\Ai\Exceptions\UnpricedModelException;
 use App\Modules\Ai\Models\AiInsight;
@@ -82,6 +83,7 @@ final class AnalystService
         }
 
         $this->assertFreshEnough($type, $context);
+        $this->assertOrdersInSync($type, $context);
 
         $version = $this->prompts->for($type)->version;
         $key = $this->cache->key($type->value, $version, (string) config('ai.model'), $context->json);
@@ -140,6 +142,10 @@ final class AnalystService
             Log::warning("AI {$type->value} refused: data too old.");
 
             return ScheduledOutcome::skipped('stale_data');
+        } catch (OrdersSyncBehindException) {
+            Log::warning("AI {$type->value} refused: orders sync is behind the end of the analysed day.");
+
+            return ScheduledOutcome::skipped('orders_sync_behind');
         } catch (BudgetExceededException) {
             Log::warning("AI {$type->value} refused: monthly budget.");
 
@@ -198,6 +204,19 @@ final class AnalystService
     public function assertManualAllowed(int $requestedBy): void
     {
         $this->throttle($requestedBy);
+    }
+
+    /** "Complete day" must be complete in SYNC too: refuse when the orders cursor lags the end of the analysed day by more than the configured hours. */
+    private function assertOrdersInSync(AiInsightType $type, BuiltContext $context): void
+    {
+        $behind = json_decode($context->json, true)['data_quality']['orders_sync']['behind_hours'] ?? null;
+        $max = max(0.0, (float) config('ai.generation.max_orders_sync_behind_hours', 1));
+
+        if (is_numeric($behind) && (float) $behind > $max) {
+            event(new AiGenerationFailed($type->value, 'orders_sync_behind', "orders sync is {$behind} h behind the end of the analysed day (limit {$max} h)"));
+
+            throw new OrdersSyncBehindException((float) $behind, $max);
+        }
     }
 
     private function throttle(?int $requestedBy): void

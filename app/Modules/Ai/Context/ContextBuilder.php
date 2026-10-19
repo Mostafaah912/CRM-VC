@@ -148,8 +148,11 @@ final class ContextBuilder
             $suspect = $freshness['stale_data'] === true || $freshness['metrics_failed_recently'] === true || $freshness['sync_failed_recently'] === true;
             // Holes in the baseline window (days nobody computed) make EVERY anomaly in it untrustworthy as a business signal.
             $holes = ($freshness['daily_metrics_gaps']['missing_days'] ?? 0) > 0 || in_array('daily_metrics_gap', $freshness['warnings'], true);
-            $anomalies['anomalies'] = array_map(function (array $e) use ($suspect, $holes, &$gapCount) {
-                $gap = $holes || ($suspect && $e['observed'] === 0 && in_array($e['metric'], ['orders_count', 'net_revenue', 'customers_new'], true));
+            // Orders sync behind the end of the as_of day: every anomaly that touches that day is built on a partial day.
+            $behind = in_array('orders_sync_behind', $freshness['warnings'], true);
+            $asOfDay = $freshness['as_of']['iso'] ?? null;
+            $anomalies['anomalies'] = array_map(function (array $e) use ($suspect, $holes, $behind, $asOfDay, &$gapCount) {
+                $gap = $holes || ($behind && ($e['to']['iso'] ?? null) === $asOfDay) || ($suspect && $e['observed'] === 0 && in_array($e['metric'], ['orders_count', 'net_revenue', 'customers_new'], true));
                 $gapCount += $gap ? 1 : 0;
 
                 return $e + ['suspected_data_gap' => $gap];
@@ -230,6 +233,7 @@ final class ContextBuilder
                 'suspected_data_gap' => 'zero_values_may_be_missing_data_not_business_decline',
                 'stale_data' => 'latest_numbers_may_not_include_recent_days',
                 'period_anchor_mismatch' => $mismatch ? 'figures_may_describe_a_different_day_than_as_of_do_not_compare_them' : null,
+                'orders_sync_behind' => in_array('orders_sync_behind', $freshness['warnings'], true) ? 'the_last_day_is_incomplete_orders_after_the_sync_cursor_are_missing_its_totals_and_anomalies_are_suspect' : null,
                 'daily_metrics_gap' => in_array('daily_metrics_gap', $freshness['warnings'], true) ? 'days_without_a_row_or_with_zero_orders_in_the_window_are_missing_data_not_no_sales_anomalies_and_changes_over_it_are_suspect' : null,
                 'product_coverage_low' => in_array('product_coverage_low', $freshness['warnings'], true) ? 'product_rankings_and_affinities_cover_only_part_of_product_revenue_state_this' : null,
             ]) : [],
@@ -246,8 +250,8 @@ final class ContextBuilder
         ];
 
         // Fixed key order; truncation is reported INSIDE the payload so the model knows the picture is partial.
-        $ordered = ['meta' => $meta, 'data_quality' => $quality, 'truncated' => $truncations !== [], 'truncations' => array_values($truncations)] + $sections;
-        $order = ['meta', 'data_quality', 'truncated', 'truncations', 'kpis', 'anomalies', 'trend', 'customer_health', 'retention_cohort', 'products_affinity'];
+        $ordered = ['meta' => $meta, 'definitions' => $this->definitions(), 'data_quality' => $quality, 'truncated' => $truncations !== [], 'truncations' => array_values($truncations)] + $sections;
+        $order = ['meta', 'definitions', 'data_quality', 'truncated', 'truncations', 'kpis', 'anomalies', 'trend', 'customer_health', 'retention_cohort', 'products_affinity'];
         $payload = [];
 
         foreach ($order as $key) {
@@ -260,6 +264,30 @@ final class ContextBuilder
         $payload['meta']['redactions'] = count($redactions);
 
         return $payload;
+    }
+
+    /**
+     * What the numbers MEAN, stated once, so the model never guesses (and never equates them with WooCommerce's own «net sales»). Never cut.
+     * Statuses come from config (woo.realized_statuses), labels from woo.status_labels — nothing here names a status.
+     *
+     * @return array<string, mixed>
+     */
+    private function definitions(): array
+    {
+        $labels = (array) config('woo.status_labels', []);
+
+        return [
+            'realized_order' => [
+                'rule' => 'order_status_in_realized_statuses_and_not_fully_refunded',
+                'statuses' => array_map(fn (mixed $slug) => ['slug' => (string) $slug, 'label_fa' => (string) ($labels[$slug] ?? $slug)], array_values((array) config('woo.realized_statuses', []))),
+            ],
+            'net_revenue' => ['label_fa' => 'درآمد (شامل ارسال)', 'formula' => 'order_total_minus_refunded_total', 'includes_shipping_and_tax' => true],
+            'revenue' => ['label_fa' => 'فروش ناخالص (شامل ارسال)', 'formula' => 'order_total'],
+            'product_revenue' => ['label_fa' => 'درآمد کالا (بدون ارسال)', 'formula' => 'subtotal_minus_discount'],
+            'shipping_revenue' => ['label_fa' => 'ارسال', 'formula' => 'shipping_total'],
+            'refunds' => ['attributed_to' => 'the_day_the_order_was_placed_not_the_day_of_the_refund'],
+            'woocommerce_net_sales' => 'differs_from_net_revenue_it_excludes_shipping_and_books_refunds_on_the_refund_day',
+        ];
     }
 
     /** @param array<string, mixed> $args */

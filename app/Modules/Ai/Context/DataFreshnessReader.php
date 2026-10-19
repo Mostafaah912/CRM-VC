@@ -48,6 +48,7 @@ final class DataFreshnessReader
         ])->values()->all();
         $syncFailed = $cursors->contains(fn ($c) => (int) $c->consecutive_failures > 0 || $c->last_status === 'failed');
 
+        $ordersSync = $this->ordersSync($cursors->firstWhere('entity', 'orders')?->cursor_value, $report->asOf);
         $warnings = [];
 
         if ($stale) {
@@ -68,6 +69,10 @@ final class DataFreshnessReader
         $productRevenue = (int) $connection->table('daily_metrics')->sum('product_revenue');
         $coverage = $productRevenue > 0 ? ToolFormat::percent(min($attributed, $productRevenue), $productRevenue) : null;
         $minCoverage = (float) config('ai.context.min_product_coverage_percent', 90);
+
+        if ($ordersSync['behind_hours'] !== null && $ordersSync['behind_hours'] > 0) {
+            $warnings[] = 'orders_sync_behind';
+        }
 
         $gaps = $this->dailyMetricsGaps($connection, $report->asOf);
 
@@ -91,9 +96,38 @@ final class DataFreshnessReader
             'sync' => $sync,
             'sync_failed_recently' => $syncFailed,
             'sync_status_source' => 'sync_cursors',
+            'orders_sync' => $ordersSync,
             'daily_metrics_gaps' => $gaps,
             'product_coverage' => ['basis' => 'lifetime_product_revenue_attributed_to_a_product', 'attributed_percent' => $coverage, 'unattributed_percent' => $coverage === null ? null : round(100 - $coverage, 2), 'min_percent' => $minCoverage],
             'warnings' => $warnings,
+        ];
+    }
+
+    /**
+     * "Complete day" is a calendar fact (a daily_metrics row for a past day) AND a sync fact: Sync must have read orders up to the END of that Tehran
+     * day. `behind_hours` > 0 means the orders cursor is still before it — orders placed after the cursor are missing from every number of that day
+     * (the first real case: cursor 18:19, 7 of 24 orders of the day absent). null = unknown (no orders cursor, or no complete day).
+     *
+     * @return array{cursor_at_utc: string|null, as_of_day_end_utc: string|null, behind_hours: float|null}
+     */
+    private function ordersSync(mixed $cursor, ?string $asOf): array
+    {
+        if ($asOf === null) {
+            return ['cursor_at_utc' => null, 'as_of_day_end_utc' => null, 'behind_hours' => null];
+        }
+
+        $dayEnd = CarbonImmutable::parse($asOf, 'Asia/Tehran')->addDay()->startOfDay()->utc();
+
+        if ($cursor === null) {
+            return ['cursor_at_utc' => null, 'as_of_day_end_utc' => $dayEnd->format('Y-m-d\TH:i:s\Z'), 'behind_hours' => null];
+        }
+
+        $at = CarbonImmutable::parse((string) $cursor)->utc();
+
+        return [
+            'cursor_at_utc' => $at->format('Y-m-d\TH:i:s\Z'),
+            'as_of_day_end_utc' => $dayEnd->format('Y-m-d\TH:i:s\Z'),
+            'behind_hours' => $at >= $dayEnd ? 0.0 : ceil(($dayEnd->getTimestamp() - $at->getTimestamp()) / 360) / 10,   // rounded UP: any lag shows as > 0
         ];
     }
 

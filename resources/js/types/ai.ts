@@ -92,6 +92,7 @@ export type AnalystPageData = {
         message: string;
         at: string;
     } | null;
+    definitions: { realized_statuses: { slug: string; label: string }[] };
     manual: {
         max_per_window: number;
         window_minutes: number;

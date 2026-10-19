@@ -61,7 +61,13 @@ function Section({
  * One saved insight. Every string here is the model's text and is rendered as plain text (React escapes it) — there is no
  * raw-HTML injection and no markdown-to-HTML step anywhere. Numbers go through BidiText so signs and percents do not flip in RTL.
  */
-export function InsightView({ insight }: { insight: AnalystInsight }) {
+export function InsightView({
+    insight,
+    realizedStatuses,
+}: {
+    insight: AnalystInsight;
+    realizedStatuses: { slug: string; label: string }[];
+}) {
     const adjustment = insight.confidence_adjustment;
     const dateLabel =
         insight.period.start === insight.period.end
@@ -158,6 +164,18 @@ export function InsightView({ insight }: { insight: AnalystInsight }) {
                     ))}
                 </div>
             )}
+
+            <details className="text-muted-foreground text-xs">
+                <summary className="cursor-pointer">«درآمد» یعنی چه؟</summary>
+                <p className="mt-1 leading-6">
+                    درآمد (شامل ارسال) = مبلغ سفارش‌های تحقق‌یافته منهای استرداد؛
+                    هزینه‌ی ارسال در آن هست. «درآمد کالا» بدون ارسال است. استرداد
+                    به روز ثبت سفارش نسبت داده می‌شود، نه روز استرداد. سفارش
+                    تحقق‌یافته: {realizedStatuses.map((s) => s.label).join('، ')}
+                    . عدد «خالص» داشبورد ووکامرس بدون ارسال است و با این عدد فرق
+                    دارد.
+                </p>
+            </details>
 
             {insight.insights.length > 0 && (
                 <Section title="یافته‌ها">
