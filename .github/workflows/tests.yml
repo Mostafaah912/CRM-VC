@@ -104,10 +104,15 @@ jobs:
           set -o pipefail
           composer ci:check 2>&1 | tee ci.log
 
-      # The Actions log needs a login; annotations do not. On failure, surface the failing lines (test names, exceptions) as annotations.
+      # The Actions log needs a login; annotations do not. On failure, surface the failing tests and the first error text as annotations.
       - name: Summarise failures
         if: failure()
         run: |
-          grep -nE "FAIL|FAILED|✕|⨯|Exception|Error:|error TS|Tests:|failed|errors" ci.log | tail -40 | while IFS= read -r line; do
+          sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' ci.log > ci.clean.log
+          grep -nE "⨯|✕|FAILED|  Tests: |Fatal error|Allowed memory|Parse error|SQLSTATE" ci.clean.log | grep -v "✓" | head -25 | while IFS= read -r line; do
             echo "::error::$(echo "$line" | cut -c1-400)"
           done
+          first=$(grep -nE "FAILED|⨯" ci.clean.log | head -1 | cut -d: -f1)
+          if [ -n "$first" ]; then
+            sed -n "${first},$((first + 25))p" ci.clean.log | cut -c1-300 | while IFS= read -r line; do echo "::warning::$line"; done
+          fi
