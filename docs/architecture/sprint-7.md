@@ -723,3 +723,6 @@ P7-01 نقش read-only `hm_ai_readonly` + GATE 4 (۷/۷ بدون skip) • P7-02
 8. قیمت Gemini از ۲۰۲۷-۰۱-۰۱؛ `refunded` (۲۴۶ سفارش) در هیچ لیست config نیست؛ `npm run check` روی فایل‌های قدیمی؛ insightهای ۱–۴ روی تعریف قدیمی «تحقق‌یافته».
 
 **آماده‌ی PR:** شاخه‌ی `sprint/7-ai` برای ادغام در `main` آماده است (معیارهای پذیرش: فول‌سوئیت سبز، GATE 4 اثبات‌شده، PHPStan/Pint/tsc/build سبز). **merge انجام نشد.**
+
+### CI سبز شد (۲۰۲۶-۱۰-۲۰)
+CI از **Sprint 0/1 قرمز بود** (نه از Sprint 7؛ همه‌ی pushهای main از ۲۰۲۶-۰۹-۱۸ و همه‌ی PRهای sprint/6 شکست خورده بودند، همیشه در گام «Setup Application» چون نه PostgreSQL بود نه Redis). اصلاح: سرویس `postgres:15` و `redis:7`، متغیرهای CI-only برای `DB_*`/`DB_AI_ADMIN_*`/`DB_AI_READONLY_PASSWORD` (مقدار موقت داخل workflow، `AI_ENABLED=false`)، seed مجوزها/نقش‌ها، trigger روی push به `sprint/**`؛ `.prettierignore` برای پرامپت‌ها/fixtureها (hash-lock) و مستندات؛ ۵ فایل tsx قدیمی در commit جدا (`style:`، فقط layout)؛ و یافته‌ی واقعی: `.env.example` مقدار `METRICS_MONETARY_MODE=recent_window` دارد ولی ۴ تست (RFM، DefaultSegmentSeeder، GATE 2) lifetime فرض می‌کردند — در `phpunit.xml` پین شد. run واقعی Actions روی `d3ba32a`: **success** (۴٫۵ دقیقه، ۳٬۸۶۵ تست).
