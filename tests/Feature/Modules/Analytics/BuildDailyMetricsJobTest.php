@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Modules\Analytics\Jobs\BuildDailyMetricsJob;
+use App\Modules\Analytics\Services\DailyMetricsService;
 use App\Modules\Customers\Models\Customer;
 use App\Modules\Orders\Models\Order;
 use Carbon\CarbonImmutable;
@@ -36,4 +37,15 @@ it('rebuilds the daily_metrics table when dispatched', function () {
     BuildDailyMetricsJob::dispatchSync(1);
 
     expect(DB::table('daily_metrics')->count())->toBeGreaterThanOrEqual(1);
+});
+
+it('also heals drifted older days: the job calls rebuildDrifted after the trailing window (P7-12)', function () {
+    $c = Customer::factory()->create();
+    Order::factory()->for($c)->create(['is_realized' => true, 'ordered_at' => now()->subDays(10), 'total' => 100_000]);
+
+    (new BuildDailyMetricsJob(3))->handle(app(DailyMetricsService::class));
+
+    $day = now('Asia/Tehran')->subDays(10)->toDateString();
+
+    expect((int) DB::table('daily_metrics')->where('date', $day)->value('orders_count'))->toBe(1);
 });

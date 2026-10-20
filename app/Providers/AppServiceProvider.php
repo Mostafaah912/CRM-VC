@@ -2,13 +2,28 @@
 
 namespace App\Providers;
 
+use App\Modules\Ai\Anomaly\AnomalyDetector;
+use App\Modules\Ai\Events\AiBudgetExceeded;
+use App\Modules\Ai\Events\AiBudgetWarning;
+use App\Modules\Ai\Events\AiGenerationFailed;
+use App\Modules\Ai\Services\AiProvider;
+use App\Modules\Ai\Services\AiProviderFactory;
+use App\Modules\Ai\Services\AiUsageService;
+use App\Modules\Ai\Services\AnomalySource;
+use App\Modules\Ai\Services\BudgetedAiProvider;
+use App\Modules\Ai\Services\BudgetGuard;
+use App\Modules\Ai\Support\RawResponseCapture;
 use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
 use App\Modules\Segments\Listeners\RebuildSegmentsAfterMetricsRecomputed;
+use App\Modules\Sync\Events\CatalogSyncFailed;
 use App\Modules\Sync\Services\HttpWooClient;
 use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
+use App\Support\AiBudgetAlerts;
+use App\Support\AiGenerationAlerts;
+use App\Support\SyncFailureAlerts;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
@@ -41,6 +56,18 @@ class AppServiceProvider extends ServiceProvider
             backoffSeconds: array_map(intval(...), (array) config('woo.retry_backoff_seconds')),
             rateLimiter: $app->make(RedisTokenBucket::class),
         ));
+
+        // P7-05: get_anomalies reads the real, pure-statistics detector.
+        $this->app->bind(AnomalySource::class, AnomalyDetector::class);
+
+        $this->app->singleton(RawResponseCapture::class);
+
+        // Lazy for the same reason as WooClient: no AI key must never break app boot. Always wrapped in BudgetedAiProvider (P7-03): no un-budgeted path.
+        $this->app->bind(AiProvider::class, fn (Application $app): AiProvider => new BudgetedAiProvider(
+            fn (): AiProvider => $app->make(AiProviderFactory::class)->make(),
+            $app->make(BudgetGuard::class),
+            $app->make(AiUsageService::class),
+        ));
     }
 
     /**
@@ -57,6 +84,14 @@ class AppServiceProvider extends ServiceProvider
 
         // P5-08: Segments reacts to Metrics only through this public Event, never a direct call.
         Event::listen(MetricsRecomputed::class, RebuildSegmentsAfterMetricsRecomputed::class);
+
+        // P7-03: Ai raises budget events; the alert itself (a Core concern) is raised outside the module.
+        Event::listen(AiBudgetWarning::class, [AiBudgetAlerts::class, 'onWarning']);
+        Event::listen(AiBudgetExceeded::class, [AiBudgetAlerts::class, 'onExceeded']);
+        Event::listen(AiGenerationFailed::class, [AiGenerationAlerts::class, 'onFailed']);
+
+        // The catalog step of the nightly chain is fail-soft: its failure is an alert, not a stopped chain.
+        Event::listen(CatalogSyncFailed::class, [SyncFailureAlerts::class, 'onCatalogFailed']);
     }
 
     /**

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Modules\Core\Enums\AuditActorType;
 use App\Modules\Core\Models\AuditLog;
 use App\Support\TehranDateTime;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Request;
 
@@ -112,6 +113,7 @@ final class AuditService
         return AuditLog::query()
             ->with('user:id,name,email')
             ->latest('created_at')
+            ->orderByDesc('id') // tie-break: inside one transaction every DB-default created_at is identical
             ->paginate($perPage)
             ->through(fn (AuditLog $log): array => [
                 'id' => $log->id,
@@ -123,6 +125,36 @@ final class AuditService
                 'created_at' => TehranDateTime::format($log->created_at),
                 'user' => $log->user === null ? null : ['id' => $log->user->id, 'name' => $log->user->name, 'email' => $log->user->email],
             ]);
+    }
+
+    /**
+     * The newest `alert.critical` entries of the given kinds (AlertService writes them), newest first — what a page shows as "something
+     * went wrong recently". `message`/`context` are exactly what AlertService stored (reason codes and short safe details, never model text).
+     *
+     * @param  list<string>  $kinds  AlertKind values
+     * @return list<array{kind: string, message: string, context: array<mixed>, at: CarbonImmutable}>
+     */
+    public function recentAlerts(array $kinds, CarbonImmutable $since, int $limit = 5): array
+    {
+        $logs = AuditLog::query()
+            ->where('action', 'alert.critical')
+            ->whereIn('after->kind', $kinds)
+            ->where('created_at', '>=', $since)
+            ->orderByDesc('created_at')->orderByDesc('id')
+            ->limit($limit)
+            ->get();
+        $out = [];
+
+        foreach ($logs as $log) {
+            $out[] = [
+                'kind' => (string) ($log->after['kind'] ?? ''),
+                'message' => (string) ($log->after['message'] ?? ''),
+                'context' => is_array($log->after['context'] ?? null) ? $log->after['context'] : [],
+                'at' => CarbonImmutable::instance($log->created_at),
+            ];
+        }
+
+        return $out;
     }
 
     /**

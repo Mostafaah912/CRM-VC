@@ -53,6 +53,56 @@ final class DailyMetricsService
         $end = ($asOf ?? CarbonImmutable::now())->setTimezone('Asia/Tehran')->toDateString();
         $from = CarbonImmutable::parse($end)->subDays($days - 1)->toDateString();
 
+        $this->upsertRange($from, $end);
+
+        return new DailyMetricsSummary(
+            daysProcessed: $days,
+            elapsedMs: (int) round((microtime(true) - $start) * 1000),
+        );
+    }
+
+    /**
+     * Self-heal for what the trailing window cannot reach: days whose `daily_metrics` row is MISSING or disagrees with the orders table
+     * (orders_count / net_revenue), e.g. after several nights without a chain run or orders synced late. Found in one SQL statement over
+     * the order history since `woo.sync_epoch` (an order dated before it — e.g. a Jalali year mis-stored as Gregorian, seen in dev — must never
+     * stretch the span into centuries); the span from the first to the last drifted day is then rebuilt with the same upsert. Nothing is touched
+     * when nothing drifted (the common case), so the nightly cost is one scan. The table stays fully rebuildable from `orders`.
+     */
+    public function rebuildDrifted(?CarbonImmutable $asOf = null): DailyMetricsSummary
+    {
+        $start = microtime(true);
+        $end = ($asOf ?? CarbonImmutable::now())->setTimezone('Asia/Tehran')->toDateString();
+
+        $span = DB::selectOne(<<<'SQL'
+            WITH actual AS (
+                SELECT (o.ordered_at AT TIME ZONE 'Asia/Tehran')::date AS d, COUNT(*) AS n, COALESCE(SUM(o.net_revenue), 0)::bigint AS r
+                FROM orders o
+                WHERE o.is_realized = true AND o.is_fully_refunded = false AND o.deleted_at IS NULL
+                  AND o.ordered_at >= ?::timestamptz
+                GROUP BY 1
+            ),
+            days AS (
+                SELECT generate_series((SELECT MIN(d) FROM actual), ?::date, interval '1 day')::date AS d
+            )
+            SELECT MIN(days.d) AS lo, MAX(days.d) AS hi
+            FROM days
+            LEFT JOIN actual a ON a.d = days.d
+            LEFT JOIN daily_metrics m ON m.date = days.d
+            WHERE COALESCE(a.n, 0) <> COALESCE(m.orders_count, -1) OR COALESCE(a.r, 0) <> COALESCE(m.net_revenue, -1)
+            SQL, [(string) config('woo.sync_epoch'), $end]);
+
+        $days = 0;
+
+        if ($span !== null && $span->lo !== null) {
+            $this->upsertRange((string) $span->lo, (string) $span->hi);
+            $days = (int) CarbonImmutable::parse((string) $span->lo)->diffInDays(CarbonImmutable::parse((string) $span->hi)) + 1;
+        }
+
+        return new DailyMetricsSummary(daysProcessed: $days, elapsedMs: (int) round((microtime(true) - $start) * 1000));
+    }
+
+    private function upsertRange(string $from, string $end): void
+    {
         DB::affectingStatement(<<<'SQL'
             WITH days AS (
                 SELECT generate_series(?::date, ?::date, interval '1 day')::date AS d
@@ -117,11 +167,6 @@ final class DailyMetricsService
                 computed_at      = EXCLUDED.computed_at
             SQL,
             [$from, $end, $from, $end],
-        );
-
-        return new DailyMetricsSummary(
-            daysProcessed: $days,
-            elapsedMs: (int) round((microtime(true) - $start) * 1000),
         );
     }
 }

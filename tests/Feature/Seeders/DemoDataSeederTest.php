@@ -109,7 +109,7 @@ it('exercises every order-filter branch: unrealized statuses, a soft-deleted ord
 it('derives is_realized from config(woo.realized_statuses), never from a hardcoded list', function () {
     $realized = config('woo.realized_statuses');
 
-    expect($realized)->toBe(['processing', 'completed']);
+    expect($realized)->toBe(['processing', 'completed', 'taroff-4']);   // P7-14: taroff-4 (ارسال با آنباکس) is a realized status; the demo data has none, so no metric moves
 
     foreach (DB::table('orders')->get(['status', 'is_realized']) as $order) {
         expect($order->is_realized)->toBe(in_array($order->status, $realized, true));

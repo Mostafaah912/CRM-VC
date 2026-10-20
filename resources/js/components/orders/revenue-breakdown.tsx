@@ -29,17 +29,14 @@ export function RevenueBreakdown({
     net_revenue,
     className,
 }: Props) {
-    const rows: Array<{ label: string; value: number; emphasis?: boolean }> =
-        [
-            { label: 'مبلغ کالا (پس از تخفیف)', value: subtotal - discount_total },
-            { label: 'پست', value: shipping_total },
-            ...(tax_total !== 0
-                ? [{ label: 'مالیات', value: tax_total }]
-                : []),
-            { label: 'جمع کل', value: total, emphasis: true },
-            { label: 'عودتی (کل)', value: refunded_total },
-            { label: 'خالص (شامل پست)', value: net_revenue, emphasis: true },
-        ];
+    const rows: Array<{ label: string; value: number; emphasis?: boolean }> = [
+        { label: 'مبلغ کالا (پس از تخفیف)', value: subtotal - discount_total },
+        { label: 'پست', value: shipping_total },
+        ...(tax_total !== 0 ? [{ label: 'مالیات', value: tax_total }] : []),
+        { label: 'جمع کل', value: total, emphasis: true },
+        { label: 'عودتی (کل)', value: refunded_total },
+        { label: 'خالص (شامل پست)', value: net_revenue, emphasis: true },
+    ];
 
     return (
         <dl className={className}>

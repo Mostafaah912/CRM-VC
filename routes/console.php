@@ -1,6 +1,8 @@
 <?php
 
 use App\Jobs\HealthCheckJob;
+use App\Modules\Ai\Jobs\GenerateDailyBriefJob;
+use App\Modules\Ai\Jobs\GenerateWeeklyReviewJob;
 use App\Modules\Analytics\Jobs\BuildAffinityJob;
 use App\Modules\Sync\Jobs\PruneLogsJob;
 use Illuminate\Foundation\Inspiring;
@@ -32,3 +34,10 @@ Schedule::job(new PruneLogsJob)->dailyAt('04:30')->timezone('Asia/Tehran');
 // PRD §22: "weekly Sat 04:00 BuildAffinityJob" — a full 4-level rebuild, standalone (not part of the nightly
 // chain: it does not depend on, and nothing nightly depends on, product_affinities).
 Schedule::job(new BuildAffinityJob)->weeklyOn(6, '04:00')->timezone('Asia/Tehran');
+
+// P7-08, PRD §22: "daily 07:00 GenerateDailyBriefJob" and "weekly Sat 07:30 GenerateWeeklyReviewJob" (queue `ai`, Asia/Tehran). Their
+// own entries, deliberately NOT part of hm:nightly-chain: a Bus::chain stops at its first failure and an AI failure must never stop the
+// data chain. Times and the weekday come from config (ai.generation.*). Each job first checks that today's metrics run finished, and is a
+// silent no-op while AI_ENABLED is false.
+Schedule::job(new GenerateDailyBriefJob)->dailyAt((string) config('ai.generation.daily_at'))->timezone('Asia/Tehran');
+Schedule::job(new GenerateWeeklyReviewJob)->weeklyOn((int) config('ai.generation.weekly_day'), (string) config('ai.generation.weekly_at'))->timezone('Asia/Tehran');

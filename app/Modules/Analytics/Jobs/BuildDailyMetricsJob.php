@@ -51,9 +51,11 @@ final class BuildDailyMetricsJob implements ShouldBeUnique, ShouldQueue
     public function handle(DailyMetricsService $dailyMetrics): void
     {
         $summary = $dailyMetrics->rebuild($this->days, $this->asOf);
+        $healed = $dailyMetrics->rebuildDrifted($this->asOf);   // days the trailing window cannot reach (missing/disagreeing rows)
 
         Log::info('BuildDailyMetricsJob finished', [
             'days_processed' => $summary->daysProcessed,
+            'drifted_days_rebuilt' => $healed->daysProcessed,
             'elapsed_ms' => $summary->elapsedMs,
         ]);
     }

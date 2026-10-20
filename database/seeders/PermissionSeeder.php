@@ -50,6 +50,8 @@ class PermissionSeeder extends Seeder
 
             ['module' => 'ai', 'action' => 'view', 'label' => 'مشاهده بینش هوش مصنوعی'],
             ['module' => 'ai', 'action' => 'request', 'label' => 'درخواست تحلیل از هوش مصنوعی'],
+            // P7-09a: cost, tokens, model and prompt version of an insight. Owner and Manager only (they hold every non-excluded action); Analyst/Viewer get `view` actions only.
+            ['module' => 'ai', 'action' => 'view_cost', 'label' => 'مشاهده هزینه، توکن و مدل هوش مصنوعی'],
         ];
     }
 

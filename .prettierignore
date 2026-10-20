@@ -1,0 +1,5 @@
+resources/prompts/
+tests/fixtures/
+# long-form documents (tables, Persian prose): hand-written, not formatter output
+*.md
+docs/

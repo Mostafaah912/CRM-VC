@@ -1,3 +1,4 @@
+import { AnalystWidget } from '@/components/ai/analyst-widget';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { HelpCircle } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
@@ -185,6 +186,8 @@ export default function Dashboard({ data, filters }: Props) {
                         />
                     </span>
                 </div>
+
+                {can('ai', 'view') && <AnalystWidget />}
 
                 {messages.length > 0 && (
                     <div className="border-destructive/50 text-destructive rounded-lg border p-3 text-sm">

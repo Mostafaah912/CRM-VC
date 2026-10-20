@@ -134,16 +134,12 @@ export function RuleValueInput({
                 <div className="flex items-center gap-2">
                     <JalaliDayPicker
                         value={from}
-                        onChange={(v) =>
-                            onChange([v ?? '', range[1] ?? ''])
-                        }
+                        onChange={(v) => onChange([v ?? '', range[1] ?? ''])}
                     />
                     <span className="text-muted-foreground text-sm">تا</span>
                     <JalaliDayPicker
                         value={to}
-                        onChange={(v) =>
-                            onChange([range[0] ?? '', v ?? ''])
-                        }
+                        onChange={(v) => onChange([range[0] ?? '', v ?? ''])}
                     />
                 </div>
             );
@@ -187,7 +183,9 @@ export function RuleValueInput({
     if (kind === 'date') {
         return (
             <JalaliDayPicker
-                value={typeof scalar === 'string' && scalar !== '' ? scalar : null}
+                value={
+                    typeof scalar === 'string' && scalar !== '' ? scalar : null
+                }
                 onChange={(v) => onChange(v)}
             />
         );

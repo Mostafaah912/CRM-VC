@@ -57,6 +57,8 @@ export const orderStatuses: StatusLabels = {
     processing: { label: 'در حال پردازش', tone: 'success' },
     'on-hold': { label: 'در انتظار بررسی', tone: 'warning' },
     completed: { label: 'تکمیل‌شده', tone: 'success' },
+    // store-defined custom status: a real, realized sale (config woo.realized_statuses)
+    'taroff-4': { label: 'ارسال با آنباکس', tone: 'success' },
     cancelled: { label: 'لغوشده', tone: 'neutral' },
     refunded: { label: 'مسترد‌شده', tone: 'neutral' },
     failed: { label: 'ناموفق', tone: 'danger' },

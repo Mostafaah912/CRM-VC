@@ -38,6 +38,9 @@
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
+        <!-- Tests assume PRD §12's lifetime NTILE for RFM "M" (the config default). .env.example selects `recent_window` for the dev app; a test run must not
+             depend on whichever .env it happens to find (CI copies .env.example) — pinned, and forced over any shell value. -->
+        <env name="METRICS_MONETARY_MODE" value="lifetime" force="true"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>

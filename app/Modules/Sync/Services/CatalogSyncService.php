@@ -11,12 +11,14 @@ use App\Modules\Catalog\Services\VariationInput;
 use App\Modules\Sync\DTOs\CategoryDto;
 use App\Modules\Sync\DTOs\ProductDto;
 use App\Modules\Sync\DTOs\VariationDto;
+use App\Modules\Sync\Events\CatalogSyncFailed;
 use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Modules\Sync\Mappers\CategoryMapper;
 use App\Modules\Sync\Mappers\ProductMapper;
 use App\Modules\Sync\Mappers\VariationMapper;
 use App\Modules\Sync\Support\CatalogSyncResult;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Woo -> Catalog (P2-05): reads through the WooClient contract, turns raw payloads into DTOs with the
@@ -49,6 +51,26 @@ final class CatalogSyncService
         private readonly ProductMapper $products = new ProductMapper,
         private readonly VariationMapper $variations = new VariationMapper,
     ) {}
+
+    /**
+     * The whole mirror: categories, then products (+ variations) — what CatalogSyncJob runs. `failSoft` is for the nightly chain: a catalog failure there
+     * must not stop the data steps after it (none of them reads the catalog), so it is logged (class only — a Woo/transport message can carry URLs),
+     * announced as CatalogSyncFailed (-> a SyncFailure alert) and swallowed. Everything else — a manual run, a test — still gets the exception.
+     */
+    public function syncAll(bool $failSoft = false): void
+    {
+        try {
+            $this->syncCategories();
+            $this->syncProducts();
+        } catch (Throwable $e) {
+            if (! $failSoft) {
+                throw $e;
+            }
+
+            Log::error('Catalog sync failed; the nightly chain continues without it', ['exception' => $e::class]);
+            event(new CatalogSyncFailed($e::class));
+        }
+    }
 
     /**
      * Every category is read and mapped before any is written, so one malformed payload writes nothing

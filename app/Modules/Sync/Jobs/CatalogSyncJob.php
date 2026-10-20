@@ -22,6 +22,12 @@ use Illuminate\Queue\InteractsWithQueue;
  * repeat in full. `SyncService::run()` explicitly refuses `SyncEntity::Catalog` so the two paths can
  * never be confused.
  *
+ * P6 timing + P7-08 follow-up (docs/architecture/sprint-7.md, "CatalogSyncJob"): MEASURED live, a run takes ~911 s: 310 sequential Woo requests (55 product pages of ~1.5 MB,
+ * plus one /variations request per variable product — 251 of them) at ~2.8 s each = 863 s of network wait, only ~49 s of DB/PHP. A 300 s timeout could never hold that:
+ * it timed out on 09-30, 10-05 and 10-18, and as a Bus::chain step each timeout stopped the whole nightly chain, so metrics/daily/cohort/segments/reconcile silently
+ * never ran. Hence `timeout = 1800` (about twice the measurement; = Horizon's supervisor timeout, 30 s under the queue's retry_after 1830), and `failSoft`: inside the chain a CATCHABLE failure is logged + alerted (CatalogSyncFailed -> SyncFailure alert) and the job ends
+ * normally, so the data chain continues; the catalog is a mirror that last night's copy serves fine. Standalone runs (failSoft = false) still throw, as before.
+ *
  * `tries = 1`: a partial catalog sync (e.g. Woo returns a page of products but a later page fails) already
  * left every product committed so far in place (each product is its own transaction, `CatalogService`
  * P2-05) — a blind retry would just repeat the same paginated read from page 1; better to see it fail
@@ -35,11 +41,11 @@ final class CatalogSyncJob implements ShouldBeUnique, ShouldQueue
 
     public int $tries = 1;
 
-    public int $timeout = 300;
+    public int $timeout = 1800;
 
-    public int $uniqueFor = 600;
+    public int $uniqueFor = 2100;
 
-    public function __construct()
+    public function __construct(public readonly bool $failSoft = false)
     {
         $this->onQueue('sync');
     }
@@ -51,7 +57,6 @@ final class CatalogSyncJob implements ShouldBeUnique, ShouldQueue
 
     public function handle(CatalogSyncService $catalog): void
     {
-        $catalog->syncCategories();
-        $catalog->syncProducts();
+        $catalog->syncAll($this->failSoft);
     }
 }

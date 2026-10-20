@@ -4,14 +4,71 @@ on:
   push:
     branches:
       - main
+      - 'sprint/**'
   pull_request:
 
 permissions:
   contents: read
 
+# A newer push to the same ref makes the older, still-running run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # Real PostgreSQL (same major version as local dev, CLAUDE.md §2) and Redis — never SQLite (CLAUDE.md §9).
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: heymode_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # CI-only throwaway values for a database that exists only for this run and is destroyed with the runner. They are NOT secrets and NOT the
+    # real ones. The superuser doubles as the `ai_admin` connection (CREATE ROLE hm_ai_readonly needs it): GATE 4's read-only proof runs for real.
+    # No real key, URL or provider anywhere: AI is OFF, and the tests use Http::fake / FakeAiProvider (they never reach a network).
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: heymode_ci
+      DB_USERNAME: postgres
+      DB_PASSWORD: ci-only-password
+      DB_AI_ADMIN_HOST: 127.0.0.1
+      DB_AI_ADMIN_PORT: 5432
+      DB_AI_ADMIN_DATABASE: heymode_ci
+      DB_AI_ADMIN_USERNAME: postgres
+      DB_AI_ADMIN_PASSWORD: ci-only-password
+      DB_AI_READONLY_HOST: 127.0.0.1
+      DB_AI_READONLY_PORT: 5432
+      DB_AI_READONLY_DATABASE: heymode_ci
+      DB_AI_READONLY_PASSWORD: ci-only-readonly-password
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      AI_ENABLED: 'false'
 
     steps:
       - name: Checkout code
@@ -23,6 +80,7 @@ jobs:
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: '8.4'
+          extensions: bcmath, intl, mbstring, pdo_pgsql, pgsql, redis, zip
           tools: composer:v2
           coverage: none
 
@@ -31,8 +89,30 @@ jobs:
         with:
           node-version: '22'
 
+      # composer install, .env from .env.example (the env above wins), key:generate, migrate --force, npm install, npm run build
       - name: Setup Application
         run: composer setup
 
+      # The seeders must run on a clean database too (permissions catalog + the five roles, incl. ai.view_cost).
+      - name: Seed permissions and roles
+        run: |
+          php artisan db:seed --class=PermissionSeeder --force
+          php artisan db:seed --class=RoleSeeder --force
+
       - name: Run CI Checks
-        run: composer ci:check
+        run: |
+          set -o pipefail
+          composer ci:check 2>&1 | tee ci.log
+
+      # The Actions log needs a login; annotations do not. On failure, surface the failing tests and the first error text as annotations.
+      - name: Summarise failures
+        if: failure()
+        run: |
+          sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' ci.log > ci.clean.log
+          grep -nE "⨯|✕|FAILED|  Tests: |Fatal error|Allowed memory|Parse error|SQLSTATE" ci.clean.log | grep -v "✓" | head -25 | while IFS= read -r line; do
+            echo "::error::$(echo "$line" | cut -c1-400)"
+          done
+          first=$(grep -nE "FAILED|⨯" ci.clean.log | head -1 | cut -d: -f1)
+          if [ -n "$first" ]; then
+            sed -n "${first},$((first + 25))p" ci.clean.log | cut -c1-300 | while IFS= read -r line; do echo "::warning::$line"; done
+          fi

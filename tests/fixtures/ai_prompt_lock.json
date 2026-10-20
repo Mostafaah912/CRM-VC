@@ -1,0 +1,42 @@
+{
+    "analyst.daily.v1": {
+        "type": "daily_brief",
+        "prompt_sha256": "759e2ac7f7983d5b15c6decf2e6292fe46d8139b7217a87af288b5e416ec2793",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    },
+    "analyst.weekly.v1": {
+        "type": "weekly_review",
+        "prompt_sha256": "57f4e0103e5e91fad163ba9b53761255bf2e0f0158829e7f76179437a692cff2",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    },
+    "analyst.daily.v2": {
+        "type": "daily_brief",
+        "prompt_sha256": "4d666f41e1e71d904bc4937512a711b61fc0387f859d72c84fd02d772ea3b5fb",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    },
+    "analyst.weekly.v2": {
+        "type": "weekly_review",
+        "prompt_sha256": "f7a45b31d80c2741a901978a00a62d92ad99343a847448ef15678ce0d4c78490",
+        "schema_sha256": "bd3459d8929c8c234e198170dfb6b94e48324af807ba0521cbe89701816786d7"
+    },
+    "analyst.daily.v3": {
+        "type": "daily_brief",
+        "prompt_sha256": "6fe15b9b856efa0092f02c822b4d58e220844360b71451372630039f7187b6a8",
+        "schema_sha256": "bc2da54bbc6fa65d54d918c39988be5de259c49854cb0ffcabcc8399a7e1ff06"
+    },
+    "analyst.weekly.v3": {
+        "type": "weekly_review",
+        "prompt_sha256": "0d4dc9015488a0efc5219a818e532649918821f0caa34ddc5aabb117d06d3f44",
+        "schema_sha256": "bc2da54bbc6fa65d54d918c39988be5de259c49854cb0ffcabcc8399a7e1ff06"
+    },
+    "analyst.daily.v4": {
+        "type": "daily_brief",
+        "prompt_sha256": "26eb58a7b63828191b954e7ebf9d6322c2fc6d98d395e7925dee490d8f3f9eb2",
+        "schema_sha256": "86d2b481306b6acade9d53b40297a2e4934ff107a28a35bc2f9d9208bed29927"
+    },
+    "analyst.weekly.v4": {
+        "type": "weekly_review",
+        "prompt_sha256": "66d692f13a8f3730971d688b25aae1e010df73e67f517761d0bf439bdddb1074",
+        "schema_sha256": "86d2b481306b6acade9d53b40297a2e4934ff107a28a35bc2f9d9208bed29927"
+    }
+}

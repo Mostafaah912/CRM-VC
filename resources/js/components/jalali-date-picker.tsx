@@ -82,8 +82,12 @@ function compare(a: JalaliParts, b: JalaliParts): number {
     return a.jd - b.jd;
 }
 
-function addMonths(jy: number, jm: number, delta: number): { jy: number; jm: number } {
-    const total = (jy * 12 + (jm - 1)) + delta;
+function addMonths(
+    jy: number,
+    jm: number,
+    delta: number,
+): { jy: number; jm: number } {
+    const total = jy * 12 + (jm - 1) + delta;
 
     return { jy: Math.floor(total / 12), jm: (((total % 12) + 12) % 12) + 1 };
 }
@@ -151,7 +155,11 @@ export function JalaliRangePicker({ from, to, onChange, className }: Props) {
     const leadingBlanks = firstWeekdayOfMonth(viewYear, viewMonth);
     const cells: Array<JalaliParts | null> = [
         ...Array.from({ length: leadingBlanks }, () => null),
-        ...Array.from({ length: monthLength }, (_, i) => ({ jy: viewYear, jm: viewMonth, jd: i + 1 })),
+        ...Array.from({ length: monthLength }, (_, i) => ({
+            jy: viewYear,
+            jm: viewMonth,
+            jd: i + 1,
+        })),
     ];
 
     const yearOptions = Array.from({ length: 11 }, (_, i) => today.jy - 5 + i);
@@ -289,9 +297,7 @@ export function JalaliRangePicker({ from, to, onChange, className }: Props) {
                                 type="button"
                                 role="gridcell"
                                 aria-label={format(cell)}
-                                aria-pressed={
-                                    isSelectedFrom || isSelectedTo
-                                }
+                                aria-pressed={isSelectedFrom || isSelectedTo}
                                 onClick={() => pickDay(cell)}
                                 className={cn(
                                     'flex h-8 w-8 items-center justify-center rounded-md text-sm tabular-nums',
@@ -349,7 +355,11 @@ export function JalaliDayPicker({ value, onChange, className }: DayProps) {
     const leadingBlanks = firstWeekdayOfMonth(viewYear, viewMonth);
     const cells: Array<JalaliParts | null> = [
         ...Array.from({ length: leadingBlanks }, () => null),
-        ...Array.from({ length: monthLength }, (_, i) => ({ jy: viewYear, jm: viewMonth, jd: i + 1 })),
+        ...Array.from({ length: monthLength }, (_, i) => ({
+            jy: viewYear,
+            jm: viewMonth,
+            jd: i + 1,
+        })),
     ];
 
     const yearOptions = Array.from({ length: 11 }, (_, i) => today.jy - 5 + i);
