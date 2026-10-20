@@ -3,6 +3,8 @@
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\HandleAppearance;
 use App\Http\Middleware\HandleInertiaRequests;
+use App\Http\Middleware\RequireTwoFactor;
+use App\Http\Middleware\SecurityHeaders;
 use App\Modules\Analytics\Exceptions\DrillExportForbiddenException;
 use App\Modules\Analytics\Exceptions\UnknownDrillWidgetException;
 use App\Modules\Segments\Exceptions\RuleValidationException;
@@ -28,6 +30,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);
 
         $middleware->web(append: [
+            SecurityHeaders::class,
+            RequireTwoFactor::class,
             HandleAppearance::class,
             HandleInertiaRequests::class,
             AddLinkHeadersForPreloadedAssets::class,

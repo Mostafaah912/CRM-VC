@@ -1,0 +1,104 @@
+# HeyMode Customer OS — Nginx example (P8-01). COPY and edit; nothing here is applied automatically.
+#   1. Replace crm.example.com, the PHP-FPM socket and /var/www/heymode.
+#   2. Get the certificate:  sudo certbot certonly --webroot -w /var/www/certbot -d crm.example.com
+#      (first run: comment out the 443 server, keep 80, reload nginx, run certbot, then enable 443.)
+#   3. In nginx.conf (http {}):  server_tokens off;   <- hides the version (also set below for safety)
+#   4. sudo nginx -t && sudo systemctl reload nginx
+# The application ALSO sends HSTS/CSP/X-Frame-Options/etc. (App\Http\Middleware\SecurityHeaders).
+# They are repeated here so static files, error pages and 502s carry them too. `add_header ... always`
+# is used everywhere; keep both layers in step with config/security.php when you change one.
+
+server_tokens off;
+
+# ---- HTTP: ACME challenge + redirect everything else to HTTPS ----
+server {
+    listen 80;
+    listen [::]:80;
+    server_name crm.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# ---- HTTPS ----
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name crm.example.com;
+
+    # The web root is ONLY public/. .env, vendor/, storage/ live one level up and are never served.
+    root /var/www/heymode/public;
+    index index.php;
+    charset utf-8;
+
+    ssl_certificate     /etc/letsencrypt/live/crm.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/crm.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+    ssl_stapling on;
+    ssl_stapling_verify on;
+    resolver 1.1.1.1 8.8.8.8 valid=300s;
+
+    # ---- Security headers ----
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # The app sends the full nonce-based Content-Security-Policy on every dynamic response. Do NOT add a
+    # second, different CSP header here for those responses: the browser would enforce BOTH and the
+    # stricter one (without the nonce) would block the app's inline scripts. This one is only for
+    # responses nginx itself generates (static files, error pages), which carry no inline script.
+    # CSP for nginx-served static responses (fonts/css/js/images under /build):
+    location ^~ /build/ {
+        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        try_files $uri =404;
+    }
+
+    # ---- Block dotfiles (.env, .git, .htaccess ...) — except ACME's .well-known ----
+    location ~ /\.(?!well-known/) {
+        deny all;
+        return 404;
+    }
+
+    # ---- Never serve these even if a path mistake exposes them ----
+    location ~* \.(env|log|sql|bak|dump|sh|md|lock|yml|yaml|ini|conf)$ {
+        deny all;
+        return 404;
+    }
+
+    client_max_body_size 10m;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    # ---- PHP-FPM: only index.php is executable ----
+    location = /index.php {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;   # match the installed PHP version
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_hide_header X-Powered-By;
+        fastcgi_read_timeout 60s;
+    }
+
+    location ~ \.php$ {
+        return 404;
+    }
+
+    error_page 404 /index.php;
+}

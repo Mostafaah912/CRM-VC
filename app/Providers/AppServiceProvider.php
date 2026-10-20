@@ -13,6 +13,7 @@ use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Services\BudgetedAiProvider;
 use App\Modules\Ai\Services\BudgetGuard;
 use App\Modules\Ai\Support\RawResponseCapture;
+use App\Modules\Core\Services\LoginLockout;
 use App\Modules\Metrics\Events\MetricsRecomputed;
 use App\Modules\Metrics\Listeners\MarkCustomerMetricsDirty;
 use App\Modules\Orders\Events\OrderSynced;
@@ -23,14 +24,17 @@ use App\Modules\Sync\Services\RedisTokenBucket;
 use App\Modules\Sync\Services\WooClient;
 use App\Support\AiBudgetAlerts;
 use App\Support\AiGenerationAlerts;
+use App\Support\ProductionSafety;
 use App\Support\SyncFailureAlerts;
 use Carbon\CarbonImmutable;
+use Illuminate\Auth\Events\Failed;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Laravel\Fortify\Fortify;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -75,7 +79,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        ProductionSafety::assertDebugIsOff();
+
         $this->configureDefaults();
+
+        // P8-01 / T9: every failed sign-in counts toward the per-e-mail lockout.
+        Event::listen(Failed::class, function (Failed $event): void {
+            $email = (string) ($event->credentials[Fortify::username()] ?? '');
+
+            if ($email !== '') {
+                app(LoginLockout::class)->recordFailure($email);
+            }
+        });
 
         // P4-07: this Laravel skeleton ships no EventServiceProvider (no listener has needed registering
         // before this one, and MarkCustomerMetricsDirty lives under app/Modules, outside the default

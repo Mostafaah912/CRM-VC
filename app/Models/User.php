@@ -3,6 +3,7 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use App\Modules\Core\Enums\RoleName;
 use App\Modules\Core\Models\PermissionOverride;
 use App\Modules\Core\Models\Role;
 use Database\Factories\UserFactory;
@@ -58,6 +59,13 @@ class User extends Authenticatable implements PasskeyUser
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'role_user');
+    }
+
+    public function hasRole(RoleName ...$roles): bool
+    {
+        return $this->roles()
+            ->whereIn('name', array_map(fn (RoleName $role): string => $role->value, $roles))
+            ->exists();
     }
 
     /** @return HasMany<PermissionOverride, $this> */

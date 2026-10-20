@@ -209,3 +209,48 @@ Each row links to the sprint archive file; open the file and search the heading 
 | P7-15 | sprint-7.md | "Complete day" is now complete in SYNC too: `data_quality.orders_sync` (+ permanent warning `orders_sync_behind`, anomalies of the as_of day -> suspected_data_gap), generation gate `ai.generation.max_orders_sync_behind_hours` (default 1 h; refuses before any provider call + alert, scheduled run skipped); context `definitions` (net_revenue = total - refunds INCLUDING shipping, refunds on order day, realized statuses from config incl. taroff-4, WooCommerce «net sales» differs); UI help beside «درآمد». Prompt v4 unchanged. |
 | P7-09b | sprint-7.md | Sprint 7 close. Dashboard widget (`/ai/analyst/widget`), Customer 360 AGGREGATE panel (`/customers/{id}/analyst-panel`, segments + segment-level stats + insight pointer; no AI call), automatic GATE 4 proof (PII never reaches Gemini/Anthropic/OpenAI/Fake bodies, budget refuses before any HTTP incl. reservations/unpriced, read-only role 0 skipped, AI_ENABLED=false does nothing; mutations on ContextPiiGuard and SmallGroupMask caught). Nightly-chain/catalog decoupling NOT done: PRD §22 fixes the order. CI has no Postgres/DB_AI_* (report only). Full suite 3865/3865, 0 skipped. Ready for PR; deploy checklist + Sprint 8 risks in sprint-7.md. |
 | P7-08b | sprint-7.md | CatalogSyncJob measured 911 s (310 sequential Woo requests, 95% network wait): timeout 1800 + retry_after 1830 + Horizon timeout 1800; catalog step fail-soft in `hm:nightly-chain` (alert, chain continues); risk recorded that the chain could never get past the catalog at 300 s |
+| P8-01 | sprint-8.md | Server hardening: app layer (Horizon Owner-only gate, security headers + nonce CSP, 10-failure login lockout, mandatory 2FA for Owner/Manager, production APP_DEBUG boot guard, no-`dangerouslySetInnerHTML` arch test) + `deploy/` scripts (not executed). See the "Hardening" section below. |
+
+
+## Hardening (P8-01, PRD §21)
+
+Server files live in `deploy/` and are **generated, not executed** — nothing was run on any server. Secrets never go in Git: the Redis password is supplied/generated at run time and goes only into the VPS `.env`.
+
+### What is enforced where
+
+| Threat | App (tested, `tests/Feature/Hardening`) | Server (`deploy/`) |
+|---|---|---|
+| T1 leaked server | Owner/Manager blocked until 2FA is confirmed (`RequireTwoFactor`, `config/security.php`) | SSH key-only, PG localhost + scram, `.env` 600 |
+| T9 brute force | Fortify 5/min throttle **+** lockout after 10 failures per e-mail, 15 min (`LoginLockout`, cache-only) | fail2ban sshd jail |
+| T10 XSS | arch test bans `dangerouslySetInnerHTML`; nonce CSP (no `unsafe-inline`/`unsafe-eval` for scripts) | CSP/HSTS at nginx for static/error responses |
+| Horizon | `viewHorizon` gate = Owner only, in every env (local included); others 403 | — |
+| Debug leak | app refuses to boot when `APP_ENV=production` and `APP_DEBUG=true` | `verify-hardening.sh` checks `.env` |
+
+Decisions: `SECURITY_ENFORCE_2FA` defaults **on**; `phpunit.xml` pins it off so the other ~3.9k tests don't depend on it (the P8-01 tests turn it on). HSTS is sent only when `APP_ENV=production`. The CSP keeps `style-src 'unsafe-inline'` (Inertia/Radix inline style attributes cannot take a nonce); in dev the Vite origin from `public/hot` is added, never in production. The lockout is cache-based (a time window from the first failure), not a persisted account lock — no migration, and it self-heals; a persistent lock would need a column.
+
+### Checklist (all must PASS in `deploy/verify-hardening.sh`)
+
+- [ ] UFW active, only 80/443/SSH open
+- [ ] SSH: password auth off, root login off, key auth on
+- [ ] fail2ban sshd jail running; unattended-upgrades enabled
+- [ ] PostgreSQL listens on localhost only, `scram-sha-256`
+- [ ] Redis bound to 127.0.0.1, requires password
+- [ ] `.env` is `chmod 600`, outside the web root (web root = `public/` only), not tracked by Git
+- [ ] `APP_ENV=production`, `APP_DEBUG=false`
+- [ ] HTTPS valid (Let's Encrypt); HTTP redirects to HTTPS
+- [ ] Headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy; no nginx version in `Server`
+- [ ] `/.env` → 403/404; `/horizon` refuses anonymous visitors
+- [ ] Every Owner and Manager has confirmed 2FA
+
+### Step-by-step on the VPS (Ubuntu 22.04/24.04, as a sudo user, from the app checkout)
+
+1. **Create a non-root sudo user and install your SSH public key for it.** Log in as that user from a *second* terminal and confirm key login works. Do not continue until it does.
+2. `sudo ./deploy/harden.sh --dry-run` — read the output.
+3. `sudo APP_DIR=/var/www/heymode ./deploy/harden.sh` (set `SSH_PORT=` if not 22; `REDIS_PASSWORD=` to supply your own). It asks you to confirm the key test, then applies. Copy the generated Redis password it prints **once**.
+4. Put `REDIS_PASSWORD=<that value>` in `.env`; for PostgreSQL re-set role passwords so they are stored as scram: `ALTER ROLE <app_role> PASSWORD '...'` (and `hm_ai_readonly`); restart PHP-FPM and Horizon.
+5. `.env` in production: `APP_ENV=production`, `APP_DEBUG=false`, `SECURITY_ENFORCE_2FA=true`, `SESSION_SECURE_COOKIE=true`.
+6. Nginx: copy `deploy/nginx.conf.example` to `/etc/nginx/sites-available/heymode`, edit domain/PHP socket, `sudo certbot certonly --webroot ...`, `sudo nginx -t && sudo systemctl reload nginx`.
+7. Sign in as each Owner/Manager and enrol 2FA (Settings → Security); keep the recovery codes offline.
+8. `sudo APP_DIR=/var/www/heymode APP_URL=https://crm.example.com ./deploy/verify-hardening.sh` — every line must be PASS.
+
+Not covered (later P8 tasks): encrypted off-server backups (P8-02), deploy script/staging (P8-03). The nginx and script behaviour is unverified on a real host until step 8 is run.
