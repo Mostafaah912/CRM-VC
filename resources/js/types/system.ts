@@ -54,6 +54,14 @@ export type HealthQueue = {
     failed_jobs: number | null;
 };
 
+export type HealthBackup = {
+    enabled: boolean;
+    last_backup_at: string | null;
+    last_restore_test_at: string | null;
+    stale: boolean;
+    restore_test_overdue: boolean;
+};
+
 export type HealthMonth = {
     month: string;
     status: string;

@@ -36,6 +36,8 @@ it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s
         'app/Console/Commands/AiPingCommand.php',
         'app/Console/Commands/AiPreviewCommand.php',
         'app/Console/Commands/AiSetupReadonlyRoleCommand.php',
+        'app/Console/Commands/BackupRestoreTestCommand.php', // P8-02
+        'app/Console/Commands/BackupRunCommand.php', // P8-02
         'app/Console/Commands/CatalogDryRunCommand.php',
         'app/Console/Commands/CustomerBackfillCommand.php',
         'app/Console/Commands/IdentityReresolveCommand.php',
@@ -115,13 +117,16 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
 
 it('registers only the hm:sync orders poll in routes/console.php, with no overlap or server flags (P6-09: catalog moved inside hm:nightly-chain)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
+    // P8-02 deliberately gave backup:run withoutOverlapping/onOneServer; the rule is about the orders poll, so only its own statement is checked.
+    preg_match('/Schedule::command\(\'hm:sync\'[^;]*;/', $console, $poll);
+    $pollStatement = $poll[0] ?? '';
 
     expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
         ->and($console)->not->toContain("'--entity' => 'catalog'")
-        ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
+        ->and($pollStatement)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 
 it('adds no health check job in P2-10 or P2-11 (reconciliation itself arrived with P2-11) — P6-10 later added exactly HealthCheckJob + HealthCheckService, nothing else', function () {

@@ -7,6 +7,7 @@ namespace App\Support;
 use App\Modules\Core\Enums\AlertKind;
 use App\Modules\Core\Enums\SettingKey;
 use App\Modules\Core\Services\AlertService;
+use App\Modules\Core\Services\Backup\BackupStatusService;
 use App\Modules\Core\Services\SettingService;
 use App\Modules\Metrics\Services\MetricRunService;
 use App\Modules\Sync\Services\SyncHealthService;
@@ -39,6 +40,7 @@ final class HealthCheckService
         private readonly MetricRunService $metricRuns,
         private readonly AlertService $alerts,
         private readonly SettingService $settings,
+        private readonly BackupStatusService $backups,
     ) {}
 
     /** @return list<string> the AlertKind values actually raised (not suppressed by dedupe or a disabled setting) */
@@ -54,6 +56,7 @@ final class HealthCheckService
         $this->checkReconciliationVariance($raised, $snapshot->recentMonths[0] ?? null);
 
         $this->checkNightlyChainTimeout($raised);
+        $this->checkBackups($raised);
 
         return $raised;
     }
@@ -131,6 +134,28 @@ final class HealthCheckService
 
         if (! $this->metricRuns->fullRunCompletedSince($chainStart)) {
             $this->raise($raised, AlertKind::NightlyChainTimeout, 'The nightly chain has not completed its metrics step by 05:00 Tehran');
+        }
+    }
+
+    /**
+     * @param  list<string>  $raised
+     *
+     * P8-02: RPO 24 h — the last successful backup must be < 26 h old; the quarterly restore test must not be overdue.
+     * Only when backups are switched on (BACKUP_ENABLED), so dev/CI never alert about a backup nobody configured.
+     */
+    private function checkBackups(array &$raised): void
+    {
+        if (! $this->backups->enabled()) {
+            return;
+        }
+
+        if ($this->backups->isStale()) {
+            $last = $this->backups->lastBackupAt();
+            $this->raise($raised, AlertKind::BackupStale, 'No successful backup in the last '.(int) config('backup.stale_after_hours').' hours', ['last_backup_at' => $last?->toIso8601String()]);
+        }
+
+        if ($this->backups->restoreTestOverdue()) {
+            $this->raise($raised, AlertKind::RestoreTestOverdue, 'The quarterly restore test is overdue (php artisan backup:restore-test --key=...)');
         }
     }
 

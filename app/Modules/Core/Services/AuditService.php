@@ -157,6 +157,22 @@ final class AuditService
         return $out;
     }
 
+    /** When the newest audit entry with this exact action was written (null if none). */
+    public function latestAt(string $action): ?CarbonImmutable
+    {
+        $at = AuditLog::query()->where('action', $action)->max('created_at');
+
+        return $at === null ? null : CarbonImmutable::parse((string) $at, 'UTC');
+    }
+
+    /** When the oldest audit entry with this exact action was written (null if none). */
+    public function earliestAt(string $action): ?CarbonImmutable
+    {
+        $at = AuditLog::query()->where('action', $action)->min('created_at');
+
+        return $at === null ? null : CarbonImmutable::parse((string) $at, 'UTC');
+    }
+
     /**
      * @param  array<string, mixed>  $attributes
      * @return array<string, mixed>

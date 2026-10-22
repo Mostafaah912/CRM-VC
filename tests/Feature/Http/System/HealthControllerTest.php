@@ -73,7 +73,8 @@ it('sends exactly the documented props, and no cursor, credential, id, payload o
     $props = healthProps($this);
     $page = Fx::pageProps($props);
 
-    expect(array_keys($page))->toEqualCanonicalizing(['last_sync', 'queue', 'reconciliation', 'gate_one'])
+    expect(array_keys($page))->toEqualCanonicalizing(['last_sync', 'queue', 'reconciliation', 'gate_one', 'backup'])
+        ->and(array_keys($page['backup']))->toEqualCanonicalizing(['enabled', 'last_backup_at', 'last_restore_test_at', 'stale', 'restore_test_overdue'])
         ->and(array_keys($page['last_sync']))->toEqualCanonicalizing(['started_at', 'finished_at', 'duration_seconds', 'pages_processed', 'records_processed'])
         ->and(array_keys($page['queue']))->toEqualCanonicalizing(['sync_depth', 'failed_jobs'])
         ->and(array_keys($page['reconciliation'][0]))->toEqualCanonicalizing(['month', 'status', 'count_diff', 'diff_percent', 'error'])

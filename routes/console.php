@@ -41,3 +41,10 @@ Schedule::job(new BuildAffinityJob)->weeklyOn(6, '04:00')->timezone('Asia/Tehran
 // silent no-op while AI_ENABLED is false.
 Schedule::job(new GenerateDailyBriefJob)->dailyAt((string) config('ai.generation.daily_at'))->timezone('Asia/Tehran');
 Schedule::job(new GenerateWeeklyReviewJob)->weeklyOn((int) config('ai.generation.weekly_day'), (string) config('ai.generation.weekly_at'))->timezone('Asia/Tehran');
+
+// P8-02, PRD §21/§22: the encrypted off-server backup, 02:00 Tehran — an hour before the 03:00 nightly chain. pg_dump reads one
+// MVCC snapshot and takes no write-blocking locks, so a slow dump cannot corrupt or stall the chain; `withoutOverlapping` stops a second
+// dump from starting on top of a long one, `onOneServer` keeps a multi-server setup to one. Off until BACKUP_ENABLED=true.
+Schedule::command('backup:run')->dailyAt('02:00')->timezone('Asia/Tehran')
+    ->withoutOverlapping(120)->onOneServer()
+    ->when(fn (): bool => (bool) config('backup.enabled'));

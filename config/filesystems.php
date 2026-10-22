@@ -47,6 +47,29 @@ return [
             'report' => false,
         ],
 
+        // P8-02: backups. `BACKUP_DISK` picks one of these (or any other disk). backup_s3 is any S3-compatible store
+        // (AWS, Arvan, MinIO, Backblaze...) and MUST be off the application server; backup_local exists for dev/tests only
+        // (backups refuse a `local`-driver disk in production unless BACKUP_ALLOW_LOCAL_DISK=true).
+        'backup_local' => [
+            'driver' => 'local',
+            'root' => storage_path('app/backups'),
+            'throw' => true,
+            'report' => false,
+        ],
+
+        'backup_s3' => [
+            'driver' => 's3',
+            'key' => env('BACKUP_S3_KEY'),
+            'secret' => env('BACKUP_S3_SECRET'),
+            'region' => env('BACKUP_S3_REGION', 'us-east-1'),
+            'bucket' => env('BACKUP_S3_BUCKET'),
+            'endpoint' => env('BACKUP_S3_ENDPOINT'),
+            'use_path_style_endpoint' => (bool) env('BACKUP_S3_PATH_STYLE', true),
+            'visibility' => 'private',
+            'throw' => true,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

@@ -84,7 +84,8 @@ it('keeps each controller free of queries, models, config and control flow — o
             '/\bif\s*\(|\bforeach\s*\(|\bmatch\s*\(|\bswitch\s*\(/',
         ]))->toBe([], basename($controller))
             ->and(substr_count($code, 'Inertia::render('))->toBe(1, basename($controller));
-        preg_match_all('/use App\\\\Modules\\\\\w+\\\\Services\\\\\w+;/', $code, $services);
+        // P8-02: HealthController composes sync + backup status through ONE App\\Support service (SystemHealthPage), same pattern as HealthCheckService.
+        preg_match_all('/use App\\\\(?:Modules\\\\\w+\\\\Services|Support)\\\\\w+;/', $code, $services);
         expect($services[0])->toHaveCount(1, basename($controller));
     }
 });

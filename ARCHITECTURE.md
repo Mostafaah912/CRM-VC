@@ -210,6 +210,7 @@ Each row links to the sprint archive file; open the file and search the heading 
 | P7-09b | sprint-7.md | Sprint 7 close. Dashboard widget (`/ai/analyst/widget`), Customer 360 AGGREGATE panel (`/customers/{id}/analyst-panel`, segments + segment-level stats + insight pointer; no AI call), automatic GATE 4 proof (PII never reaches Gemini/Anthropic/OpenAI/Fake bodies, budget refuses before any HTTP incl. reservations/unpriced, read-only role 0 skipped, AI_ENABLED=false does nothing; mutations on ContextPiiGuard and SmallGroupMask caught). Nightly-chain/catalog decoupling NOT done: PRD §22 fixes the order. CI has no Postgres/DB_AI_* (report only). Full suite 3865/3865, 0 skipped. Ready for PR; deploy checklist + Sprint 8 risks in sprint-7.md. |
 | P7-08b | sprint-7.md | CatalogSyncJob measured 911 s (310 sequential Woo requests, 95% network wait): timeout 1800 + retry_after 1830 + Horizon timeout 1800; catalog step fail-soft in `hm:nightly-chain` (alert, chain continues); risk recorded that the chain could never get past the catalog at 300 s |
 | P8-01 | sprint-8.md | Server hardening: app layer (Horizon Owner-only gate, security headers + nonce CSP, 10-failure login lockout, mandatory 2FA for Owner/Manager, production APP_DEBUG boot guard, no-`dangerouslySetInnerHTML` arch test) + `deploy/` scripts (not executed). See the "Hardening" section below. |
+| P8-02 | sprint-8.md | Encrypted off-server backup (`backup:run`, pg_dump custom -> age -> S3-compatible disk, daily 30 d / weekly 12 w, sha256, audit + alert) and `backup:restore-test` (scratch DB `hm_restore_test`, compared with live, RTO printed); 26 h stale alert + quarterly reminder in HealthCheckJob and on the health page. See "Backup & Restore" below. |
 
 
 ## Hardening (P8-01, PRD §21)
@@ -254,3 +255,33 @@ Decisions: `SECURITY_ENFORCE_2FA` defaults **on**; `phpunit.xml` pins it off so 
 8. `sudo APP_DIR=/var/www/heymode APP_URL=https://crm.example.com ./deploy/verify-hardening.sh` — every line must be PASS.
 
 Not covered (later P8 tasks): encrypted off-server backups (P8-02), deploy script/staging (P8-03). The nginx and script behaviour is unverified on a real host until step 8 is run.
+
+## Backup & Restore (P8-02, PRD §21)
+
+RPO 24 h / RTO 4 h. The whole database is dumped, so the tables Woo cannot rebuild (segments, notes, users/permissions, audit, ai_insights, settings) are always inside it.
+
+**How it works.** `php artisan backup:run` (scheduled 02:00 Asia/Tehran, one hour before the 03:00 chain, `withoutOverlapping` + `onOneServer`, only when `BACKUP_ENABLED=true`) pipes `pg_dump --format=custom` straight into `age` using the **public** key. No unencrypted dump ever exists as a file; the 0700 temp dir only holds ciphertext and is removed in `finally` (success or failure). The encrypted file goes to `BACKUP_DISK` as `daily/YYYYMMDD-HHMM.dump.age` (UTC minute) plus `.sha256`; on Saturdays (Tehran) also `weekly/`. Retention in the same command: daily 30 days, weekly 12 weeks (by the file-name time). Every run writes `backup.completed`/`backup.failed` to `audit_logs` (actor `system`); a failure also raises `AlertKind::BackupFailure`. In production a `local`-driver disk is refused (a backup on the same server is not a backup).
+
+**Restore test.** `php artisan backup:restore-test --key=/path/to/age-key.txt` downloads the newest `daily/` file, checks sha256, decrypts into a pipe, restores into the scratch DB `hm_restore_test` (the only database it may write to; the name is hard-guarded against the live DB), compares key tables with the live DB (restored count and `max(created_at)` must cover everything the live DB held at the backup minute; rows created later are the only allowed difference), drops the scratch DB, prints the total seconds (your RTO measurement) and audits the result (`backup.restore_test.completed/failed`; failure alerts `RestoreTestFailure`). The DB role needs `CREATEDB`.
+
+**Monitoring.** HealthCheckJob (15 min): `BackupStale` if the last successful backup is older than 26 h or missing; `RestoreTestOverdue` if the last passed test (or, before any, the first backup) is older than 90 days. Both show on `/system/health` (last backup, last restore test, overdue flag).
+
+### What you must provide
+- An **S3-compatible bucket outside the VPS** (different provider/account if possible), a dedicated key with write/list/delete on that bucket only (ideally no overwrite of old objects via bucket versioning/object-lock), then in the server `.env`: `BACKUP_ENABLED=true`, `BACKUP_DISK=backup_s3`, `BACKUP_S3_KEY/SECRET/REGION/BUCKET/ENDPOINT`.
+- An **age key pair**, generated on YOUR machine (not the server): `age-keygen -o heymode-backup-key.txt`. Put only the printed `age1...` public key in `.env` as `BACKUP_AGE_RECIPIENT`. The private key never goes on the VPS, in Git or in `.env` (the app refuses an `AGE-SECRET-KEY` there).
+- `age` and `postgresql-client-15` on the server (`apt install age postgresql-client-15`).
+- **Private key custody:** at least two offline copies in different places (password manager + printed/USB in a safe), plus the key's owner named. Lose the key and every backup is unreadable.
+- Gpg fallback exists (`BACKUP_ENCRYPTION=gpg`, `BACKUP_GPG_RECIPIENT`) but is **untested** here (no gpg on the dev machine) — prefer age.
+
+### Emergency restore on a new server (runbook)
+1. New Ubuntu server; apply `deploy/harden.sh`; install PHP 8.4, Nginx, **PostgreSQL 15**, Redis, `age`, `postgresql-client-15`; deploy the code (same release) and a `.env` (Woo/AI keys, `APP_KEY` from your secure store — without the same `APP_KEY` encrypted settings/`integrations.config` cannot be read).
+2. Fetch the newest object under `daily/` and its `.sha256` from the bucket (any S3 client) to a private directory; `sha256sum -c file.dump.age.sha256`.
+3. Create the DB and role: `createdb heymode`, role + password as in `.env`.
+4. Restore (decrypts into a pipe; the private key file is copied to the server only for this step and shredded afterwards):
+   `age -d -i /secure/heymode-backup-key.txt 20261020-0200.dump.age | pg_restore --no-owner --no-acl --dbname heymode`
+5. `shred -u /secure/heymode-backup-key.txt`. Run `php artisan migrate --force` (no-op if same release), `php artisan hm:ai-setup-readonly` (the dump carries no role grants), restart PHP-FPM/Horizon.
+6. Check the app and `/system/health`; run an orders sync to pull everything newer than the backup from Woo (orders/customers/products are recoverable from Woo; segments/notes/users/audit/AI/settings are NOT — they are exactly what the dump restores).
+7. Record the elapsed time against the 4 h RTO.
+
+Run `backup:restore-test` quarterly (the health page reminds you); do it from a machine/session where you can supply the private key for that run only.
+

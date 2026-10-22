@@ -59,9 +59,10 @@ it('redacts secrets in alert context', function () {
         ->and($log->after['context']['entity'])->toBe('orders');
 });
 
-it('covers every alert condition named in the PRD (+ the AI generation failure added in P7-08)', function () {
+it('covers every alert condition named in the PRD (+ the AI generation failure added in P7-08, + the four backup alerts of P8-02)', function () {
     expect(array_map(fn (AlertKind $k) => $k->value, AlertKind::cases()))->toEqualCanonicalizing([
         'sync_failure', 'metric_run_failure', 'reconciliation_variance',
         'failed_jobs_threshold', 'ai_budget_threshold', 'nightly_chain_timeout', 'ai_generation_failure',
+        'backup_failure', 'backup_stale', 'restore_test_failure', 'restore_test_overdue',
     ]);
 });

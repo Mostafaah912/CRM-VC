@@ -15,3 +15,14 @@ Spec: PRD §21 (T1, T9, T10 + hardening checklist), §25 P8-01. Full checklist a
 **Ambiguities / defaults:** lockout is cache-based (no migration allowed); lockout window counts from the first failure; `SECURITY_ENFORCE_2FA` pinned off in phpunit.xml only; sprint branch named `sprint/8-hardening` as instructed (HEAD started on `sprint/8-launch`).
 
 **Server files (generated only, never run):** `deploy/harden.sh` (idempotent, `--dry-run`, refuses to disable password SSH without an authorized key, asks for confirmation of a key test, drop-in named `00-` so cloud-init cannot override it), `deploy/nginx.conf.example`, `deploy/verify-hardening.sh`. Only `bash -n` and `harden.sh --dry-run` were run, on the dev Mac.
+
+## P8-02 — Encrypted off-server backup + restore test
+
+Spec: PRD §21 Backup, §25 P8-02. Runbook and owner checklist: `ARCHITECTURE.md` -> "Backup & Restore".
+
+- `backup:run` / `backup:restore-test` are thin commands over `Core\Services\Backup\{BackupService, RestoreTestService, BackupRetention, BackupStatusService}`; age (`AgeEncryptor`) and gpg (`GpgEncryptor`) encryptors build shell fragments that read everything from env vars (nothing interpolated). Dump -> encrypt and decrypt -> restore are pipelines, so plaintext never touches disk.
+- New: `config/backup.php`, disks `backup_local`/`backup_s3`, `league/flysystem-aws-s3-v3`, `AlertKind` x4 (BackupFailure, BackupStale, RestoreTestFailure, RestoreTestOverdue), `AuditService::latestAt/earliestAt`, `SystemHealthPage` (controller still calls one service), health page card. **No migration**: last backup / last restore test are read from `audit_logs`.
+- Decisions: file names are UTC minutes; weekly copy decided on the Tehran Saturday; `BACKUP_ENABLED` defaults off so dev/CI never alert; the `--no-acl` dump carries no role grants (re-run `hm:ai-setup-readonly` after a restore); the restore comparison is "restored must cover live-at-backup-time", so deletions after a backup never cause a false failure.
+- Tests (`tests/Feature/Backup`, real PostgreSQL + real age): full run -> ciphertext (age header, no `PGDMP`, no plaintext sentinel) -> restore test; wrong key; checksum tamper; missing/incomplete restore; target guard; failed dump leaves nothing on disk or in temp; retention exactly 30 d / 12 w; stale/overdue alerts; health page; schedule 02:00. Mutations (row-count comparison, checksum check) caught. The flow tests need the `age` binary (`BACKUP_AGE_BINARY` or PATH) and are skipped without it — CI must install age.
+- Not verified: a real S3 upload, gpg, a run against the production DB size (timing of the 02:00 dump vs the 03:00 chain).
+

@@ -5,14 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Controllers\System;
 
 use App\Http\Controllers\Controller;
-use App\Modules\Sync\Services\SyncHealthService;
+use App\Support\SystemHealthPage;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class HealthController extends Controller
 {
-    public function __invoke(SyncHealthService $health): Response
+    public function __invoke(SystemHealthPage $page): Response
     {
-        return Inertia::render('system/health', $health->snapshot()->toArray());
+        return Inertia::render('system/health', $page->props());
     }
 }

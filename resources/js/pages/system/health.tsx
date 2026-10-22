@@ -20,6 +20,7 @@ import { dashboard } from '@/routes';
 import { health } from '@/routes/system';
 import type {
     GateOne,
+    HealthBackup,
     HealthLastSync,
     HealthMonth,
     HealthQueue,
@@ -30,6 +31,7 @@ type Props = {
     queue: HealthQueue;
     reconciliation: HealthMonth[];
     gate_one: GateOne;
+    backup: HealthBackup;
 };
 
 const UNKNOWN = 'نامشخص';
@@ -139,6 +141,7 @@ export default function Health({
     queue,
     reconciliation,
     gate_one,
+    backup,
 }: Props) {
     return (
         <>
@@ -148,6 +151,51 @@ export default function Health({
                 <h1 className="text-xl font-medium">سلامت سیستم</h1>
 
                 <GatePanel gate={gate_one} />
+
+                <Card
+                    className={
+                        backup.stale || backup.restore_test_overdue
+                            ? 'border-amber-500/40'
+                            : undefined
+                    }
+                >
+                    <CardHeader>
+                        <div className="flex items-center justify-between gap-4">
+                            <CardTitle>پشتیبان‌گیری</CardTitle>
+                            {!backup.enabled ? (
+                                <ToneBadge tone="warning">غیرفعال</ToneBadge>
+                            ) : backup.stale ? (
+                                <ToneBadge tone="warning">قدیمی</ToneBadge>
+                            ) : (
+                                <ToneBadge tone="success">سالم</ToneBadge>
+                            )}
+                        </div>
+                        <CardDescription>
+                            پشتیبان رمزنگاری‌شده خارج از سرور؛ هشدار اگر آخرین
+                            پشتیبان موفق بیش از 26 ساعت پیش باشد.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <dl className="space-y-2">
+                            <Metric
+                                label="آخرین پشتیبان موفق"
+                                value={backup.last_backup_at ?? UNKNOWN}
+                            />
+                            <Metric
+                                label="آخرین تست بازیابی"
+                                value={backup.last_restore_test_at ?? UNKNOWN}
+                            />
+                            <Metric
+                                label="تست فصلی بازیابی"
+                                value={
+                                    backup.restore_test_overdue
+                                        ? 'سررسید گذشته'
+                                        : 'در موعد'
+                                }
+                            />
+                        </dl>
+                    </CardContent>
+                </Card>
 
                 <div className="grid gap-4 md:grid-cols-2">
                     <Card>

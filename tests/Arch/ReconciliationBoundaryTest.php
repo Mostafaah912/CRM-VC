@@ -140,8 +140,8 @@ it('no longer schedules hm:reconcile directly in routes/console.php (P6-09): Rec
         ->and($console)->toContain("Schedule::command('hm:nightly-chain')")
         ->and($console)->toContain("->dailyAt('03:00')")
         ->and($console)->toContain("->timezone('Asia/Tehran')")
-        ->and(substr_count($console, 'Schedule::'))->toBe(7)   // 5 data entries + P7-08's two separate AI entries (daily brief, weekly review)
-        ->and($console)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground/');
+        ->and(substr_count($console, 'Schedule::'))->toBe(8)   // 5 data entries + P7-08's two separate AI entries (daily brief, weekly review) + P8-02's backup:run
+        ->and(preg_replace("/Schedule::command\\('backup:run'\\)[^;]*;/", '', $console))->not->toMatch('/withoutOverlapping|onOneServer|runInBackground/');
 });
 
 it('changes the reports table only by a NEW migration: the published P1-04 one is untouched', function () {

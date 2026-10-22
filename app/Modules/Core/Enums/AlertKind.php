@@ -15,4 +15,12 @@ enum AlertKind: string
     case NightlyChainTimeout = 'nightly_chain_timeout';
     /** P7-08: a scheduled/manual AI generation was refused or failed (stale data, invalid answer, provider error). Not in PRD §22's list. */
     case AiGenerationFailure = 'ai_generation_failure';
+    /** P8-02: `backup:run` failed (dump, encryption, upload or retention). */
+    case BackupFailure = 'backup_failure';
+    /** P8-02: the newest successful backup is older than the RPO guard (26 h) or none exists. */
+    case BackupStale = 'backup_stale';
+    /** P8-02: `backup:restore-test` failed (download, checksum, decryption, restore or validation). */
+    case RestoreTestFailure = 'restore_test_failure';
+    /** P8-02: the quarterly restore test is overdue. */
+    case RestoreTestOverdue = 'restore_test_overdue';
 }
