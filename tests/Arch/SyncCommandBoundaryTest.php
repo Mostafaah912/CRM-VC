@@ -46,6 +46,7 @@ it('has hm:sync as its own command file, next to P2-11\'s hm:reconcile, P4-07\'s
         'app/Console/Commands/OrdersReclassifyCommand.php',
         'app/Console/Commands/ReconcileCommand.php',
         'app/Console/Commands/ResolveOrderItemsCommand.php',
+        'app/Console/Commands/StagingSeedCommand.php', // P8-03
         'app/Console/Commands/SyncCommand.php',
     ])
         ->and(Scanner::phpCode(syncCommandFile()))->toMatch('/hm:sync \{--entity=orders[^}]*\} \{--full[^}]*\}/');

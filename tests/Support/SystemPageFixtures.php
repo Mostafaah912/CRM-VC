@@ -88,7 +88,7 @@ final class SystemPageFixtures
      */
     public static function pageProps(array $props): array
     {
-        return array_diff_key($props, array_flip(['auth', 'name', 'sidebarOpen', 'errors', 'flash']));
+        return array_diff_key($props, array_flip(['auth', 'name', 'sidebarOpen', 'staging', 'errors', 'flash']));
     }
 
     /**

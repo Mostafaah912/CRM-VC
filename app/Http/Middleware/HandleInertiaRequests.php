@@ -47,6 +47,8 @@ class HandleInertiaRequests extends Middleware
                 // — the real enforcement is PermissionService + the `permission` middleware.
                 'permissions' => $user ? app(PermissionService::class)->allowedKeys($user) : [],
             ],
+            // P8-03: drives the STAGING bar; never true in production/local.
+            'staging' => app()->environment('staging'),
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
         ];
     }

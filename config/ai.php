@@ -10,7 +10,9 @@
 return [
     // `?:` not an env() default: a copied .env.example has these keys present-but-empty, which env() returns as ''.
     // P7-08: master switch. OFF by default — nothing calls a provider until a human turns this on (jobs become silent no-ops).
-    'enabled' => filter_var(env('AI_ENABLED', false), FILTER_VALIDATE_BOOLEAN),
+    // P8-03: in staging it additionally needs AI_ALLOW_IN_STAGING=true (a copy of production must not spend the real budget by accident).
+    'enabled' => filter_var(env('AI_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
+        && (env('APP_ENV') !== 'staging' || filter_var(env('AI_ALLOW_IN_STAGING', false), FILTER_VALIDATE_BOOLEAN)),
 
     'provider' => env('AI_PROVIDER') ?: 'gemini',
     'model' => env('AI_MODEL'),

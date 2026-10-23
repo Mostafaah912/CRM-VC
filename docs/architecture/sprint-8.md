@@ -26,3 +26,13 @@ Spec: PRD §21 Backup, §25 P8-02. Runbook and owner checklist: `ARCHITECTURE.md
 - Tests (`tests/Feature/Backup`, real PostgreSQL + real age): full run -> ciphertext (age header, no `PGDMP`, no plaintext sentinel) -> restore test; wrong key; checksum tamper; missing/incomplete restore; target guard; failed dump leaves nothing on disk or in temp; retention exactly 30 d / 12 w; stale/overdue alerts; health page; schedule 02:00. Mutations (row-count comparison, checksum check) caught. The flow tests need the `age` binary (`BACKUP_AGE_BINARY` or PATH) and are skipped without it — CI must install age.
 - Not verified: a real S3 upload, gpg, a run against the production DB size (timing of the 02:00 dump vs the 03:00 chain).
 
+## P8-03 — Deploy script + staging
+
+Spec: PRD §25 Sprint 8, §24 DoD ("works on staging"), D13, D14. Runbook and checklist: `ARCHITECTURE.md` -> "Deploy & Staging".
+
+- Prerequisite run: the previous full suite was started while the P8-03 files were being added and then collided with a second test run on the same `heymode_testing` database (the suite cannot run twice in parallel); the authoritative full run is the final one below.
+- New: `deploy/deploy.sh`, `.env.staging.example`, `hm:staging:seed` (`StagingSeedCommand`), `staging` shared Inertia prop + `StagingBanner` (inside `AppShell`, both layouts), `X-Robots-Tag` in staging, `WebhookVerdict::Disabled` + `woo.webhook_enabled` (default off in staging), `ai.enabled` needs `AI_ALLOW_IN_STAGING` in staging, `ProductionSafety` now also covers staging, CI step for age + PG client.
+- Decisions: the production confirmation is a typed phrase that needs a TTY (no `--yes` flag on purpose); backups run for staging too unless `--skip-backup` (spec); the backup runs *before* maintenance mode (shorter downtime; it dumps the pre-migration database); a failure *before* the first change does not write a `failed` line, so it cannot shadow the last good release's rollback target; rollback never touches the database.
+- Arch tests updated deliberately: the command-file allow-list gained `StagingSeedCommand`.
+- Not verified: any real server run (checkout/composer/npm/migrate/FPM reload, `flock`, `sudo systemctl`), shellcheck, the new CI step (first push).
+

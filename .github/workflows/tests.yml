@@ -99,7 +99,28 @@ jobs:
           php artisan db:seed --class=PermissionSeeder --force
           php artisan db:seed --class=RoleSeeder --force
 
+      # P8-03: the Backup tests need a real `age` and a pg_dump/pg_restore matching the service's major version (15); without them they SKIP.
+      # age is pinned to a release and verified against a sha256 (computed from the official v1.2.1 linux-amd64 release asset over TLS;
+      # re-verify it against the release page when bumping). PostgreSQL's client comes from the signed PGDG apt repository.
+      - name: Install age (checksum-verified) and PostgreSQL 15 client
+        run: |
+          set -euo pipefail
+          AGE_VERSION=v1.2.1
+          AGE_SHA256=7df45a6cc87d4da11cc03a539a7470c15b1041ab2b396af088fe9990f7c79d50
+          curl -fsSL -o "$RUNNER_TEMP/age.tgz" "https://github.com/FiloSottile/age/releases/download/${AGE_VERSION}/age-${AGE_VERSION}-linux-amd64.tar.gz"
+          echo "${AGE_SHA256}  $RUNNER_TEMP/age.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/age.tgz" -C /usr/local/bin --strip-components=1 age/age age/age-keygen
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -qq postgresql-client-15
+          age --version && /usr/lib/postgresql/15/bin/pg_dump --version
+
       - name: Run CI Checks
+        env:
+          BACKUP_AGE_BINARY: /usr/local/bin/age
+          BACKUP_PG_DUMP_BINARY: /usr/lib/postgresql/15/bin/pg_dump
+          BACKUP_PG_RESTORE_BINARY: /usr/lib/postgresql/15/bin/pg_restore
         run: |
           set -o pipefail
           composer ci:check 2>&1 | tee ci.log

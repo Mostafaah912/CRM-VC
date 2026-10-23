@@ -10,6 +10,7 @@ use Symfony\Component\HttpFoundation\IpUtils;
 /**
  * Is this delivery really from our Woo store? (PRD §10, CLAUDE.md §5, threat T4.) Three checks, in this order:
  *
+ *  0. webhooks are switched on (`woo.webhook_enabled`; off by default in staging, P8-03);
  *  1. a secret is configured — with none, nothing is authentic (an empty HMAC key is trivially forgeable);
  *  2. the source IP is on `woo.webhook_allowed_ips` — an EMPTY list switches this check off (the signature stays
  *     mandatory); a non-empty list of only unusable entries denies everyone;
@@ -22,6 +23,10 @@ final class WooWebhookVerifier
 {
     public function verify(string $rawBody, ?string $signature, ?string $ip): WebhookVerdict
     {
+        if (! config('woo.webhook_enabled')) {
+            return WebhookVerdict::Disabled;
+        }
+
         $secret = (string) config('woo.webhook_secret');
 
         if ($secret === '') {

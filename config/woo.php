@@ -24,6 +24,10 @@ return [
     'secret' => env('WOO_CONSUMER_SECRET'),
     'version' => 'wc/v3',
 
+    // P8-03: staging must not receive production webhooks. Defaults OFF when APP_ENV=staging; enable there only with its OWN secret
+    // (WOO_WEBHOOK_SECRET) registered on a separate Woo webhook. Everywhere else it defaults ON.
+    'webhook_enabled' => filter_var(env('WOO_WEBHOOK_ENABLED', env('APP_ENV') !== 'staging'), FILTER_VALIDATE_BOOLEAN),
+
     'timeout' => 30,
     'per_page' => 50,
 

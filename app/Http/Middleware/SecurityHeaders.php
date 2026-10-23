@@ -33,6 +33,10 @@ final class SecurityHeaders
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
+        if (app()->environment('staging')) {
+            $response->headers->set('X-Robots-Tag', 'noindex, nofollow'); // P8-03: a staging copy must never be indexed
+        }
+
         if (app()->isProduction()) {
             $response->headers->set(
                 'Strict-Transport-Security',

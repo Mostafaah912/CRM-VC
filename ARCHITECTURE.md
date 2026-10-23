@@ -211,6 +211,7 @@ Each row links to the sprint archive file; open the file and search the heading 
 | P7-08b | sprint-7.md | CatalogSyncJob measured 911 s (310 sequential Woo requests, 95% network wait): timeout 1800 + retry_after 1830 + Horizon timeout 1800; catalog step fail-soft in `hm:nightly-chain` (alert, chain continues); risk recorded that the chain could never get past the catalog at 300 s |
 | P8-01 | sprint-8.md | Server hardening: app layer (Horizon Owner-only gate, security headers + nonce CSP, 10-failure login lockout, mandatory 2FA for Owner/Manager, production APP_DEBUG boot guard, no-`dangerouslySetInnerHTML` arch test) + `deploy/` scripts (not executed). See the "Hardening" section below. |
 | P8-02 | sprint-8.md | Encrypted off-server backup (`backup:run`, pg_dump custom -> age -> S3-compatible disk, daily 30 d / weekly 12 w, sha256, audit + alert) and `backup:restore-test` (scratch DB `hm_restore_test`, compared with live, RTO printed); 26 h stale alert + quarterly reminder in HealthCheckJob and on the health page. See "Backup & Restore" below. |
+| P8-03 | sprint-8.md | `deploy/deploy.sh` (staging/production, typed production confirmation, backup gate, maintenance mode, `rollback` to the previous ref without touching migrations, `--dry-run`), staging safeguards (webhooks off, AI off, noindex, STAGING bar, `hm:staging:seed`, `.env.staging.example`), CI installs a checksum-pinned `age` + PG15 client so the Backup tests no longer skip. See "Deploy & Staging" below. |
 
 
 ## Hardening (P8-01, PRD §21)
@@ -284,4 +285,37 @@ RPO 24 h / RTO 4 h. The whole database is dumped, so the tables Woo cannot rebui
 7. Record the elapsed time against the 4 h RTO.
 
 Run `backup:restore-test` quarterly (the health page reminds you); do it from a machine/session where you can supply the private key for that run only.
+
+## Deploy & Staging (P8-03, PRD §25, D13/D14)
+
+Direct deploy on the VPS, no Docker (D14). `deploy/deploy.sh` was only syntax-checked and run with `--dry-run` on the dev machine; it has never run on a real server.
+
+**What staging is.** A second copy of the app on its own domain with its **own database, Redis prefix and keys**. Safeguards (all tested in `tests/Feature/Staging`): it can never write to WooCommerce (the app has no Woo write path at all, enforced by `tests/Arch/WooReadOnlyTest.php` — so pointing staging at the live store only *reads*); Woo webhooks are **off** unless `WOO_WEBHOOK_ENABLED=true` with a staging-only secret; AI stays off unless **both** `AI_ENABLED=true` and `AI_ALLOW_IN_STAGING=true` (then keep `AI_BUDGET_MONTHLY_USD` tiny); mail is `log`; `X-Robots-Tag: noindex`; an amber **STAGING** bar at the bottom of every app page; `APP_DEBUG=true` refuses to boot; `php artisan hm:staging:seed` (DemoDataSeeder, 50 demo customers) runs **only** when `APP_ENV=staging` and refuses in production. Do not run demo seed and a real Woo sync on the same staging DB — pick one.
+
+**The script.** `deploy/deploy.sh <staging|production> [--ref REF] [--skip-backup] [--dry-run]` and `deploy/deploy.sh rollback <env> [--dry-run]`.
+Order: preflight (clean tree, ref resolves, `.env` `APP_ENV` equals the target — a staging `.env` can never deploy "production") -> production typed confirmation (`deploy production`, needs a terminal) -> `backup:run` must succeed (production always; `--skip-backup` is refused for production) -> maintenance mode -> `git checkout --detach <sha>` -> `composer install --no-dev -o` -> `npm ci && npm run build` -> `migrate --force` -> `config/route/view/event:cache` -> `horizon:terminate` + reload PHP-FPM -> leave maintenance -> smoke check (`/up` and `/login` must be HTTP 200). Every line is timestamped to `storage/logs/deploy.log`; each deploy writes `storage/logs/releases.log` (`from=`/`to=` commit, status `started|ok|failed|rollback`); a lock prevents two deploys at once.
+On failure after maintenance began: the script checks the app (boots, DB reachable, no pending migration). Healthy -> it leaves maintenance and says which code is live; unhealthy -> it **stays in maintenance** and prints what to do. `rollback` goes back to the `from` of the last `releases.log` line for that environment, rebuilds, and **never runs `migrate:rollback`** — it prints the manual, deliberate commands instead (read each `down()`; restore from backup if unsure). Rolling back twice returns to the newer ref.
+
+### Build staging on the VPS (once)
+1. DNS: an A record for `staging.<your-domain>` to the VPS. Certificate: `certbot` for that name (same as `deploy/nginx.conf.example`, new `server_name`, its own `root`, and **protect it**: `auth_basic` or an IP allow-list — staging holds a copy of customer-like data).
+2. PostgreSQL: `createdb heymode_staging`, a separate role, password in `.env`; also run `php artisan hm:ai-setup-readonly` later if you enable AI.
+3. `git clone` the repo to e.g. `/var/www/heymode-staging`; `cp .env.staging.example .env`; fill `APP_KEY` (`php artisan key:generate`), DB, Redis (different `REDIS_PREFIX`), `WOO_*` (read-only keys); keep the defaults for webhook/AI/mail/backup.
+4. A separate Horizon supervisor/systemd unit for the staging checkout (and its own PHP-FPM pool if you want isolation).
+5. First deploy: `composer install --no-dev -o && npm ci && npm run build && php artisan migrate --force && php artisan db:seed --class=PermissionSeeder --force && php artisan db:seed --class=RoleSeeder --force`, then create your user and enrol 2FA; optionally `php artisan hm:staging:seed`. After that always use the script: `deploy/deploy.sh staging --skip-backup --ref <branch>`.
+
+### Production: first deploy and normal deploys
+- First time: same steps as staging with `.env` from your production values (see "Hardening" and "Backup & Restore"), then `php artisan hm:ai-setup-readonly`. Normal deploys: `deploy/deploy.sh production --ref main` after the checklist below.
+- Rollback: `deploy/deploy.sh rollback production` (typed confirmation), then check `/system/health`; decide about migrations by hand.
+
+### Checklist before every production deploy
+- [ ] The same commit has been deployed to **staging** and exercised (login + 2FA, dashboard, customers, a sync run, `/system/health`).
+- [ ] CI is green on that commit (Pest + arch, PHPStan, Pint, types) and the Backup tests were **not** skipped.
+- [ ] You read the new migrations: additive and reversible (`down()`); anything destructive has a plan.
+- [ ] The latest `backup:run` is < 26 h old (the script also takes a fresh one) and a restore test was done this quarter.
+- [ ] No sync/nightly chain is running (not between 02:00–05:00 Tehran).
+- [ ] `.env` on the server has everything new code needs; `verify-hardening.sh` still passes.
+- [ ] You know the previous commit (`git rev-parse HEAD`) in case you must roll back.
+
+### CI
+`.github/workflows/tests.yml` now installs `age` v1.2.1 (verified against a pinned sha256 — computed from the official release asset downloaded over TLS; re-check it on the release page when bumping) and `postgresql-client-15` from the signed PGDG repository, and exports `BACKUP_AGE_BINARY` / `BACKUP_PG_DUMP_BINARY` / `BACKUP_PG_RESTORE_BINARY`, so the Backup flow tests run instead of skipping. This could not be exercised from here: the first push of the branch is its first real run. `shellcheck` was not available locally (its test skips when absent).
 
