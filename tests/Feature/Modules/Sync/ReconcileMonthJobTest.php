@@ -37,27 +37,35 @@ function jobWoo(?WooOrderTotalsSimulator $woo = null): void
     app()->instance(WooClient::class, $woo ?? new WooOrderTotalsSimulator([]));
 }
 
-it('is a queued, unique job on the sync queue with a single attempt', function () {
+it('is a queued, unique job on the sync queue with two attempts and a pause between them', function () {
     $job = new ReconcileMonthJob('1403-07');
 
     expect($job)->toBeInstanceOf(ShouldQueue::class)->toBeInstanceOf(ShouldBeUnique::class)
         ->and($job->queue)->toBe('sync')
-        ->and($job->tries)->toBe(1)
+        ->and($job->tries)->toBe(2)
+        ->and($job->backoff)->toBe(120)
         ->and($job->jalaliMonth)->toBe('1403-07');
 });
 
-it('is unique per month, for 600 seconds, above its timeout and below the queue\'s retry_after', function () {
+it('is unique per month, for longer than both attempts plus the pause, and below the queue\'s retry_after', function () {
     $job = new ReconcileMonthJob('1403-07');
 
     expect($job->uniqueId())->toBe('1403-07')
         ->and((new ReconcileMonthJob('1403-08'))->uniqueId())->not->toBe($job->uniqueId())
-        ->and($job->uniqueFor)->toBe(600)
-        ->and($job->uniqueFor)->toBeGreaterThan($job->timeout)
+        ->and($job->uniqueFor)->toBeGreaterThan($job->tries * $job->timeout + $job->backoff)
         ->and($job->timeout)->toBeLessThan((int) config('queue.connections.redis.retry_after'));
 });
 
-it('gives a month up to 300 seconds: the largest live month (3,169 orders) took ~206 s, and the old 80 s limit killed the worker', function () {
-    expect((new ReconcileMonthJob('1405-05'))->timeout)->toBe(300);
+it('gives a month up to 900 seconds: 1405-04 (3,169 orders, expected ~165 s) was killed by the old 300 s limit on staging, after the old 80 s limit had killed a 1,561-order month', function () {
+    expect((new ReconcileMonthJob('1405-05'))->timeout)->toBe(900);
+});
+
+it('keeps the month job\'s timeout below Horizon\'s supervisor timeout, which stays below the queue\'s retry_after (a running month is never killed by the supervisor first, nor re-reserved and run twice)', function () {
+    $job = new ReconcileMonthJob('1405-04');
+    $horizon = (int) collect(config('horizon.defaults'))->pluck('timeout')->min();
+
+    expect($job->timeout)->toBeLessThan($horizon)
+        ->and($horizon)->toBeLessThan((int) config('queue.connections.redis.retry_after'));
 });
 
 /* P6-14 phase 4: the exact same failure shape as the test above, found live — a full `hm:sync --full`

@@ -15,24 +15,30 @@ use Throwable;
 /**
  * Reconciles ONE Jalali month and stores the result in reconciliation_reports (P2-11). No logic: it calls
  * ReconciliationService, which stores the report — or, on failure, a `failed` row with the scrubbed reason. Unique per
- * month (uniqueFor 600); a single attempt: a failed month is simply reconciled again by the next nightly run. failed() is
- * the safety net for a worker that died or timed out mid-month (idempotent).
+ * month; two attempts (one retry after a pause) because a month is read through many sequential Woo requests and one stalled
+ * request (30 s client timeout + the retry ladder) can eat minutes. failed() is the safety net for a worker that died or timed
+ * out on the last attempt (idempotent); the next nightly run reconciles a still-failed month again.
  */
 final class ReconcileMonthJob implements ShouldBeUnique, ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable;
 
-    public int $tries = 1;
+    public int $tries = 2;
 
     /**
-     * Reading a month is one list request per 50 orders, ~65 ms per order: the largest live month (3,169 orders) took ~206 s, and
-     * the old 80 s limit killed the worker on a 1,561-order month. Must stay below the queue's retry_after (930, config/queue.php —
-     * raised past this job's own 300s by P6-09, to clear RecomputeMetricsJob/BuildAffinityJob's 900s), or a running job would be
-     * re-reserved and run twice. A month beyond ~4,500 orders needs this raised again (or paging).
+     * Reading a month is one list request per 50 orders, ~52-65 ms per order: months of 2,375 / 3,014 / 3,169 orders took 128 / 158 s
+     * and (expected) ~165 s on staging, but 1405-04 (3,169 orders) was killed by the old 300 s limit — one slow Woo response (30 s client
+     * timeout + a retry ladder of 2/8/30/120 s) is enough to double a month. 900 s gives a 3,169-order month ~5x its expected time and
+     * still reads ~15,000 orders at 60 ms. Ladder that must hold (a test checks it): this timeout < Horizon's supervisor timeout (1800) <
+     * queue retry_after (1830), or a running month is re-reserved and runs twice; uniqueFor covers both attempts plus the pause.
+     * A month beyond ~15,000 orders needs paging (a month is now ≤ ~3,200).
      */
-    public int $timeout = 300;
+    public int $timeout = 900;
 
-    public int $uniqueFor = 600;
+    /** One retry after a pause: lets a slow Woo / rate-limit window clear instead of failing the month at once. */
+    public int $backoff = 120;
+
+    public int $uniqueFor = 2400;
 
     public function __construct(public readonly string $jalaliMonth)
     {
