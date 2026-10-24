@@ -7,6 +7,7 @@ namespace App\Modules\Sync\Jobs;
 use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Enums\SyncMode;
 use App\Modules\Sync\Services\SyncService;
+use App\Modules\Sync\Support\SkipWhenWooIsNotConfigured;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -40,6 +41,12 @@ final class SyncEntityJob implements ShouldBeUnique, ShouldQueue
     public function uniqueId(): string
     {
         return $this->entity->value;
+    }
+
+    /** @return list<object> */
+    public function middleware(): array
+    {
+        return [app(SkipWhenWooIsNotConfigured::class)];
     }
 
     public function handle(SyncService $sync): void

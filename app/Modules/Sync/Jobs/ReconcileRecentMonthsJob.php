@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Sync\Jobs;
 
 use App\Modules\Sync\Services\ReconciliationService;
+use App\Modules\Sync\Support\SkipWhenWooIsNotConfigured;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -38,6 +39,12 @@ final class ReconcileRecentMonthsJob implements ShouldBeUnique, ShouldQueue
     public function uniqueId(): string
     {
         return 'reconcile-recent-months';
+    }
+
+    /** @return list<object> */
+    public function middleware(): array
+    {
+        return [app(SkipWhenWooIsNotConfigured::class)];
     }
 
     public function handle(ReconciliationService $reconciliation): void
