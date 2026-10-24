@@ -25,6 +25,17 @@ it('lets them reach the security page and sign out so they can enrol', function 
     $this->actingAs($user)->post(route('logout'))->assertRedirect(route('home'));
 });
 
+it('lets them submit the password confirmation that the security page itself demands', function () {
+    $user = HardeningTestHelpers::userWithRole(RoleName::Owner);
+
+    // Regression: password.confirm.store was not allow-listed, so the POST got a 403 and the form looked dead.
+    $this->actingAs($user)->post(route('password.confirm.store'), ['password' => 'password'])
+        ->assertRedirect()->assertSessionHasNoErrors();
+    $this->actingAs($user)->postJson(route('password.confirm.store'), ['password' => 'password'])
+        ->assertStatus(201);
+    $this->actingAs($user)->getJson(route('passkey.confirm-options'))->assertSuccessful();
+});
+
 it('lets an Owner with confirmed 2FA through', function () {
     $user = HardeningTestHelpers::userWithRole(RoleName::Owner);
     $user->forceFill(['two_factor_secret' => encrypt('x'), 'two_factor_recovery_codes' => encrypt('[]'), 'two_factor_confirmed_at' => now()])->save();

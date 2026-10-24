@@ -22,6 +22,9 @@ final class RequireTwoFactor
         'two-factor.*',
         'password.confirm',
         'password.confirmation',
+        'password.confirm.store',
+        'passkey.confirm-options',
+        'passkey.confirm',
         'logout',
     ];
 
