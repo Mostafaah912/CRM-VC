@@ -8,6 +8,7 @@ use App\Modules\Ai\Tools\AiReadonlyDb;
 use App\Modules\Ai\Tools\AiTool;
 use App\Modules\Ai\Tools\SmallGroupMask;
 use App\Modules\Ai\Tools\ToolFormat;
+use Illuminate\Support\Collection;
 
 final class GetChurnReportTool extends AiTool
 {
@@ -20,18 +21,17 @@ final class GetChurnReportTool extends AiTool
 
     public function description(): string
     {
-        return 'Customers per churn-risk level (low, medium, high, lost) with average risk score and recency, the value at risk (estimated CLV, falling back to historical, of high+lost customers, in Toman) and the store thresholds in days used by the latest metrics run.';
+        return 'Customers per churn-risk level (low, medium, high, lost) with average risk score and recency, the value at risk as two figures (lifetime revenue in Toman of the high-risk customers and of the lost customers, separately — not a CLV projection) and the store thresholds in days used by the latest metrics run.';
     }
 
     public function run(array $arguments): array
     {
         $db = $this->db->connection();
         $rows = $db->table('customer_metrics')->whereNotNull('churn_risk_level')->groupBy('churn_risk_level')
-            ->selectRaw('churn_risk_level as level, count(*) as customers, avg(churn_risk_score) as score, avg(recency_days) as recency, sum(coalesce(clv_estimated, clv_historical)) as clv')
+            ->selectRaw('churn_risk_level as level, count(*) as customers, avg(churn_risk_score) as score, avg(recency_days) as recency, sum(total_revenue) as revenue')
             ->get()
             ->sortBy(fn ($r) => array_search((string) $r->level, ['low', 'medium', 'high', 'lost'], true))->values();
         $total = (int) $rows->sum('customers');
-        $atRisk = $rows->whereIn('level', ['high', 'lost']);
         $mapped = $rows->map(fn ($r) => [
             'level' => (string) $r->level,
             'customers' => (int) $r->customers,
@@ -52,10 +52,22 @@ final class GetChurnReportTool extends AiTool
         return [
             'classified_customers' => $total,
             'levels' => SmallGroupMask::apply($mapped, 'level'),
-            'value_at_risk' => (int) $atRisk->sum('customers') >= SmallGroupMask::min() ? ToolFormat::toman($atRisk->sum('clv')) : null,
-            'value_at_risk_means' => 'estimated_lifetime_value_of_high_and_lost_churn_customers_not_a_confirmed_loss',
+            // Two figures, each hidden on its own when its group is below the small-group floor.
+            'value_at_risk' => [
+                'high' => $this->lifetimeRevenueOf($rows, 'high'),
+                'lost' => $this->lifetimeRevenueOf($rows, 'lost'),
+            ],
+            'value_at_risk_means' => 'lifetime_revenue_of_high_risk_and_of_lost_churn_customers_not_a_confirmed_loss',
             'value_at_risk_clv_confidence' => SmallGroupMask::apply($riskConfidence, 'level'),
             'thresholds_days' => array_intersect_key(array_map('intval', array_filter($thresholds, 'is_numeric')), array_flip(['p50', 'p75', 'p90'])),
         ];
+    }
+
+    /** @param  Collection<int, \stdClass>  $rows */
+    private function lifetimeRevenueOf($rows, string $level): ?int
+    {
+        $row = $rows->firstWhere('level', $level);
+
+        return $row !== null && (int) $row->customers >= SmallGroupMask::min() ? ToolFormat::toman((int) $row->revenue) : null;
     }
 }

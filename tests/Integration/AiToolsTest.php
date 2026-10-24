@@ -7,6 +7,7 @@ use App\Modules\Ai\Dto\AnomalyReport;
 use App\Modules\Ai\Services\AnomalySource;
 use App\Modules\Ai\Tools\SmallGroupMask;
 use App\Modules\Ai\Tools\ToolCatalog;
+use App\Modules\Ai\Tools\ToolFormat;
 use App\Modules\Ai\Tools\ToolRegistry;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
@@ -96,7 +97,7 @@ it('get_churn_report: levels, merged small groups, hidden tiny value-at-risk, th
     expect($r['classified_customers'])->toBe(12)
         ->and($r['levels'][0])->toMatchArray(['level' => 'low', 'customers' => 7, 'share_percent' => 58.33, 'avg_risk_score' => 15.7, 'avg_recency_days' => 19])
         ->and($r['levels'][1])->toBe(['level' => 'other_small_groups', 'customers' => 5, 'merged_groups' => 2])
-        ->and($r['value_at_risk'])->toBeNull()
+        ->and($r['value_at_risk'])->toBe(['high' => null, 'lost' => null])   // 2 high-risk customers, 0 lost: both below the small-group floor
         ->and($r['thresholds_days'])->toBe(['p50' => 30, 'p75' => 60, 'p90' => 90]);
 });
 
@@ -130,7 +131,26 @@ it('get_top_products states its period (lifetime) explicitly', function () {
 it('get_churn_report: value_at_risk comes with its definition and the CLV-confidence distribution of the at-risk customers', function () {
     $r = tool('get_churn_report');
 
-    expect($r['value_at_risk_means'])->toBe('estimated_lifetime_value_of_high_and_lost_churn_customers_not_a_confirmed_loss')->and($r)->toHaveKey('value_at_risk_clv_confidence');
+    expect($r['value_at_risk_means'])->toBe('lifetime_revenue_of_high_risk_and_of_lost_churn_customers_not_a_confirmed_loss')->and($r)->toHaveKey('value_at_risk_clv_confidence');
+});
+
+it('get_churn_report: value_at_risk is two lifetime-revenue figures (high, lost), each hidden on its own below the small-group floor, never from the CLV projection', function () {
+    $db = AiToolsFixture::admin();
+    $ids = $db->table('customer_metrics')->orderBy('customer_id')->pluck('customer_id')->all();
+    // 6 high-risk customers (100,000 each), 5 lost (200,000 each), the 12th moved out of high; clv_estimated is absurd on purpose and must not matter.
+    $db->table('customer_metrics')->where('customer_id', $ids[11])->update(['churn_risk_level' => 'low']);
+    $db->table('customer_metrics')->whereIn('customer_id', array_slice($ids, 0, 6))->update(['churn_risk_level' => 'high', 'total_revenue' => 100_000, 'clv_estimated' => 9_000_000_000]);
+    $db->table('customer_metrics')->whereIn('customer_id', array_slice($ids, 6, 5))->update(['churn_risk_level' => 'lost', 'total_revenue' => 200_000, 'clv_estimated' => 9_000_000_000]);
+
+    $r = tool('get_churn_report');
+
+    expect($r['value_at_risk'])->toBe(['high' => ToolFormat::toman(600_000), 'lost' => ToolFormat::toman(1_000_000)])
+        ->and(json_encode($r['value_at_risk']))->not->toContain('9000000000');
+
+    // one lost customer fewer: only that group is hidden (4 < 5), the other stays visible
+    $db->table('customer_metrics')->where('customer_id', $ids[6])->update(['churn_risk_level' => 'low']);
+    $r = tool('get_churn_report');
+    expect($r['value_at_risk'])->toBe(['high' => ToolFormat::toman(600_000), 'lost' => null]);
 });
 
 it('get_cohort_report: matrix with immature periods null and the 3-customer cohort hidden', function () {

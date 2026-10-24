@@ -43,6 +43,18 @@ function sqlReference(): array
                    (array_agg(days order by ordered_at desc))[1] as last_iv
             from iv where days > 0 and days <= 730 group by customer_id
         ),
+        dd as (
+            select distinct o.customer_id, (o.ordered_at at time zone 'Asia/Tehran')::date as d
+            from orders o where o.is_realized and not o.is_fully_refunded and o.deleted_at is null
+        ),
+        dg as (
+            select customer_id, (d - lag(d) over (partition by customer_id order by d))::double precision as gap from dd
+        ),
+        dcy as (
+            select customer_id, count(*)::int as pdays,
+                   percentile_cont(0.5) within group (order by gap) filter (where gap >= 1 and gap <= 730) as dcycle
+            from dg group by customer_id
+        ),
         scored as (
             select b.*, ntile(5) over (order by recency desc, customer_id) as r,
                    ntile(5) over (order by n asc, customer_id) as f0,
@@ -50,8 +62,8 @@ function sqlReference(): array
             from base b
         ),
         fx as (
-            select s.*, case when s.n <= 4 then least(s.f0, s.n) else s.f0 end as f, i.med, i.av, i.last_iv, coalesce(i.med, 60) as cycle
-            from scored s left join ivs i using (customer_id)
+            select s.*, case when s.n <= 4 then least(s.f0, s.n) else s.f0 end as f, i.med, i.av, i.last_iv, coalesce(i.med, 60) as cycle, y.pdays, y.dcycle
+            from scored s left join ivs i using (customer_id) left join dcy y using (customer_id)
         )
         select phone, n, revenue, refunded, monetary, recency, r, f, m, med, round(av, 2)::text as avg_days, cycle,
                r::text || f::text || m::text as rfm_score,
@@ -60,7 +72,8 @@ function sqlReference(): array
                     when r = 2 and f >= 3 then 'at_risk' when r = 1 and f >= 4 and m >= 4 then 'cant_lose'
                     when r <= 2 and f <= 2 then 'hibernating' when r = 1 then 'lost' else 'promising' end as segment,
                (revenue * 0.17)::bigint as clv_historical,
-               case when n < 2 or cycle <= 0 then null else ((revenue / n) * 0.17 * (365.0 / cycle) * 2)::bigint end as clv_estimated,
+               case when pdays is null or pdays < 2 or dcycle is null or dcycle < 1 then null
+                    else least((revenue / n) * 0.17 * (365.0 / dcycle) * 2, 3 * ((revenue * 0.17)::bigint))::bigint end as clv_estimated,
                case when n < 3 then 'low' when n < 6 then 'medium' else 'high' end as clv_confidence,
                greatest(0, least(100, least(100, (recency / cycle) * 40)
                    + case when n = 1 then 15 else 0 end

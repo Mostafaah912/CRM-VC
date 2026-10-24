@@ -181,6 +181,17 @@ it('reads margin_rate/horizon_years from config, not a hardcoded number — prov
     expect($before)->toBe(0.17)->and($after)->toBe(0.42);
 });
 
+it('reads the CLV estimate rules (min purchase days, cap multiple) from config, so the guide text cannot drift from the calculator', function () {
+    config(['metrics.clv.min_purchase_days' => 2, 'metrics.clv.cap_multiple' => 3.0]);
+    $before = app(MetricsGuideService::class)->guide()['clv'];
+
+    config(['metrics.clv.min_purchase_days' => 4, 'metrics.clv.cap_multiple' => 5.0]);
+    $after = app(MetricsGuideService::class)->guide()['clv'];
+
+    expect([$before['min_purchase_days'], $before['cap_multiple']])->toBe([2, 3.0])
+        ->and([$after['min_purchase_days'], $after['cap_multiple']])->toBe([4, 5.0]);
+});
+
 it('counts customers by clv_confidence live', function () {
     guideCustomer(['clv_confidence' => 'low']);
     guideCustomer(['clv_confidence' => 'high']);

@@ -249,6 +249,8 @@ final class MetricsGuideService
             'margin_rate' => (float) config('metrics.margin_rate'),
             'horizon_years' => (float) config('metrics.horizon_years'),
             'min_orders_for_estimate' => (int) config('metrics.clv.min_orders_for_estimate'),
+            'min_purchase_days' => (int) config('metrics.clv.min_purchase_days'),
+            'cap_multiple' => (float) config('metrics.clv.cap_multiple'),
             'low_confidence_threshold' => (int) config('metrics.clv.low_confidence_threshold'),
             'high_confidence_threshold' => (int) config('metrics.clv.high_confidence_threshold'),
             'confidence_distribution' => [

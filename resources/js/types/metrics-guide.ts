@@ -55,6 +55,10 @@ export type ClvGuide = {
     margin_rate: number;
     horizon_years: number;
     min_orders_for_estimate: number;
+    /** Distinct purchase days (Tehran dates) needed for clv_estimated — orders minutes apart are one purchase. */
+    min_purchase_days: number;
+    /** clv_estimated never exceeds this multiple of clv_historical. */
+    cap_multiple: number;
     low_confidence_threshold: number;
     high_confidence_threshold: number;
     confidence_distribution: ClvConfidenceDistribution;

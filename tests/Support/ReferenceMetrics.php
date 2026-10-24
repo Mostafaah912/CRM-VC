@@ -59,6 +59,17 @@ final class ReferenceMetrics
             }
             $intervalCount += count($intervals);
 
+            // P8: the CLV cycle comes from DISTINCT purchase days (Asia/Tehran dates), gaps in whole days, 1..730.
+            $dates = array_values(array_unique($orders->map(fn ($o) => CarbonImmutable::parse($o->ordered_at)->setTimezone('Asia/Tehran')->toDateString())->all()));
+            sort($dates);
+            $dayGaps = [];
+            for ($i = 1; $i < count($dates); $i++) {
+                $gap = (int) CarbonImmutable::parse($dates[$i - 1])->diffInDays(CarbonImmutable::parse($dates[$i]));
+                if ($gap >= 1 && $gap <= 730) {
+                    $dayGaps[] = $gap;
+                }
+            }
+
             $n = $orders->count();
             $revenue = (int) $orders->sum('net_revenue');
             if ($revenue % $n !== 0) {
@@ -81,6 +92,8 @@ final class ReferenceMetrics
                 'last' => CarbonImmutable::parse($orders->last()->ordered_at),
                 'recency' => intdiv($recencySeconds, 86400),
                 'intervals' => $intervals,
+                'purchase_days' => count($dates),
+                'day_gaps' => $dayGaps,
             ];
         }
 
@@ -122,7 +135,7 @@ final class ReferenceMetrics
                 'rfm_score' => "{$r}{$f}{$m}",
                 'rfm_segment' => self::segment($r, $f, $m, $n),
                 'clv_historical' => intdiv($b['revenue'] * 17, 100),
-                'clv_estimated' => $n < 2 ? null : self::clvEstimated($aov, $cycle2),
+                'clv_estimated' => self::clvEstimated($aov, $b['purchase_days'], self::medianTwice($b['day_gaps']), intdiv($b['revenue'] * 17, 100)),
                 'clv_confidence' => $n < 3 ? 'low' : ($n < 6 ? 'medium' : 'high'),
                 'churn_risk_score' => $score,
                 'churn_risk_level' => $b['recency'] > $t['p90'] * 2 ? 'lost' : ($b['recency'] > $t['p90'] ? 'high' : ($b['recency'] > $t['p75'] ? 'medium' : 'low')),
@@ -258,13 +271,22 @@ final class ReferenceMetrics
         return $count % 2 === 1 ? 2 * $intervals[intdiv($count, 2)] : $intervals[$count / 2 - 1] + $intervals[$count / 2];
     }
 
-    /** (aov × 0.17 × (365 / cycle) × 2)::bigint with cycle = cycle2 / 2 — exact rational, half-up. */
-    private static function clvEstimated(int $aov, int $cycle2): int
+    /**
+     * P8 amendment of PRD §13: (aov × 0.17 × (365 / cycle) × 2)::bigint with cycle = the MEDIAN GAP BETWEEN DISTINCT PURCHASE DAYS
+     * (cycle2 / 2, exact rational, half-up), capped at 3 × clv_historical. NULL below 2 purchase days or when the cycle is under one day.
+     *
+     * @param  int|null  $cycle2  twice the median day-gap, null when there is no gap
+     */
+    private static function clvEstimated(int $aov, int $purchaseDays, ?int $cycle2, int $clvHistorical): ?int
     {
+        if ($purchaseDays < 2 || $cycle2 === null || $cycle2 < 2) {
+            return null;
+        }
+
         $numerator = $aov * 17 * 365 * 4;
         $denominator = 100 * $cycle2;
 
-        return self::roundDiv($numerator, $denominator);
+        return min(self::roundDiv($numerator, $denominator), 3 * $clvHistorical);
     }
 
     /** PRD §14 step 3, numeric(5,2), exact. @return string like "83.33" */

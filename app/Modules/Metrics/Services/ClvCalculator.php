@@ -10,8 +10,9 @@ use Illuminate\Support\Facades\DB;
  * PRD §13: CLV historical and estimated, with a confidence label. `clv_historical = total_revenue *
  * margin_rate` — a margin proxy, not real profit, because Phase 1 has no cost data; the UI must
  * label it "تقریبی — بر پایه حاشیه میانگین" (approximate, average-margin-based), never as an exact
- * figure. `clv_estimated` is `aov * margin_rate * (365 / purchase_cycle_days) * horizon_years`: a
- * simple annualized-run-rate projection, not a probabilistic model (BG/NBD) — Phase 1 doesn't have
+ * figure. `clv_estimated` is `aov * margin_rate * (365 / cycle) * horizon_years` — P8 amendment: `cycle` is the median gap between DISTINCT
+ * PURCHASE DAYS (>= 1 day, >= 2 purchase days, see config/metrics.php `clv`), not `purchase_cycle_days`, and the result is capped at
+ * `cap_multiple` x clv_historical: a simple annualized-run-rate projection, not a probabilistic model (BG/NBD) — Phase 1 doesn't have
  * enough order history per customer for that to be meaningful, so it is deliberately out of scope.
  *
  * clv_historical is never NULL: customer_metrics.clv_historical is NOT NULL DEFAULT 0 (P1-04), and a
@@ -38,26 +39,55 @@ final class ClvCalculator
     public function compute(): int
     {
         return DB::affectingStatement(<<<'SQL'
-            UPDATE customer_metrics SET
-                clv_historical = (total_revenue * ?::numeric)::bigint,
+            WITH days AS (
+                SELECT customer_id, (ordered_at AT TIME ZONE 'Asia/Tehran')::date AS d
+                FROM orders
+                WHERE is_realized = true AND deleted_at IS NULL AND is_fully_refunded = false AND customer_id IS NOT NULL
+                GROUP BY customer_id, (ordered_at AT TIME ZONE 'Asia/Tehran')::date
+            ),
+            gaps AS (
+                SELECT customer_id, (d - LAG(d) OVER (PARTITION BY customer_id ORDER BY d))::float8 AS gap FROM days
+            ),
+            ds AS (
+                SELECT customer_id,
+                       COUNT(*) AS purchase_days,
+                       PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY gap) FILTER (WHERE gap >= 1 AND gap <= 730) AS cycle_days
+                FROM gaps
+                GROUP BY customer_id
+            )
+            UPDATE customer_metrics cm SET
+                clv_historical = (cm.total_revenue * ?::numeric)::bigint,
                 clv_estimated = CASE
-                    WHEN total_orders < 2
-                      OR purchase_cycle_days IS NULL
-                      OR purchase_cycle_days <= 0
+                    WHEN x.purchase_days IS NULL
+                      OR x.purchase_days < ?
+                      OR x.cycle_days IS NULL
+                      OR x.cycle_days < 1
                     THEN NULL
-                    ELSE (aov * ?::numeric * (365.0 / purchase_cycle_days) * ?::numeric)::bigint
+                    ELSE LEAST(
+                        cm.aov * ?::numeric * (365.0 / x.cycle_days) * ?::numeric,
+                        ?::numeric * ((cm.total_revenue * ?::numeric)::bigint)
+                    )::bigint
                 END,
                 clv_confidence = CASE
-                    WHEN total_orders < 3 THEN 'low'
-                    WHEN total_orders < 6 THEN 'medium'
+                    WHEN cm.total_orders < 3 THEN 'low'
+                    WHEN cm.total_orders < 6 THEN 'medium'
                     ELSE 'high'
                 END
-            WHERE total_orders >= 1
+            FROM (
+                SELECT m.customer_id, ds.purchase_days, ds.cycle_days
+                FROM customer_metrics m
+                LEFT JOIN ds ON ds.customer_id = m.customer_id
+                WHERE m.total_orders >= 1
+            ) x
+            WHERE cm.customer_id = x.customer_id
             SQL,
             [
                 config('metrics.margin_rate'),
+                config('metrics.clv.min_purchase_days'),
                 config('metrics.margin_rate'),
                 config('metrics.horizon_years'),
+                config('metrics.clv.cap_multiple'),
+                config('metrics.margin_rate'),
             ],
         );
     }

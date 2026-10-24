@@ -33,6 +33,11 @@ return [
     ],
 
     'clv' => [
+        // P8 decision: clv_estimated is computed from DISTINCT PURCHASE DAYS (Asia/Tehran dates) — the cycle is the median gap between them,
+        // never less than one day, and a customer needs at least `min_purchase_days` of them. Two orders minutes apart are one purchase.
+        'min_purchase_days' => (int) env('METRICS_CLV_MIN_PURCHASE_DAYS', 2),
+        // ... and the projection never exceeds this multiple of clv_historical (lifetime margin so far).
+        'cap_multiple' => (float) env('METRICS_CLV_CAP_MULTIPLE', 3.0),
         'min_orders_for_estimate' => 2,
         'low_confidence_threshold' => 3,
         'high_confidence_threshold' => 6,

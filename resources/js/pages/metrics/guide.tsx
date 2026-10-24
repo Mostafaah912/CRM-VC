@@ -431,10 +431,12 @@ export default function MetricsGuidePage({ data }: Props) {
                         <CardTitle>CLV — ارزش طول عمر مشتری</CardTitle>
                         <CardDescription>
                             تاریخی: مجموع سود واقعی تاکنون. تخمینی: برون‌یابی روی
-                            افق {formatNumber(clv.horizon_years)} ساله، فقط برای
-                            مشتریانی که حداقل{' '}
-                            {formatNumber(clv.min_orders_for_estimate)} سفارش
-                            دارند.
+                            افق {formatNumber(clv.horizon_years)} ساله بر پایه
+                            فاصله‌ی روزهای خرید متمایز (سفارش‌های همان روز یک
+                            خرید حساب می‌شوند)، فقط برای مشتریانی که حداقل{' '}
+                            {formatNumber(clv.min_purchase_days)} روز خرید
+                            دارند، و حداکثر {formatNumber(clv.cap_multiple)}{' '}
+                            برابر CLV تاریخی.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-4">
