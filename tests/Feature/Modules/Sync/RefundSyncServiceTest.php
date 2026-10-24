@@ -7,6 +7,7 @@ use App\Modules\Orders\Exceptions\RefundSyncException;
 use App\Modules\Orders\Models\Order;
 use App\Modules\Orders\Models\OrderItem;
 use App\Modules\Orders\Models\Refund;
+use App\Modules\Sync\Exceptions\WooConfigurationException;
 use App\Modules\Sync\Exceptions\WooFixtureNotFoundException;
 use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Modules\Sync\Services\FakeWooClient;
@@ -14,6 +15,7 @@ use App\Modules\Sync\Services\OrderSyncService;
 use App\Modules\Sync\Services\RefundSyncService;
 use App\Modules\Sync\Services\WooClient;
 use App\Modules\Sync\Support\WooFixture;
+use Illuminate\Contracts\Container\Container;
 use Illuminate\Log\Events\MessageLogged;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -181,8 +183,21 @@ it('rejects an order id that is not a real id', function (int $id) {
     refundSync()->syncOrder($id);
 })->with([[0], [-5]])->throws(InvalidArgumentException::class);
 
-it('reads Woo only through the WooClient contract', function () {
-    $types = array_map(fn (ReflectionParameter $p) => (string) $p->getType(), (new ReflectionClass(RefundSyncService::class))->getConstructor()?->getParameters() ?? []);
+it('reads Woo only through the WooClient contract, resolved when it is used (not when the service is built)', function () {
+    $class = new ReflectionClass(RefundSyncService::class);
+    $types = array_map(fn (ReflectionParameter $p) => (string) $p->getType(), $class->getConstructor()?->getParameters() ?? []);
+    $source = (string) file_get_contents((string) $class->getFileName());
 
-    expect($types)->toContain(WooClient::class);
+    // The contract, from the container: never the concrete client, never an HTTP call of its own.
+    expect($types)->toContain(Container::class)->not->toContain(WooClient::class)
+        ->and($source)->toContain('make(WooClient::class)')
+        ->and($source)->not->toContain('HttpWooClient')
+        ->and($source)->not->toContain('Facades\\Http');
+});
+
+it('can be built on a store without Woo credentials (the 15-minute health check builds it)', function () {
+    // Exactly what the real binding does without credentials: building a WooClient throws.
+    app()->bind(WooClient::class, fn () => throw new WooConfigurationException('WooCommerce is not configured.'));
+
+    expect(app(RefundSyncService::class))->toBeInstanceOf(RefundSyncService::class);
 });

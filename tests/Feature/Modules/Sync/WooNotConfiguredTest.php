@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Jobs\HealthCheckJob;
 use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Exceptions\WooConfigurationException;
 use App\Modules\Sync\Jobs\CatalogSyncJob;
@@ -64,6 +65,15 @@ it('lets a job run when a client can be built (a bound client, as every other sy
     });
 
     expect($ran)->toBeTrue();
+});
+
+it('lets the 15-minute health check run on a store without Woo credentials (it only reads stored data)', function () {
+    wooConfig(null, null, null);
+    $failedBefore = DB::table('failed_jobs')->count();
+
+    // The health check builds SyncService -> OrderSyncService/RefundSyncService; none of them may need a Woo client just to be built.
+    expect(fn () => HealthCheckJob::dispatchSync())->not->toThrow(WooConfigurationException::class)
+        ->and(DB::table('failed_jobs')->count())->toBe($failedBefore);
 });
 
 it('is registered as middleware on every job that talks to Woo', function () {

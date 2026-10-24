@@ -11,6 +11,7 @@ use App\Modules\Orders\Services\RefundSyncSummary;
 use App\Modules\Sync\DTOs\RefundDto;
 use App\Modules\Sync\DTOs\RefundItemDto;
 use App\Modules\Sync\Mappers\RefundMapper;
+use Illuminate\Contracts\Container\Container;
 use InvalidArgumentException;
 
 /**
@@ -22,10 +23,16 @@ use InvalidArgumentException;
 final class RefundSyncService
 {
     public function __construct(
-        private readonly WooClient $woo,
+        private readonly Container $container,
         private readonly RefundService $refunds,
         private readonly RefundMapper $mapper = new RefundMapper,
     ) {}
+
+    /** Resolved when refunds are actually read, not when the service is built: the health check builds this service on a store with no Woo credentials. */
+    private function woo(): WooClient
+    {
+        return $this->container->make(WooClient::class);
+    }
 
     public function syncOrder(int $wooOrderId): RefundSyncSummary
     {
@@ -35,7 +42,7 @@ final class RefundSyncService
 
         $dtos = [];
 
-        foreach ($this->woo->pages("orders/{$wooOrderId}/refunds") as $page) {
+        foreach ($this->woo()->pages("orders/{$wooOrderId}/refunds") as $page) {
             foreach ($page->items as $raw) {
                 $dtos[] = $this->mapper->map($raw, $wooOrderId);
             }

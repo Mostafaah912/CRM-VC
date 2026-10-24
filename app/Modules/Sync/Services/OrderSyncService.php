@@ -15,6 +15,7 @@ use App\Modules\Sync\Mappers\OrderMapper;
 use App\Modules\Sync\Support\OrderSyncResult;
 use App\Modules\Sync\Support\SyncWindow;
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Container\Container;
 
 /**
  * Woo -> Orders (P2-06): reads ONE page of orders through the WooClient contract, turns each raw payload into a
@@ -30,15 +31,21 @@ use Carbon\CarbonImmutable;
 final class OrderSyncService
 {
     public function __construct(
-        private readonly WooClient $woo,
+        private readonly Container $container,
         private readonly OrderService $orders,
         private readonly RefundService $refunds,
         private readonly OrderMapper $mapper = new OrderMapper,
     ) {}
 
+    /** Resolved when a page is actually read, not when the service is built (see the class docblock): the health check builds this service on a store with no Woo credentials. */
+    private function woo(): WooClient
+    {
+        return $this->container->make(WooClient::class);
+    }
+
     public function syncPage(int $page = 1, ?SyncWindow $window = null): OrderSyncResult
     {
-        $wooPage = $this->woo->page('orders', $page, $window);
+        $wooPage = $this->woo()->page('orders', $page, $window);
         $orders = 0;
         $items = 0;
         $pageOrderIds = [];
