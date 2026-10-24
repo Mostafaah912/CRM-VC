@@ -90,7 +90,7 @@ server {
     # ---- PHP-FPM: only index.php is executable ----
     location = /index.php {
         include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.4-fpm.sock;   # match the installed PHP version
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;   # match PHP_VERSION (deploy/provision.sh uses its own pool socket: /run/php/heymode-fpm.sock)
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         fastcgi_hide_header X-Powered-By;
         fastcgi_read_timeout 60s;

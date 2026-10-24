@@ -33,7 +33,7 @@ function fakeApp(string $appEnv = 'staging', bool $withRelease = false): string
 }
 
 it('is valid bash', function () {
-    foreach (['deploy.sh', 'harden.sh', 'verify-hardening.sh'] as $file) {
+    foreach (['deploy.sh', 'harden.sh', 'verify-hardening.sh', 'provision.sh'] as $file) {
         $p = new Process(['bash', '-n', base_path("deploy/{$file}")]);
         $p->run();
         expect($p->isSuccessful())->toBeTrue($p->getErrorOutput());
@@ -130,6 +130,53 @@ it('rollback targets the previous ref from releases.log and says it never touche
         ->and($out)->toContain('ROLLBACK DOES NOT TOUCH THE DATABASE')
         ->and($out)->toContain('migrate:rollback --step=N')
         ->and($out)->not->toContain('artisan migrate --force');
+});
+
+it('deploy.sh reloads php<PHP_VERSION>-fpm (8.3 by default) instead of a hard-coded version', function () {
+    $dir = fakeApp('staging');
+    $args = ['staging', '--dry-run', '--skip-backup', '--ref', 'HEAD'];
+
+    expect(deploy($args, ['APP_DIR' => $dir])->getOutput())->toContain('Reloading php8.3-fpm')
+        ->and(deploy($args, ['APP_DIR' => $dir, 'PHP_VERSION' => '8.4'])->getOutput())->toContain('Reloading php8.4-fpm');
+});
+
+/** provision.sh --dry-run runs anywhere without root and writes nothing: it must print the plan and never a secret. */
+function provision(array $args, array $env = []): Process
+{
+    $secrets = sys_get_temp_dir().'/hm-secrets-'.bin2hex(random_bytes(4));
+    $p = new Process(['bash', base_path('deploy/provision.sh'), ...$args], base_path(), ['SECRETS_FILE' => $secrets, 'LOG_FILE' => $secrets.'.log', ...$env]);
+    $p->run();
+    expect(file_exists($secrets))->toBeFalse('a dry-run must not create the secrets file');
+
+    return $p;
+}
+
+it('provision.sh --dry-run prints the whole plan, exits 0 and creates nothing', function () {
+    $p = provision(['--dry-run']);
+    $out = $p->getOutput();
+
+    expect($p->getExitCode())->toBe(0, $out.$p->getErrorOutput());
+
+    foreach (['== Secrets', '== Packages', 'update-alternatives --set php /usr/bin/php8.3', '== Swap (2G)', '== User deploy', '== PostgreSQL',
+        'heymode_staging', 'heymode_production', '== Redis', '== PHP-FPM 8.3', '/var/www/heymode-staging', '/var/www/heymode-production',
+        '== nginx staging site', '/etc/supervisor/conf.d/heymode.conf', '/etc/cron.d/heymode', 'dry-run: nothing was changed'] as $needle) {
+        expect($out)->toContain($needle);
+    }
+
+    expect($out)->not->toMatch('/[0-9a-f]{48}/');
+});
+
+it('provision.sh honours PHP_VERSION, refuses bad input and refuses a real run without root', function () {
+    $out84 = provision(['--dry-run'], ['PHP_VERSION' => '8.4'])->getOutput();
+    expect($out84)->toContain('php8.4-fpm')->and($out84)->not->toContain('php8.3');
+
+    expect(provision(['--dry-run'], ['PHP_VERSION' => '8.4; rm -rf /'])->getExitCode())->toBe(2)
+        ->and(provision(['--dry-run'], ['STAGING_DOMAIN' => 'a b'])->getExitCode())->toBe(2)
+        ->and(provision(['--bogus'])->getExitCode())->toBe(2);
+
+    if (function_exists('posix_geteuid') && posix_geteuid() !== 0) {
+        expect(provision([])->getExitCode())->toBe(1);
+    }
 });
 
 it('rollback without a releases.log refuses', function () {

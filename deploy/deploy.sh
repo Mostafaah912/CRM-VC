@@ -11,14 +11,15 @@
 # PHP-FPM -> leave maintenance -> smoke check. Idempotent: re-running the same ref is harmless.
 # --dry-run prints every step and changes nothing.
 #
-# Environment overrides: APP_DIR PHP_BIN COMPOSER_BIN NPM_BIN PHP_FPM_SERVICE SMOKE_URL SMOKE_RETRIES
+# Environment overrides: APP_DIR PHP_BIN COMPOSER_BIN NPM_BIN PHP_VERSION (default 8.3 -> php8.3-fpm) PHP_FPM_SERVICE SMOKE_URL SMOKE_RETRIES
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PHP_BIN="${PHP_BIN:-php}"
 COMPOSER_BIN="${COMPOSER_BIN:-composer}"
 NPM_BIN="${NPM_BIN:-npm}"
-PHP_FPM_SERVICE="${PHP_FPM_SERVICE:-php8.4-fpm}"
+PHP_VERSION="${PHP_VERSION:-8.3}"   # same knob as deploy/provision.sh
+PHP_FPM_SERVICE="${PHP_FPM_SERVICE:-php${PHP_VERSION}-fpm}"
 SMOKE_RETRIES="${SMOKE_RETRIES:-6}"
 LOG_DIR="$APP_DIR/storage/logs"
 RELEASES_LOG="$LOG_DIR/releases.log"
