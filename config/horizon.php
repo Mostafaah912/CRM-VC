@@ -226,6 +226,16 @@ return [
             ],
         ],
 
+        // P8-03b: Horizon picks its supervisors by APP_ENV. Without this block a staging box ("APP_ENV=staging") runs a Horizon master
+        // that reports "running" but has NO supervisor/workers, so every queued job (sync poll, health check, ...) just piles up.
+        'staging' => [
+            'supervisor-1' => [
+                'maxProcesses' => 3,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 3,
+            ],
+        ],
+
         'local' => [
             'supervisor-1' => [
                 'maxProcesses' => 3,
