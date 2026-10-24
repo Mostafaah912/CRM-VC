@@ -106,6 +106,7 @@ final class CatalogSyncService
             foreach ($page->items as $raw) {
                 try {
                     $dto = $this->products->map($raw);
+                    $this->logDroppedPrice('product', $dto->wooProductId, $dto->droppedPrice);
                     $variationInputs = $dto->type === self::VARIABLE_TYPE ? $this->variationsOf($dto) : [];
                 } catch (WooMappingException $e) {
                     $rejected++;
@@ -144,11 +145,25 @@ final class CatalogSyncService
 
         foreach ($this->woo->pages("products/{$product->wooProductId}/variations") as $page) {
             foreach ($page->items as $raw) {
-                $inputs[] = $this->variationInput($this->variations->map($raw, $product->wooProductId));
+                $variation = $this->variations->map($raw, $product->wooProductId);
+                $this->logDroppedPrice('variation', $variation->wooVariationId, $variation->droppedPrice, $product->wooProductId);
+                $inputs[] = $this->variationInput($variation);
             }
         }
 
         return $inputs;
+    }
+
+    /** A price Woo sent that is not a whole-Toman amount is stored as NULL (never rounded); this is where that is made visible. */
+    private function logDroppedPrice(string $entity, int $wooId, ?string $raw, ?int $wooProductId = null): void
+    {
+        if ($raw === null) {
+            return;
+        }
+
+        Log::warning('Catalog price is not a whole-Toman amount; stored as NULL', array_filter([
+            'entity' => $entity, 'woo_id' => $wooId, 'woo_product_id' => $wooProductId, 'field' => 'price', 'value' => $raw,
+        ], fn (mixed $v) => $v !== null));
     }
 
     /** @param  list<VariationInput>  $variations */

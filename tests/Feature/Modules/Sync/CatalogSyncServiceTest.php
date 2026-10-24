@@ -217,17 +217,36 @@ it('never persists a variable product whose variations could not be read', funct
         ->and(ProductVariation::count())->toBe(0);
 });
 
-it('rejects with a warning, corrupting nothing, when a Woo SKU is already taken by another variation', function () {
+it('keeps the product when a Woo SKU is already taken by another variation: the variation is stored without that SKU, with a warning, corrupting nothing', function () {
     $other = Product::factory()->create(['woo_product_id' => 900]);
     $owner = ProductVariation::factory()->create(['product_id' => $other->id, 'woo_variation_id' => 9001, 'sku' => 'SYN-SHIRT-103-S', 'price' => 42]);
 
     $result = catalogSync(catalogFake())->syncProducts();
 
-    expect([$result->products, $result->rejectedProducts])->toBe([1, 1])
+    expect([$result->products, $result->rejectedProducts])->toBe([2, 0])
         ->and($owner->fresh()->only(['sku', 'price', 'product_id']))->toBe(['sku' => 'SYN-SHIRT-103-S', 'price' => 42, 'product_id' => $other->id])
-        ->and(Product::where('woo_product_id', 103)->exists())->toBeFalse()
-        ->and(ProductVariation::count())->toBe(1)
+        ->and(ProductVariation::where('woo_variation_id', 1031)->sole()->sku)->toBeNull()
+        ->and(ProductVariation::where('woo_variation_id', 1031)->sole()->product_id)->toBe(Product::where('woo_product_id', 103)->sole()->id)
         ->and(array_filter($GLOBALS['sync_logs'], fn (array $l) => $l['level'] === 'warning'))->not->toBeEmpty();
+});
+
+it('accepts real-world variation shapes that used to reject the whole product: inherited parent SKU, "12500.00", a real fraction and an empty price', function () {
+    $variation = WooPayloads::items('products/103/variations')[0];
+    $make = fn (int $id, string $sku, string $price) => WooPayloads::set(WooPayloads::set(WooPayloads::set($variation, 'id', $id), 'sku', $sku), 'price', $price);
+    $variations = [
+        $make(1031, 'SYN-SHIRT-103', '12500.00'),   // sku inherited from the parent (SYN-SHIRT-103)
+        $make(1032, 'SYN-SHIRT-103-M', '276487.5'), // a real fraction: price dropped, never rounded
+        $make(1033, 'SYN-SHIRT-103-L', ''),         // empty price
+    ];
+    $fake = catalogFake(withVariations: false, extra: [new WooFixture('products/103/variations', 1, [], 200, ['X-WP-TotalPages' => '1', 'X-WP-Total' => '3'], $variations)]);
+
+    $result = catalogSync($fake)->syncProducts();
+
+    $rows = ProductVariation::orderBy('woo_variation_id')->get();
+    expect([$result->products, $result->variations, $result->rejectedProducts])->toBe([2, 3, 0])
+        ->and($rows->pluck('sku')->all())->toBe([null, 'SYN-SHIRT-103-M', 'SYN-SHIRT-103-L'])
+        ->and($rows->pluck('price')->all())->toBe([12500, null, null])
+        ->and(collect($GLOBALS['sync_logs'])->where('level', 'warning')->pluck('context')->where('value', '276487.5')->count())->toBe(1);
 });
 
 it('reads Woo only through the WooClient contract', function () {

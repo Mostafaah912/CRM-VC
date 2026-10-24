@@ -185,11 +185,9 @@ final class CatalogService
                 throw CatalogIntegrityException::variationUnderAnotherProduct($variationInput->wooVariationId, $input->wooProductId);
             }
 
-            $this->assertSkuFree($variation, $variationInput);
-
             $variation ??= new ProductVariation(['product_id' => $product->id, 'woo_variation_id' => $variationInput->wooVariationId]);
             $variation->fill([
-                'sku' => $variationInput->sku,
+                'sku' => $this->variationSku($product, $variation, $variationInput),
                 'price' => $variationInput->price,
                 'status' => $this->status($variationInput->status, 'variation', $variationInput->wooVariationId),
                 'attributes' => $variationInput->attributes,
@@ -199,27 +197,37 @@ final class CatalogService
         }
     }
 
-    private function assertSkuFree(?ProductVariation $variation, VariationInput $input): void
+    /**
+     * The SKU a variation is stored with (P8 decision: a catalog row is never rejected over a SKU).
+     *  - Woo answers a variation that has no SKU of its own with its PARENT's SKU, so a SKU equal to the parent's is inherited -> NULL
+     *    (the variation stays linked to its parent; order lines resolve through variation_id/parent).
+     *  - A SKU another variation or another product really owns cannot be stored (the partial unique indexes stay): stored as NULL and
+     *    logged as a data-quality warning, never silently.
+     */
+    private function variationSku(Product $product, ?ProductVariation $variation, VariationInput $input): ?string
     {
-        if ($input->sku === null) {
-            return;
+        if ($input->sku === null || $input->sku === $product->sku) {
+            return null;
         }
 
         $owner = ProductVariation::query()
             ->where('sku', $input->sku)
             ->when($variation !== null, fn ($query) => $query->where('id', '!=', $variation?->id))
             ->first();
+        $owningProduct = Product::query()->where('sku', $input->sku)->where('id', '!=', $product->id)->first();
 
-        if ($owner !== null) {
-            throw CatalogIntegrityException::skuAlreadyOwned($input->wooVariationId, $input->sku, $owner->id);
+        if ($owner === null && $owningProduct === null) {
+            return $input->sku;
         }
 
-        // P6 decision: products can now own a SKU too (resolveProductBySku) — a SKU must be unique across both tables.
-        $owningProduct = Product::query()->where('sku', $input->sku)->first();
+        Log::warning('Catalog variation SKU is already owned by another item; stored without a SKU', [
+            'woo_variation_id' => $input->wooVariationId,
+            'woo_product_id' => $product->woo_product_id,
+            'sku' => $input->sku,
+            'owned_by' => $owner !== null ? 'variation' : 'product',
+        ]);
 
-        if ($owningProduct !== null) {
-            throw CatalogIntegrityException::variationSkuAlreadyOwnedByProduct($input->wooVariationId, $input->sku, $owningProduct->id);
-        }
+        return null;
     }
 
     /** P6 decision: mirrors assertSkuFree() above, but for a product's own SKU. */

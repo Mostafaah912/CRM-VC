@@ -36,3 +36,11 @@ Spec: PRD §25 Sprint 8, §24 DoD ("works on staging"), D13, D14. Runbook and ch
 - Arch tests updated deliberately: the command-file allow-list gained `StagingSeedCommand`.
 - Not verified: any real server run (checkout/composer/npm/migrate/FPM reload, `flock`, `sudo systemctl`), shellcheck, the new CI step (first push).
 
+
+## P8-03c — Tolerant catalog sync (found on the first real staging sync, 2026-10-24)
+
+Finding: 228 of 2,796 Woo products were rejected by the catalog sync — 124 on a variation SKU "already owned", 104 on a price that is not a whole-Toman string — which left 14,270 of 65,743 order lines (22%, 99.5% of the unresolved ones that carry a Woo product id) without a catalog product. A further 6,116 lines (9%) have no product id in Woo itself (product deleted there).
+
+- SKU: Woo returns the PARENT's SKU on a variation that has none of its own (54 of 54 sampled variations of 12 rejected parents). The "owner" in the error was the parent written earlier in the same transaction. Rule now: a variation SKU equal to its parent's is inherited -> stored NULL (still linked to the parent); a SKU another variation/product really owns -> stored NULL + a `Catalog variation SKU is already owned…` warning. The partial unique indexes stay. Product-level SKU conflicts still reject (none were seen).
+- Price (display data, never revenue): `PayloadReader::lenientMoney()` — empty -> NULL; `"12500.00"` -> 12500; a real fraction (`"276487.5"`, 7 of 46 inspected) or anything else non-canonical -> NULL + a `Catalog price is not a whole-Toman amount` warning carrying the raw value. Never rounded. Mappers stay pure (arch rule): the raw value rides on `ProductDto/VariationDto::droppedPrice` and `CatalogSyncService` logs it. Order totals and every other money field stay strict.
+- Replaced the P6 `nullableDecimalMoney` (product price only). Tests that locked the old refusals were rewritten; the two atomic-rollback tests now use `variationUnderAnotherProduct` as the structural failure.

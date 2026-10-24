@@ -172,27 +172,41 @@ it('treats an empty optional amount as null but never a malformed one', function
     failsAt(fn () => reader(['price' => '2.5'])->nullableMoney('price'), 'price');
 });
 
-// -------------------------------------------- decimal money (P6 decision: ProductDto::price only)
+// -------------------------------------------- lenient catalog price (P8 decision: a price never rejects a product)
 
-it('treats a zero-fraction decimal string as its whole-Toman integer part', function (string $raw, int $expected) {
-    expect(reader(['price' => $raw])->nullableDecimalMoney('price'))->toBe($expected);
+it('reads a canonical or zero-fraction price as its whole-Toman integer part', function (string $raw, int $expected) {
+    expect(reader(['price' => $raw])->lenientMoney('price'))->toBe($expected);
 })->with([
     'real Woo value' => ['159990.0', 159990],
-    'two zero digits' => ['159990.00', 159990],
+    'two zero digits' => ['12500.00', 12500],
     'zero itself' => ['0.0', 0],
     'still a plain canonical string' => ['403880', 403880],
 ]);
 
-it('still rejects a non-zero fraction, exactly like nullableMoney', function () {
-    failsAt(fn () => reader(['price' => '159990.5'])->nullableDecimalMoney('price'), 'price');
+it('treats an empty, null or absent price as null without calling the drop hook', function () {
+    $dropped = [];
+    $hook = function (mixed $v) use (&$dropped) {
+        $dropped[] = $v;
+    };
+
+    expect(reader(['price' => ''])->lenientMoney('price', $hook))->toBeNull()
+        ->and(reader(['price' => null])->lenientMoney('price', $hook))->toBeNull()
+        ->and(reader([])->lenientMoney('price', $hook))->toBeNull()
+        ->and($dropped)->toBe([]);
 });
 
-it('treats an empty, null or absent decimal price as null but never a malformed one', function () {
-    expect(reader(['price' => ''])->nullableDecimalMoney('price'))->toBeNull()
-        ->and(reader(['price' => null])->nullableDecimalMoney('price'))->toBeNull()
-        ->and(reader([])->nullableDecimalMoney('price'))->toBeNull();
-    failsAt(fn () => reader(['price' => '-159990.0'])->nullableDecimalMoney('price'), 'price');
-    failsAt(fn () => reader(['price' => '0159990.0'])->nullableDecimalMoney('price'), 'price');
+it('drops a real fraction, a negative, a leading zero or a non-string to null and reports the raw value — never rounds', function (mixed $raw) {
+    $dropped = [];
+
+    expect(reader(['price' => $raw])->lenientMoney('price', function (mixed $v) use (&$dropped) {
+        $dropped[] = $v;
+    }))->toBeNull()
+        ->and($dropped)->toBe([$raw]);
+})->with(['276487.5', '12500.99', '-159990.0', '0159990.0', '1,500', 'abc', 12500.5, ['x']]);
+
+it('keeps the strict path for every other money field', function () {
+    failsAt(fn () => reader(['price' => '2.5'])->nullableMoney('price'), 'price');
+    failsAt(fn () => reader(['total' => '12500.00'])->money('total'), 'total');
 });
 
 it('reads the magnitude of a signed refund amount', function () {

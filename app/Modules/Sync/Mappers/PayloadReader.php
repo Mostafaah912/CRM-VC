@@ -7,6 +7,7 @@ namespace App\Modules\Sync\Mappers;
 use App\Modules\Sync\Exceptions\WooMappingException;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Closure;
 use DateTimeImmutable;
 use DateTimeZone;
 
@@ -131,22 +132,34 @@ final readonly class PayloadReader
     }
 
     /**
-     * Like nullableMoney(), plus one extra shape: a decimal string whose fraction is all zeros
-     * ("159990.0" — Woo's own product `price` is not guaranteed to be the clean integer string that
-     * order totals and `regular_price` are). A non-zero fraction is never floored: it falls through to
-     * toman() unchanged and fails exactly like nullableMoney() would. Scoped to
-     * ProductMapper::map()'s 'price' field (P6 decision, ARCHITECTURE.md) — every other money field,
-     * including this same field on a variation, stays on the strict nullableMoney()/money() path.
+     * A catalog price (display data, never revenue): tolerant on purpose, so one odd price never rejects a whole product (P8 decision).
+     *  - absent, null or '' -> null;
+     *  - a canonical whole amount ("250000") or an all-zero fraction ("12500.00", "159990.0") -> that whole Toman amount;
+     *  - anything else (a real fraction "276487.5", a negative, a leading zero, a non-string) -> null, after $onDropped($raw) so the caller
+     *    can log it. A real fraction is NEVER rounded or floored: the price is dropped, not guessed.
+     * Order totals and every other money field stay on the strict money()/nullableMoney() path.
      */
-    public function nullableDecimalMoney(string $key): ?int
+    public function lenientMoney(string $key, ?Closure $onDropped = null): ?int
     {
         $value = $this->data[$key] ?? null;
 
-        if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)\.(0+)$/D', $value, $m) === 1) {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_string($value) && preg_match('/^(0|[1-9][0-9]*)\.0+$/D', $value, $m) === 1) {
             $value = $m[1];
         }
 
-        return $value === null || $value === '' ? null : $this->toman($key, $value);
+        try {
+            return $this->toman($key, $value);
+        } catch (WooMappingException) {
+            if ($onDropped !== null) {
+                $onDropped($value);
+            }
+
+            return null;
+        }
     }
 
     /** Woo sends refund totals negative ("-100000"); the magnitude of a clean whole amount is what callers want. */

@@ -22,11 +22,6 @@ final class CatalogIntegrityException extends RuntimeException
         parent::__construct($message);
     }
 
-    public static function skuAlreadyOwned(int $wooVariationId, string $sku, int $ownerVariationId): self
-    {
-        return new self(self::SKU_CONFLICT, "Woo variation {$wooVariationId} wants SKU '{$sku}', which local variation {$ownerVariationId} already owns.");
-    }
-
     public static function skuRepeatedInPayload(int $wooVariationId, string $sku): self
     {
         return new self(self::SKU_CONFLICT, "Woo variation {$wooVariationId} repeats SKU '{$sku}' already used earlier in the same product payload.");
@@ -41,11 +36,6 @@ final class CatalogIntegrityException extends RuntimeException
     public static function productSkuAlreadyOwnedByVariation(int $wooProductId, string $sku, int $ownerVariationId): self
     {
         return new self(self::SKU_CONFLICT, "Woo product {$wooProductId} wants SKU '{$sku}', which local variation {$ownerVariationId} already owns.");
-    }
-
-    public static function variationSkuAlreadyOwnedByProduct(int $wooVariationId, string $sku, int $ownerProductId): self
-    {
-        return new self(self::SKU_CONFLICT, "Woo variation {$wooVariationId} wants SKU '{$sku}', which local product {$ownerProductId} already owns.");
     }
 
     public static function variationUnderAnotherProduct(int $wooVariationId, int $wooProductId): self

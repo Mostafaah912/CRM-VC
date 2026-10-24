@@ -15,6 +15,10 @@ final class ProductMapper
     public function map(array $raw): ProductDto
     {
         $r = new PayloadReader($raw, 'product');
+        $dropped = null;
+        $price = $r->lenientMoney('price', function (mixed $raw) use (&$dropped): void {
+            $dropped = is_string($raw) ? $raw : (json_encode($raw) ?: 'unrepresentable');
+        });
 
         return new ProductDto(
             $r->positiveInt('id'),
@@ -23,9 +27,10 @@ final class ProductMapper
             $r->nonEmptyString('type'),
             $r->nonEmptyString('status'),
             $r->nullableString('sku'),
-            $r->nullableDecimalMoney('price'),
+            $price,
             $r->nullableDate('date_created_gmt'),
             array_map(fn (PayloadReader $category): int => $category->positiveInt('id'), $r->objects('categories')),
+            $dropped,
         );
     }
 }

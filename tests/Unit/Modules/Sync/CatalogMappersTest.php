@@ -107,6 +107,20 @@ it('accepts the real Woo decimal price string with a zero fraction (P6 decision:
     expect($dto->price)->toBe(159990)->and(is_int($dto->price))->toBeTrue();
 });
 
+it('reads a variation price leniently (P8): "12500.00" is 12500, empty is absent', function (mixed $raw, ?int $expected) {
+    $dto = (new VariationMapper)->map(WooPayloads::set(WooPayloads::items('products/103/variations')[0], 'price', $raw), 103);
+
+    expect($dto->price)->toBe($expected);
+})->with([['12500.00', 12500], ['12500.0', 12500], ['12500', 12500], ['', null]]);
+
+it('carries a dropped (non-whole-Toman) price on the DTO instead of logging or failing: price null, the raw value kept for the sync service to report', function () {
+    $v = (new VariationMapper)->map(WooPayloads::set(WooPayloads::items('products/103/variations')[0], 'price', '276487.5'), 103);
+    $p = (new ProductMapper)->map(WooPayloads::set(WooPayloads::items('products')[0], 'price', '10.5'));
+
+    expect([$v->price, $v->droppedPrice, $p->price, $p->droppedPrice])->toBe([null, '276487.5', null, '10.5'])
+        ->and((new VariationMapper)->map(WooPayloads::set(WooPayloads::items('products/103/variations')[0], 'price', '12500.00'), 103)->droppedPrice)->toBeNull();
+});
+
 it('maps a product with no categories', function () {
     expect((new ProductMapper)->map(WooPayloads::set(WooPayloads::items('products')[0], 'categories', []))->wooCategoryIds)->toBe([]);
 });
@@ -127,7 +141,6 @@ it('fails on a product that is missing or has a malformed required field', funct
     'categories not a list' => ['categories', 'x', false],
     'category without id' => ['categories.0.id', null, true],
     'category id as string' => ['categories.0.id', '31', false],
-    'price with decimals' => ['price', '10.5', false],
     'malformed created date' => ['date_created_gmt', '2026-01-05', false],
 ]);
 
@@ -169,7 +182,6 @@ it('fails on a variation that is missing or has a malformed required field', fun
     'no attributes key' => ['attributes', null, true],
     'attribute without name' => ['attributes.0.name', null, true],
     'attribute option not a string' => ['attributes.0.option', 5, false],
-    'price with decimals' => ['price', '9.5', false],
     'sku not a string' => ['sku', 7, false],
 ]);
 

@@ -33,13 +33,19 @@ final class VariationMapper
             $attributes[$name] = $attribute->string('option');
         }
 
+        $dropped = null;
+        $price = $r->lenientMoney('price', function (mixed $raw) use (&$dropped): void {
+            $dropped = is_string($raw) ? $raw : (json_encode($raw) ?: 'unrepresentable');
+        });
+
         return new VariationDto(
             $r->positiveInt('id'),
             $wooProductId,
             $r->nullableString('sku'),
-            $r->nullableMoney('price'),
+            $price,
             $r->nonEmptyString('status'),
             $attributes,
+            $dropped,
         );
     }
 }

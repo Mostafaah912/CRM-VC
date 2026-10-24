@@ -463,20 +463,26 @@ it('maps a variation status outside the core set instead of rejecting it', funct
 
 // ========================================================== integrity / SKU
 
-it('refuses a SKU another variation already owns, corrupting neither', function () {
+it('stores a SKU another variation already owns as NULL with a quality warning, corrupting nothing (P8: no catalog row is rejected over a SKU)', function () {
     catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-TAKEN', 250000)]));
     $before = ProductVariation::sole()->only(['id', 'woo_variation_id', 'sku', 'price']);
 
-    try {
-        catalog()->upsertProduct(product(104, variations: [variation(1041, 'SYN-TAKEN', 999)]));
-        $this->fail('Expected CatalogIntegrityException');
-    } catch (CatalogIntegrityException $e) {
-        expect($e->reason)->toBe(CatalogIntegrityException::SKU_CONFLICT)
-            ->and($e->getMessage())->toContain('1041')->toContain('SYN-TAKEN');
-    }
+    catalog()->upsertProduct(product(104, variations: [variation(1041, 'SYN-TAKEN', 999)]));
 
-    expect(ProductVariation::sole()->only(['id', 'woo_variation_id', 'sku', 'price']))->toBe($before)
-        ->and(Product::count())->toBe(1);
+    $second = ProductVariation::where('woo_variation_id', 1041)->sole();
+    expect(ProductVariation::where('woo_variation_id', 1031)->sole()->only(['id', 'woo_variation_id', 'sku', 'price']))->toBe($before)
+        ->and($second->sku)->toBeNull()->and($second->price)->toBe(999)
+        ->and(Product::count())->toBe(2)
+        ->and(warnings()[0]['context'])->toMatchArray(['woo_variation_id' => 1041, 'sku' => 'SYN-TAKEN', 'owned_by' => 'variation']);
+});
+
+it('treats a variation SKU equal to its parent\'s as inherited from Woo: stored NULL, linked to the parent, no warning', function () {
+    catalog()->upsertProduct(product(103, type: 'variable', sku: 'SYN-PARENT', variations: [variation(1031, 'SYN-PARENT'), variation(1032, 'SYN-PARENT-S')]));
+
+    expect(ProductVariation::where('woo_variation_id', 1031)->sole()->sku)->toBeNull()
+        ->and(ProductVariation::where('woo_variation_id', 1031)->sole()->product_id)->toBe(Product::sole()->id)
+        ->and(ProductVariation::where('woo_variation_id', 1032)->sole()->sku)->toBe('SYN-PARENT-S')
+        ->and(warnings())->toBe([]);
 });
 
 it('does not mistake a variation\'s own SKU for a conflict', function () {
@@ -496,11 +502,12 @@ it('lets a SKU be reused once its previous owner has moved on', function () {
     expect(ProductVariation::where('sku', 'SYN-X')->sole()->woo_variation_id)->toBe(1041);
 });
 
-it('refuses the same SKU twice inside one payload and writes nothing', function () {
-    expect(fn () => catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-DUP'), variation(1032, 'SYN-DUP')])))
-        ->toThrow(CatalogIntegrityException::class);
+it('keeps the first of two variations that repeat a SKU in one payload and stores the second as NULL with a warning', function () {
+    catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-DUP'), variation(1032, 'SYN-DUP')]));
 
-    expect(Product::count())->toBe(0)->and(ProductVariation::count())->toBe(0);
+    expect(ProductVariation::where('woo_variation_id', 1031)->sole()->sku)->toBe('SYN-DUP')
+        ->and(ProductVariation::where('woo_variation_id', 1032)->sole()->sku)->toBeNull()
+        ->and(warnings())->toHaveCount(1);
 });
 
 // ============================= tryUpsertProduct (P6 decision: a non-throwing outcome for callers outside Catalog)
@@ -513,14 +520,14 @@ it('accepts a clean product through tryUpsertProduct and returns its id', functi
         ->and($outcome->rejectionReason)->toBeNull();
 });
 
-it('rejects a SKU conflict through tryUpsertProduct without throwing, writing nothing, and carries the reason', function () {
-    catalog()->upsertProduct(product(103, variations: [variation(1031, 'SYN-TAKEN', 250000)]));
+it('rejects a PRODUCT sku conflict through tryUpsertProduct without throwing, writing nothing, and carries the reason', function () {
+    catalog()->upsertProduct(product(103, sku: 'SYN-TAKEN'));
 
-    $outcome = catalog()->tryUpsertProduct(product(104, variations: [variation(1041, 'SYN-TAKEN', 999)]));
+    $outcome = catalog()->tryUpsertProduct(product(104, sku: 'SYN-TAKEN'));
 
     expect($outcome->accepted)->toBeFalse()
         ->and($outcome->productId)->toBeNull()
-        ->and($outcome->rejectionReason)->toContain('1041')->toContain('SYN-TAKEN')
+        ->and($outcome->rejectionReason)->toContain('104')->toContain('SYN-TAKEN')
         ->and(Product::count())->toBe(1);
 });
 
@@ -555,10 +562,11 @@ it('refuses a Woo variation id that arrives under a different product — never 
 it('writes a product, its links and its variations as one unit: a failure leaves nothing half-written', function () {
     Event::fake([ProductSynced::class]);
     catalog()->upsertCategories([category(31)]);
-    catalog()->upsertProduct(product(100, variations: [variation(1001, 'SYN-TAKEN')]));
+    catalog()->upsertProduct(product(100, variations: [variation(1001, 'SYN-A')]));
     $variationsBefore = ProductVariation::count();
 
-    expect(fn () => catalog()->upsertProduct(product(103, 'جدید', categories: [31], variations: [variation(1031, 'SYN-OK'), variation(1032, 'SYN-TAKEN')])))
+    // The second variation already belongs to product 100: a structural refusal (SKU conflicts no longer refuse — P8), after the first was written.
+    expect(fn () => catalog()->upsertProduct(product(103, 'جدید', categories: [31], variations: [variation(1031, 'SYN-OK'), variation(1001, 'SYN-B')])))
         ->toThrow(CatalogIntegrityException::class);
 
     expect(Product::where('woo_product_id', 103)->exists())->toBeFalse()
@@ -623,12 +631,14 @@ it('refuses a product sku a variation already owns', function () {
     expect(Product::where('woo_product_id', 101)->exists())->toBeFalse();
 });
 
-it('refuses a variation sku a product already owns', function () {
+it('stores a variation sku a product already owns as NULL with a warning (the product keeps it)', function () {
     catalog()->upsertProduct(product(101, sku: 'P-TAKEN'));
 
-    expect(fn () => catalog()->upsertProduct(product(103, type: 'variable', variations: [variation(1031, 'P-TAKEN')])))
-        ->toThrow(CatalogIntegrityException::class);
-    expect(ProductVariation::count())->toBe(0);
+    catalog()->upsertProduct(product(103, type: 'variable', variations: [variation(1031, 'P-TAKEN')]));
+
+    expect(ProductVariation::sole()->sku)->toBeNull()
+        ->and(Product::where('woo_product_id', 101)->sole()->sku)->toBe('P-TAKEN')
+        ->and(warnings()[0]['context'])->toMatchArray(['sku' => 'P-TAKEN', 'owned_by' => 'product']);
 });
 
 it('is backed by the database: the partial unique index refuses a duplicate product sku but allows many NULLs', function () {
@@ -656,15 +666,15 @@ it('returns null from resolveProductBySku for an unknown sku', function () {
 
 it('rolls an existing product back to its previous state when a later step fails', function () {
     catalog()->upsertCategories([category(31), category(32)]);
-    catalog()->upsertProduct(product(100, variations: [variation(1001, 'SYN-TAKEN')]));
+    catalog()->upsertProduct(product(100, variations: [variation(1001, 'SYN-A')]));
     catalog()->upsertProduct(product(103, 'قبلی', categories: [31], variations: [variation(1031, 'SYN-ONE')]));
 
-    expect(fn () => catalog()->upsertProduct(product(103, 'بعدی', categories: [32], variations: [variation(1031, 'SYN-TWO'), variation(1032, 'SYN-TAKEN')])))
+    expect(fn () => catalog()->upsertProduct(product(103, 'بعدی', categories: [32], variations: [variation(1031, 'SYN-TWO'), variation(1001, 'SYN-B')])))
         ->toThrow(CatalogIntegrityException::class);
 
     $product = Product::where('woo_product_id', 103)->sole();
     expect($product->name)->toBe('قبلی')
         ->and(linkedCategories($product))->toBe([31])
         ->and(ProductVariation::where('woo_variation_id', 1031)->sole()->sku)->toBe('SYN-ONE')
-        ->and(ProductVariation::where('woo_variation_id', 1032)->exists())->toBeFalse();
+        ->and(ProductVariation::where('woo_variation_id', 1001)->sole()->product_id)->toBe(Product::where('woo_product_id', 100)->sole()->id);
 });
