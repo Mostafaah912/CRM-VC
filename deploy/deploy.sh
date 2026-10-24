@@ -215,6 +215,9 @@ CODE_SWITCHED=1
 
 run "composer install --no-dev" "$COMPOSER_BIN" install --no-dev --optimize-autoloader --no-interaction --no-progress
 run "npm ci" "$NPM_BIN" ci --no-audit --no-fund
+# The build downloads the web fonts (laravel:fonts plugin). Node's default 250 ms IPv4/IPv6 attempt timeout is too short from the
+# staging VPS (no IPv6 route; fetch failed with ETIMEDOUT while curl worked), so give each address 3 s. Override: NODE_OPTIONS.
+export NODE_OPTIONS="${NODE_OPTIONS:---network-family-autoselection-attempt-timeout=3000}"
 run "npm run build" "$NPM_BIN" run build
 
 if [ "$MODE" = "deploy" ]; then
