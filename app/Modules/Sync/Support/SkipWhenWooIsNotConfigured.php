@@ -8,6 +8,7 @@ use App\Modules\Sync\Exceptions\WooConfigurationException;
 use App\Modules\Sync\Services\WooClient;
 use Closure;
 use Illuminate\Contracts\Container\Container;
+use Throwable;
 
 /**
  * Job middleware for every job that talks to WooCommerce (SyncEntityJob, CatalogSyncJob, ReconcileRecentMonthsJob).
@@ -29,8 +30,10 @@ final class SkipWhenWooIsNotConfigured
     {
         try {
             $this->container->make(WooClient::class);
-        } catch (WooConfigurationException $e) {
-            if ($this->connectionIsEmpty()) {
+        } catch (Throwable $e) {
+            // Catching the broad type on purpose: the container's make() cannot declare that building the client
+            // throws WooConfigurationException, so PHPStan would call a narrow catch dead. Anything else rethrows.
+            if ($e instanceof WooConfigurationException && $this->connectionIsEmpty()) {
                 return;
             }
 
