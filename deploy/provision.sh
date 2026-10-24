@@ -458,6 +458,13 @@ step_nginx() {
     log "== nginx staging site (port 80, basic auth, no TLS until certbot) =="
     local pw hash line salt server_name="_"
     [ -z "$STAGING_DOMAIN" ] || server_name="$STAGING_DOMAIN"
+    # TLS phase: only when a Let's Encrypt certificate for the domain already exists (certbot certonly --webroot ... comes BEFORE the 2nd run).
+    local tls=0 hsts_header=""
+    if [ -n "$STAGING_DOMAIN" ] && [ -f "/etc/letsencrypt/live/$STAGING_DOMAIN/fullchain.pem" ]; then
+        tls=1
+        hsts_header='add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;'
+    fi
+    log "nginx phase: $([ "$tls" = 1 ] && echo "TLS (certificate found for $STAGING_DOMAIN)" || echo 'HTTP only (no certificate yet)')"
     pw="$(secret_get STAGING_BASIC_AUTH_PASSWORD)"
 
     # htpasswd (apr1) — only rewritten when the stored hash no longer matches the secret
@@ -477,79 +484,141 @@ step_nginx() {
     fi
 
     printf '# Managed by deploy/provision.sh.\nserver_tokens off;\n' | write_file /etc/nginx/conf.d/00-heymode.conf 0644 root:root
-    write_file /etc/nginx/sites-available/heymode-staging 0644 root:root <<NGINX
-# Managed by deploy/provision.sh (P8-03b) — edit the script, not this file; certbot will add the 443 block and the redirect.
-# Staging is closed: HTTP basic auth for everyone except this server itself (deploy.sh's smoke check calls 127.0.0.1).
-server {
-    listen 80 default_server;
-    listen [::]:80 default_server;
-    server_name ${server_name};
+    # The application part is shared by every server block below (HTTP-only phase, the 443 block and the loopback block).
+    write_file /etc/nginx/snippets/heymode-staging-app.conf 0644 root:root <<NGINX
+# Managed by deploy/provision.sh (P8-03b) — edit the script, not this file.
+root ${STAGING_DIR}/public;
+index index.php;
+charset utf-8;
+client_max_body_size 10m;
 
-    root ${STAGING_DIR}/public;
-    index index.php;
-    charset utf-8;
-    client_max_body_size 10m;
-
-    add_header X-Robots-Tag "noindex, nofollow" always;
+add_header X-Robots-Tag "noindex, nofollow" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+${hsts_header}
+location ^~ /build/ {
+    add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
     add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header X-Robots-Tag "noindex, nofollow" always;
+    ${hsts_header}
+    add_header Cache-Control "public, max-age=31536000, immutable";
+    try_files \$uri =404;
+}
 
-    satisfy any;
-    allow 127.0.0.1;
-    allow ::1;
+location ~ /\.(?!well-known/) {
     deny all;
-    auth_basic "HeyMode staging";
-    auth_basic_user_file ${HTPASSWD_FILE};
+    return 404;
+}
 
-    # ACME HTTP-01 must stay reachable without credentials:  certbot certonly --webroot -w /var/www/certbot -d <domain>
+location ~* \.(env|log|sql|bak|dump|sh|md|lock|yml|yaml|ini|conf)\$ {
+    deny all;
+    return 404;
+}
+
+location / {
+    try_files \$uri \$uri/ /index.php?\$query_string;
+}
+
+location = /favicon.ico { access_log off; log_not_found off; }
+location = /robots.txt  { access_log off; log_not_found off; }
+
+location = /index.php {
+    include snippets/fastcgi-php.conf;
+    fastcgi_pass unix:${PHP_SOCK};
+    fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+    fastcgi_hide_header X-Powered-By;
+    fastcgi_read_timeout 60s;
+}
+
+location ~ \.php\$ {
+    return 404;
+}
+
+error_page 404 /index.php;
+NGINX
+
+    local acme_location="    # ACME HTTP-01 must stay reachable without credentials (certbot certonly --webroot -w /var/www/certbot -d <domain>)
     location ^~ /.well-known/acme-challenge/ {
         auth_basic off;
         allow all;
         root /var/www/certbot;
         default_type text/plain;
-    }
+    }"
+    local access_rules="    # Closed: HTTP basic auth for everyone except this server itself (deploy.sh's smoke check calls 127.0.0.1).
+    satisfy any;
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
+    auth_basic \"HeyMode staging\";
+    auth_basic_user_file ${HTPASSWD_FILE};"
 
-    location ^~ /build/ {
-        add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header X-Robots-Tag "noindex, nofollow" always;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-        try_files \$uri =404;
-    }
+    if [ "$tls" = 1 ]; then
+        write_file /etc/nginx/sites-available/heymode-staging 0644 root:root <<NGINX
+# Managed by deploy/provision.sh (P8-03b) — TLS phase (certificate for ${STAGING_DOMAIN} exists). Edit the script, not this file.
+# 80/<domain>: ACME + redirect.  80/default: loopback only, serves the app so deploy.sh's smoke check (http://127.0.0.1) works.  443: the app.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${STAGING_DOMAIN};
 
-    location ~ /\.(?!well-known/) {
-        deny all;
-        return 404;
-    }
-
-    location ~* \.(env|log|sql|bak|dump|sh|md|lock|yml|yaml|ini|conf)\$ {
-        deny all;
-        return 404;
-    }
+${acme_location}
 
     location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
+        return 301 https://\$host\$request_uri;
     }
+}
 
-    location = /favicon.ico { access_log off; log_not_found off; }
-    location = /robots.txt  { access_log off; log_not_found off; }
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
 
-    location = /index.php {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:${PHP_SOCK};
-        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
-        fastcgi_hide_header X-Powered-By;
-        fastcgi_read_timeout 60s;
-    }
+    allow 127.0.0.1;
+    allow ::1;
+    deny all;
 
-    location ~ \.php\$ {
-        return 404;
-    }
+    include snippets/heymode-staging-app.conf;
+}
 
-    error_page 404 /index.php;
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name ${STAGING_DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${STAGING_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${STAGING_DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+
+${access_rules}
+
+${acme_location}
+
+    include snippets/heymode-staging-app.conf;
 }
 NGINX
+    else
+        write_file /etc/nginx/sites-available/heymode-staging 0644 root:root <<NGINX
+# Managed by deploy/provision.sh (P8-03b) — HTTP-only phase (no certificate yet). Edit the script, not this file.
+# After DNS points here:  certbot certonly --webroot -w /var/www/certbot -d <domain>  then re-run provision.sh (it adds the 443 block).
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name ${server_name};
+
+${access_rules}
+
+${acme_location}
+
+    include snippets/heymode-staging-app.conf;
+}
+NGINX
+    fi
     run ln -sfn /etc/nginx/sites-available/heymode-staging /etc/nginx/sites-enabled/heymode-staging
     if [ "$DRY_RUN" = 1 ] || [ -e /etc/nginx/sites-enabled/default ]; then run rm -f /etc/nginx/sites-enabled/default; fi
     run nginx -t
