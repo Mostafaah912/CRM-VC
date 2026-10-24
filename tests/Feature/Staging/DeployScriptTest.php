@@ -16,10 +16,11 @@ function deploy(array $args, array $env = [], ?string $stdin = null): Process
 }
 
 /** A throw-away git checkout standing in for the server's app directory. */
-function fakeApp(string $appEnv = 'staging', bool $withRelease = false): string
+function fakeApp(string $appEnv = 'staging', bool $withRelease = false, bool $withVendor = true): string
 {
     $dir = sys_get_temp_dir().'/hm-deploy-'.bin2hex(random_bytes(5));
     mkdir($dir.'/storage/logs', 0777, true);
+    $withVendor && mkdir($dir.'/vendor') && file_put_contents($dir.'/vendor/autoload.php', '<?php');
     file_put_contents($dir.'/.env', "APP_ENV={$appEnv}\nDB_DATABASE=x\nAPP_URL=https://example.test\n");
     $sh = fn (string $c) => (new Process(['bash', '-c', $c], $dir))->mustRun()->getOutput();
     $sh('git init -q && git config user.email t@t && git config user.name t && echo 1 > a && git add a .env && git commit -qm one && echo 2 > a && git commit -qam two && git remote add origin "$PWD"');
@@ -177,6 +178,18 @@ it('provision.sh honours PHP_VERSION, refuses bad input and refuses a real run w
     if (function_exists('posix_geteuid') && posix_geteuid() !== 0) {
         expect(provision([])->getExitCode())->toBe(1);
     }
+});
+
+it('a fresh clone without vendor/ installs dependencies BEFORE maintenance mode (first deploy), a normal deploy does not', function () {
+    $args = ['staging', '--dry-run', '--skip-backup', '--ref', 'HEAD'];
+
+    $fresh = deploy($args, ['APP_DIR' => fakeApp('staging', withVendor: false)])->getOutput();
+    expect($fresh)->toContain('First deploy on this checkout')->and($fresh)->toContain('composer install --no-dev (bootstrap)')
+        ->and(strpos($fresh, 'composer install --no-dev (bootstrap)'))->toBeLessThan(strpos($fresh, 'artisan down'))
+        ->and(strpos($fresh, 'artisan down'))->toBeLessThan(strpos($fresh, 'composer install --no-dev: '));
+
+    $normal = deploy($args, ['APP_DIR' => fakeApp('staging')])->getOutput();
+    expect($normal)->not->toContain('First deploy on this checkout')->and($normal)->not->toContain('(bootstrap)');
 });
 
 it('rollback without a releases.log refuses', function () {

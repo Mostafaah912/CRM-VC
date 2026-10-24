@@ -6,7 +6,7 @@
 #   deploy/deploy.sh production [--ref REF] [--dry-run]            (asks you to type a confirmation; backup is mandatory)
 #   deploy/deploy.sh rollback staging|production [--dry-run]       (back to the previous ref; NEVER touches migrations)
 #
-# Order: preflight (clean tree, ref, .env matches) -> [production: backup:run must succeed] -> maintenance mode -> checkout ->
+# Order: preflight (clean tree, ref, .env matches) -> [production: backup:run must succeed] -> [fresh clone without vendor/: checkout + composer install] -> maintenance mode -> checkout ->
 # composer install --no-dev -> npm ci + build -> migrate --force -> cache config/route/view/event -> horizon:terminate + reload
 # PHP-FPM -> leave maintenance -> smoke check. Idempotent: re-running the same ref is harmless.
 # --dry-run prints every step and changes nothing.
@@ -188,6 +188,17 @@ if [ "$MODE" = "deploy" ]; then
     else
         run "Backup before migrating (backup:run must succeed)" artisan backup:run || die "backup:run FAILED — deploy stopped before any change."
     fi
+fi
+
+# ------------------------------------------------------------------ first deploy on a fresh clone
+# Without vendor/ artisan cannot boot, so `artisan down` below would die. The app cannot be serving traffic in that state anyway,
+# so install the dependencies of the TARGET ref first, outside maintenance mode. Nothing is recorded in releases.log yet:
+# a failure here changed nothing that matters and must not shadow the last good release's rollback target.
+if [ ! -f "$APP_DIR/vendor/autoload.php" ]; then
+    log "First deploy on this checkout: vendor/ is missing -> installing dependencies BEFORE maintenance mode (artisan cannot boot without them)."
+    run "Checking out ${TARGET_SHA:0:10} (bootstrap)" git checkout --detach "$TARGET_SHA"
+    run "composer install --no-dev (bootstrap)" "$COMPOSER_BIN" install --no-dev --optimize-autoloader --no-interaction --no-progress \
+        || die "Bootstrap composer install FAILED — nothing was deployed (no maintenance mode, no release recorded)."
 fi
 
 # ------------------------------------------------------------------ switch
