@@ -130,6 +130,18 @@ it('includes the lifetime repeat purchase rate and returning revenue share, unaf
         ->and($data['returning_revenue_share']['insufficient_data'])->toBeTrue();
 });
 
+it('names the returning revenue ratio `share` (not `rate`) — the dashboard page reads exactly that key; reading `rate` printed NaN%', function () {
+    $period = DashboardPeriod::fromDates(CarbonImmutable::parse('2026-06-01'), CarbonImmutable::parse('2026-06-02'));
+
+    $data = app(AnalyticsService::class)->dashboard($period);
+
+    expect($data['returning_revenue_share'])->toHaveKeys(['total_revenue', 'returning_revenue', 'share', 'insufficient_data'])->not->toHaveKey('rate')
+        ->and($data['repeat_purchase_rate'])->toHaveKey('rate')
+        ->and(file_get_contents(base_path('resources/js/pages/dashboard.tsx')))
+        ->toContain('formatRate(data.returning_revenue_share.share)')->not->toContain('returning_revenue_share.rate')
+        ->and(file_get_contents(base_path('resources/js/lib/format.ts')))->toContain('Number.isFinite(ratio)');   // NaN/undefined/∞ -> "—", never "NaN%"
+});
+
 // ================================================================= RFM / churn / value at risk
 
 it('gives every RFM segment a key, defaulting to zero, plus none for an unscored customer', function () {

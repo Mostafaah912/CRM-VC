@@ -16,7 +16,8 @@ export function formatToman(value: number): string {
 
 /** A ratio (0..1) as a whole-number percent — e.g. 0.42 -> `42%`, Latin digits and an ASCII `%`. */
 export function formatPercent(ratio: number): string {
-    return `${formatNumber(Math.round(ratio * 100))}%`;
+    // A missing/NaN/infinite ratio (e.g. a division by zero upstream) must never print "NaN%".
+    return Number.isFinite(ratio) ? `${formatNumber(Math.round(ratio * 100))}%` : '—';
 }
 
 /** formatPercent(), or `insufficientMessage` when the ratio itself is unknown (too little data to compute one). */

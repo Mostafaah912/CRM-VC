@@ -372,7 +372,7 @@ export default function Dashboard({ data, filters }: Props) {
                         </CardHeader>
                         <CardContent>
                             <span className="text-2xl font-semibold">
-                                {formatRate(data.returning_revenue_share.rate)}
+                                {formatRate(data.returning_revenue_share.share)}
                             </span>
                         </CardContent>
                     </Card>

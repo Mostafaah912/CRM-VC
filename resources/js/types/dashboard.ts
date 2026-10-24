@@ -23,6 +23,14 @@ export type DashboardRateResult = {
     insufficient_data: boolean;
 };
 
+/** AnalyticsService's `returning_revenue_share`: the ratio is called `share` (not `rate`, which is repeat_purchase_rate's). */
+export type DashboardReturningRevenueShare = {
+    total_revenue: number;
+    returning_revenue: number;
+    share: number | null;
+    insufficient_data: boolean;
+};
+
 /** Every rfm_segment (PRD §12) plus 'none' for a not-yet-eligible customer. */
 export type DashboardRfmDistribution = {
     champion: number;
@@ -85,7 +93,7 @@ export type DashboardData = {
     previous: DashboardPeriodTotals;
     trend: DashboardTrendDay[];
     repeat_purchase_rate: DashboardRateResult;
-    returning_revenue_share: DashboardRateResult;
+    returning_revenue_share: DashboardReturningRevenueShare;
     rfm_distribution: DashboardRfmDistribution;
     churn_distribution: DashboardChurnDistribution;
     value_at_risk: number;
