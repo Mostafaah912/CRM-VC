@@ -3,7 +3,7 @@
 # Idempotent: safe to re-run. Use --dry-run first: it prints every change and applies nothing.
 #
 #   sudo ./deploy/harden.sh --dry-run
-#   sudo APP_DIR=/var/www/heymode SSH_PORT=22 ./deploy/harden.sh
+#   sudo APP_DIR=/var/www/heymode SSH_PORT=22 F2B_IGNOREIP="203.0.113.7" ./deploy/harden.sh
 #
 # Secrets are never written by this script: the Redis password is read from REDIS_PASSWORD (env) or
 # generated and printed ONCE for you to put in .env — it is not stored anywhere else.
@@ -21,6 +21,7 @@ done
 APP_DIR="${APP_DIR:-/var/www/heymode}"          # app root; the web root is $APP_DIR/public ONLY
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 SSH_PORT="${SSH_PORT:-22}"
+F2B_IGNOREIP="${F2B_IGNOREIP:-}"                 # extra space-separated IPs fail2ban must never ban (your own egress IP)
 PG_CONF_DIR="${PG_CONF_DIR:-$(ls -d /etc/postgresql/*/main 2>/dev/null | sort -V | tail -n1 || true)}"
 REDIS_CONF="${REDIS_CONF:-/etc/redis/redis.conf}"
 WEB_USER="${WEB_USER:-www-data}"
@@ -100,11 +101,12 @@ run ufw --force enable
 # ---------------------------------------------------------------- fail2ban
 log "fail2ban: sshd jail"
 if [ "$DRY_RUN" = 1 ]; then
-    echo "  (dry-run) write /etc/fail2ban/jail.d/heymode.local (sshd enabled, maxretry 5, bantime 1h) and enable the service"
+    echo "  (dry-run) write /etc/fail2ban/jail.d/heymode.local (sshd enabled, ignoreip 127.0.0.1/8 ::1 ${F2B_IGNOREIP:-<none extra>}, maxretry 5, bantime 1h) and enable the service"
 else
     cat > /etc/fail2ban/jail.d/heymode.local <<F2B
 [sshd]
 enabled = true
+ignoreip = 127.0.0.1/8 ::1${F2B_IGNOREIP:+ $F2B_IGNOREIP}
 port = $SSH_PORT
 maxretry = 5
 findtime = 10m

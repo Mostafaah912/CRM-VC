@@ -19,7 +19,7 @@
 #   - nginx staging site on port 80 with HTTP basic auth (127.0.0.1 is exempt so deploy.sh's smoke check works) and NO TLS until certbot
 #
 # Environment overrides:
-#   PHP_VERSION (8.3)  NODE_MAJOR (22, matches CI)  DEPLOY_USER (deploy)  STAGING_DOMAIN ('' -> server_name _)  SWAP_SIZE (2G)
+#   PHP_VERSION (8.3)  NODE_MAJOR (22, matches CI)  DEPLOY_USER (deploy)  STAGING_DOMAIN ('' -> server_name _)  STAGING_ALLOW_IPS ('' )  SWAP_SIZE (2G)
 #   SECRETS_FILE (/root/provision-secrets.txt)  LOG_FILE (/var/log/heymode-provision.log)
 #
 # Secrets: generated once and stored ONLY in $SECRETS_FILE (chmod 600). They are never printed, never put on a command line
@@ -39,6 +39,7 @@ PHP_VERSION="${PHP_VERSION:-8.3}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 STAGING_DOMAIN="${STAGING_DOMAIN:-}"
+STAGING_ALLOW_IPS="${STAGING_ALLOW_IPS:-}"   # space-separated IPs that skip basic auth (e.g. the server itself)
 SWAP_SIZE="${SWAP_SIZE:-2G}"
 SECRETS_FILE="${SECRETS_FILE:-/root/provision-secrets.txt}"
 LOG_FILE="${LOG_FILE:-/var/log/heymode-provision.log}"
@@ -54,6 +55,9 @@ BASIC_AUTH_USER="staging"
 [[ "$NODE_MAJOR" =~ ^[0-9]+$ ]] || { echo "NODE_MAJOR must be a number (got '$NODE_MAJOR')" >&2; exit 2; }
 [[ "$DEPLOY_USER" =~ ^[a-z][a-z0-9_-]*$ ]] || { echo "DEPLOY_USER is not a valid user name (got '$DEPLOY_USER')" >&2; exit 2; }
 [[ "$SWAP_SIZE" =~ ^[0-9]+[MG]$ ]] || { echo "SWAP_SIZE must look like 2G or 2048M (got '$SWAP_SIZE')" >&2; exit 2; }
+for _ip in $STAGING_ALLOW_IPS; do
+    [[ "$_ip" =~ ^[0-9A-Fa-f:.]+(/[0-9]+)?$ ]] || { echo "STAGING_ALLOW_IPS has an invalid entry: '$_ip'" >&2; exit 2; }
+done
 if [ -n "$STAGING_DOMAIN" ] && ! [[ "$STAGING_DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; then
     echo "STAGING_DOMAIN is not a valid host name (got '$STAGING_DOMAIN')" >&2; exit 2
 fi
@@ -440,6 +444,17 @@ INI
     else
         log "default www pool already disabled"
     fi
+    # Another PHP version that already carries our pool would fight for the same socket: stop + disable it (packages stay installed).
+    local other v
+    for other in /etc/php/*/fpm/pool.d/heymode.conf; do
+        [ -f "$other" ] || continue
+        v="${other#/etc/php/}"; v="${v%%/*}"
+        [ "$v" != "$PHP_VERSION" ] || continue
+        log "retiring php${v}-fpm: it has the heymode pool and would hold ${PHP_SOCK}"
+        run systemctl stop "php${v}-fpm"
+        run systemctl disable "php${v}-fpm"
+        run mv "$other" "$other.disabled-by-heymode"
+    done
     run systemctl enable "$PHP_FPM_SERVICE"
     run "php-fpm${PHP_VERSION}" -t
     if [ "$restart" = 1 ]; then run systemctl restart "$PHP_FPM_SERVICE"; else run systemctl start "$PHP_FPM_SERVICE"; fi
@@ -529,6 +544,10 @@ location = /index.php {
     fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
     fastcgi_hide_header X-Powered-By;
     fastcgi_read_timeout 60s;
+    # The app answers with large headers (Vite preload Link headers, CSP nonce, cookies): the 4k/8k defaults give "502 upstream sent too big header".
+    fastcgi_buffer_size 32k;
+    fastcgi_buffers 16 16k;
+    fastcgi_busy_buffers_size 32k;
 }
 
 location ~ \.php\$ {
@@ -545,10 +564,13 @@ NGINX
         root /var/www/certbot;
         default_type text/plain;
     }"
-    local access_rules="    # Closed: HTTP basic auth for everyone except this server itself (deploy.sh's smoke check calls 127.0.0.1).
+    local extra_allow="" _a
+    for _a in $STAGING_ALLOW_IPS; do extra_allow="${extra_allow}
+    allow ${_a};"; done
+    local access_rules="    # Closed: HTTP basic auth for everyone except this server itself (deploy.sh's smoke check calls 127.0.0.1) and STAGING_ALLOW_IPS.
     satisfy any;
     allow 127.0.0.1;
-    allow ::1;
+    allow ::1;${extra_allow}
     deny all;
     auth_basic \"HeyMode staging\";
     auth_basic_user_file ${HTPASSWD_FILE};"
