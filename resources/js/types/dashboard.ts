@@ -96,7 +96,8 @@ export type DashboardData = {
     returning_revenue_share: DashboardReturningRevenueShare;
     rfm_distribution: DashboardRfmDistribution;
     churn_distribution: DashboardChurnDistribution;
-    value_at_risk: number;
+    /** Lifetime revenue (Toman) of customers at high churn risk / already lost — not a CLV projection. */
+    value_at_risk: { high: number; lost: number };
     cohort_matrix: DashboardCohortRow[];
     top_affinity: DashboardAffinityPair[];
 };

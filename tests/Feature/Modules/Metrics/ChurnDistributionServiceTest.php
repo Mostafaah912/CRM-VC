@@ -34,21 +34,29 @@ it('gives every churn risk level a key, defaulting to zero, plus none for an uns
         ->and($summary['distribution']['none'])->toBe(1);
 });
 
-it('sums estimated CLV (falling back to historical) only for high/lost as value at risk', function () {
-    cds(['churn_risk_level' => 'high', 'clv_estimated' => 500_000, 'clv_historical' => 100_000]);
-    cds(['churn_risk_level' => 'lost', 'clv_estimated' => null, 'clv_historical' => 200_000]);
-    cds(['churn_risk_level' => 'low', 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
-    cds(['churn_risk_level' => 'medium', 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
+it('reports value at risk as two figures — lifetime revenue of high-risk and of lost customers — never from the CLV projection', function () {
+    // clv_estimated is absurdly large on purpose: it must have no say (a minutes-long purchase cycle used to blow it up).
+    cds(['churn_risk_level' => 'high', 'total_revenue' => 500_000, 'clv_estimated' => 9_000_000_000, 'clv_historical' => 85_000]);
+    cds(['churn_risk_level' => 'high', 'total_revenue' => 250_000, 'clv_estimated' => null, 'clv_historical' => 42_500]);
+    cds(['churn_risk_level' => 'lost', 'total_revenue' => 200_000, 'clv_estimated' => 7_000_000_000, 'clv_historical' => 34_000]);
+    cds(['churn_risk_level' => 'low', 'total_revenue' => 900_000, 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
+    cds(['churn_risk_level' => 'medium', 'total_revenue' => 900_000, 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
 
     $summary = app(ChurnDistributionService::class)->summary();
 
-    expect($summary['value_at_risk'])->toBe(700_000);
+    expect($summary['value_at_risk'])->toBe(['high' => 750_000, 'lost' => 200_000]);
 });
 
-it('reports zero value at risk when no customer is high or lost risk, not an error', function () {
-    cds(['churn_risk_level' => 'low', 'clv_estimated' => 900_000]);
+it('reports zero for both figures when no customer is high or lost risk, not an error', function () {
+    cds(['churn_risk_level' => 'low', 'total_revenue' => 900_000, 'clv_estimated' => 900_000]);
 
     $summary = app(ChurnDistributionService::class)->summary();
 
-    expect($summary['value_at_risk'])->toBe(0);
+    expect($summary['value_at_risk'])->toBe(['high' => 0, 'lost' => 0]);
+});
+
+it('reports zero for a level that has no customers while the other has some', function () {
+    cds(['churn_risk_level' => 'lost', 'total_revenue' => 123_000]);
+
+    expect(app(ChurnDistributionService::class)->summary()['value_at_risk'])->toBe(['high' => 0, 'lost' => 123_000]);
 });

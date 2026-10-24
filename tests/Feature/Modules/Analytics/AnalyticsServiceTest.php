@@ -156,10 +156,10 @@ it('gives every RFM segment a key, defaulting to zero, plus none for an unscored
         ->and($data['rfm_distribution']['lost'])->toBe(0);
 });
 
-it('gives every churn risk level a key and sums CLV only for high/lost as value at risk', function () {
-    cm(['churn_risk_level' => 'high', 'clv_estimated' => 500_000, 'clv_historical' => 100_000]);
-    cm(['churn_risk_level' => 'lost', 'clv_estimated' => null, 'clv_historical' => 200_000]);
-    cm(['churn_risk_level' => 'low', 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
+it('gives every churn risk level a key and reports value at risk as high/lost lifetime revenue, not CLV', function () {
+    cm(['churn_risk_level' => 'high', 'total_revenue' => 500_000, 'clv_estimated' => 9_000_000_000, 'clv_historical' => 100_000]);
+    cm(['churn_risk_level' => 'lost', 'total_revenue' => 200_000, 'clv_estimated' => null, 'clv_historical' => 34_000]);
+    cm(['churn_risk_level' => 'low', 'total_revenue' => 900_000, 'clv_estimated' => 900_000, 'clv_historical' => 900_000]);
     cm(); // unscored
 
     $data = app(AnalyticsService::class)->dashboard(DashboardPeriod::lastDays(30, CarbonImmutable::now()));
@@ -169,7 +169,7 @@ it('gives every churn risk level a key and sums CLV only for high/lost as value 
         ->and($data['churn_distribution']['low'])->toBe(1)
         ->and($data['churn_distribution']['medium'])->toBe(0)
         ->and($data['churn_distribution']['none'])->toBe(1)
-        ->and($data['value_at_risk'])->toBe(700_000); // 500_000 (estimated) + 200_000 (fallback: historical, estimated is null)
+        ->and($data['value_at_risk'])->toBe(['high' => 500_000, 'lost' => 200_000]);
 });
 
 // ================================================================= cohort matrix + top affinity passthrough

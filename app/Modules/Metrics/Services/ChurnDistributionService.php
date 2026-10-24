@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
  */
 final class ChurnDistributionService
 {
-    /** @return array{distribution: array<string, int>, value_at_risk: int} */
+    /** @return array{distribution: array<string, int>, value_at_risk: array{high: int, lost: int}} */
     public function summary(): array
     {
         return [
@@ -40,16 +40,25 @@ final class ChurnDistributionService
     }
 
     /**
-     * Sum of estimated CLV (falling back to historical CLV where no estimate exists yet, PRD §14:
-     * "clv_estimated is NULL when total_orders < 2, never fabricated") over every high/lost-risk
-     * customer — PRD names this widget "ارزش در خطر" (value at risk) without spelling out the exact
-     * figure; this is the reasoned default, not a PRD-specified formula.
+     * The dashboard's "ارزش در خطر", as TWO figures (P8 decision): the lifetime revenue (`customer_metrics.total_revenue`, Toman) of the
+     * customers currently at `high` churn risk, and of those already `lost` — kept apart because "still saveable" and "already gone" are
+     * different decisions. It is deliberately NOT built on `clv_estimated`: that projection (aov x margin x 365 / purchase_cycle_days x horizon)
+     * explodes when a customer's cycle is minutes long (two orders in one sitting), and on staging 100 such customers made up ~98% of a 32.8
+     * bn figure that exceeded the whole store's revenue. Revenue is a fact already in the orders; PRD names the widget without a formula.
+     *
+     * @return array{high: int, lost: int}
      */
-    private function valueAtRisk(): int
+    private function valueAtRisk(): array
     {
-        return (int) DB::table('customer_metrics')
+        $totals = DB::table('customer_metrics')
             ->whereIn('churn_risk_level', [ChurnRiskLevel::High->value, ChurnRiskLevel::Lost->value])
-            ->selectRaw('COALESCE(SUM(COALESCE(clv_estimated, clv_historical)), 0)::bigint AS total')
-            ->value('total');
+            ->selectRaw('churn_risk_level AS level, COALESCE(SUM(total_revenue), 0)::bigint AS total')
+            ->groupBy('churn_risk_level')
+            ->pluck('total', 'level');
+
+        return [
+            'high' => (int) ($totals[ChurnRiskLevel::High->value] ?? 0),
+            'lost' => (int) ($totals[ChurnRiskLevel::Lost->value] ?? 0),
+        ];
     }
 }

@@ -60,7 +60,7 @@ final class AnalyticsService
      *     returning_revenue_share: array{total_revenue: int, returning_revenue: int, share: float|null, insufficient_data: bool},
      *     rfm_distribution: array<string, int>,
      *     churn_distribution: array<string, int>,
-     *     value_at_risk: int,
+     *     value_at_risk: array{high: int, lost: int},
      *     cohort_matrix: list<array{cohort_month: string, cohort_size: int, periods: list<array{period_number: int, retention_rate: float|null, is_mature: bool, active_customers: int}>}>,
      *     top_affinity: list<array{entity_a_id: int, entity_b_id: int, entity_a_name: string|null, entity_b_name: string|null, co_customers: int, support: float, confidence: float, lift: float, level: string}>,
      * }

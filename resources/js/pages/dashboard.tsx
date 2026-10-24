@@ -468,13 +468,23 @@ export default function Dashboard({ data, filters }: Props) {
                                 );
                             })}
                         </div>
-                        <div className="flex flex-col gap-1 rounded-lg border p-3">
-                            <span className="text-muted-foreground text-xs">
-                                ارزش در خطر (مشتریان ریسک بالا/ازدست‌رفته)
-                            </span>
-                            <span className="text-lg font-medium">
-                                {formatToman(data.value_at_risk)}
-                            </span>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div className="flex flex-col gap-1 rounded-lg border p-3">
+                                <span className="text-muted-foreground text-xs">
+                                    در معرض ریزش (ریسک بالا) — درآمد کل این مشتریان
+                                </span>
+                                <span className="text-lg font-medium">
+                                    {formatToman(data.value_at_risk.high)}
+                                </span>
+                            </div>
+                            <div className="flex flex-col gap-1 rounded-lg border p-3">
+                                <span className="text-muted-foreground text-xs">
+                                    از دست رفته — درآمد کل این مشتریان
+                                </span>
+                                <span className="text-lg font-medium">
+                                    {formatToman(data.value_at_risk.lost)}
+                                </span>
+                            </div>
                         </div>
                     </CardContent>
                 </Card>
