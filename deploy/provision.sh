@@ -582,9 +582,8 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name ${STAGING_DOMAIN};
 
     ssl_certificate     /etc/letsencrypt/live/${STAGING_DOMAIN}/fullchain.pem;
@@ -619,6 +618,8 @@ ${acme_location}
 }
 NGINX
     fi
+    # certbot's timer renews with --webroot, which does not touch nginx: reload it after every successful renewal.
+    printf '#!/bin/sh\n# Managed by deploy/provision.sh\nsystemctl reload nginx\n' | write_file /etc/letsencrypt/renewal-hooks/deploy/heymode-reload-nginx 0755 root:root
     run ln -sfn /etc/nginx/sites-available/heymode-staging /etc/nginx/sites-enabled/heymode-staging
     if [ "$DRY_RUN" = 1 ] || [ -e /etc/nginx/sites-enabled/default ]; then run rm -f /etc/nginx/sites-enabled/default; fi
     run nginx -t
