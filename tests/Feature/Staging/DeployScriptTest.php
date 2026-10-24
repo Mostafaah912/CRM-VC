@@ -133,12 +133,18 @@ it('rollback targets the previous ref from releases.log and says it never touche
         ->and($out)->not->toContain('artisan migrate --force');
 });
 
-it('deploy.sh reloads php<PHP_VERSION>-fpm (8.3 by default) instead of a hard-coded version', function () {
+it('deploy.sh reloads php<PHP_VERSION>-fpm; unset, it asks PHP_BIN for its major.minor (never a hard-coded version)', function () {
     $dir = fakeApp('staging');
     $args = ['staging', '--dry-run', '--skip-backup', '--ref', 'HEAD'];
+    $fakePhp = tempnam(sys_get_temp_dir(), 'fakephp');
+    file_put_contents($fakePhp, "#!/bin/sh\nprintf 7.9\n");
+    chmod($fakePhp, 0755);
 
-    expect(deploy($args, ['APP_DIR' => $dir])->getOutput())->toContain('Reloading php8.3-fpm')
-        ->and(deploy($args, ['APP_DIR' => $dir, 'PHP_VERSION' => '8.4'])->getOutput())->toContain('Reloading php8.4-fpm');
+    expect(deploy($args, ['APP_DIR' => $dir, 'PHP_BIN' => $fakePhp])->getOutput())->toContain('Reloading php7.9-fpm')
+        ->and(deploy($args, ['APP_DIR' => $dir, 'PHP_BIN' => $fakePhp, 'PHP_VERSION' => '8.4'])->getOutput())->toContain('Reloading php8.4-fpm')
+        ->and(deploy($args, ['APP_DIR' => $dir, 'PHP_BIN' => '/nonexistent/php'])->getExitCode())->toBe(2);
+
+    unlink($fakePhp);
 });
 
 /** provision.sh --dry-run runs anywhere without root and writes nothing: it must print the plan and never a secret. */

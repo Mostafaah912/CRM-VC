@@ -11,14 +11,18 @@
 # PHP-FPM -> leave maintenance -> smoke check. Idempotent: re-running the same ref is harmless.
 # --dry-run prints every step and changes nothing.
 #
-# Environment overrides: APP_DIR PHP_BIN COMPOSER_BIN NPM_BIN PHP_VERSION (default 8.3 -> php8.3-fpm) PHP_FPM_SERVICE SMOKE_URL SMOKE_RETRIES
+# Environment overrides: APP_DIR PHP_BIN COMPOSER_BIN NPM_BIN PHP_VERSION (default: the major.minor of PHP_BIN on this server -> php<V>-fpm) PHP_FPM_SERVICE SMOKE_URL SMOKE_RETRIES
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PHP_BIN="${PHP_BIN:-php}"
 COMPOSER_BIN="${COMPOSER_BIN:-composer}"
 NPM_BIN="${NPM_BIN:-npm}"
-PHP_VERSION="${PHP_VERSION:-8.3}"   # same knob as deploy/provision.sh
+# Same knob as deploy/provision.sh. Unset -> ask the PHP binary this script will actually run (never a hardcoded guess).
+if [ -z "${PHP_VERSION:-}" ]; then
+    PHP_VERSION="$("$PHP_BIN" -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null || true)"
+    [ -n "$PHP_VERSION" ] || { echo "Cannot detect the PHP version from '$PHP_BIN'; set PHP_VERSION (e.g. 8.4)." >&2; exit 2; }
+fi
 PHP_FPM_SERVICE="${PHP_FPM_SERVICE:-php${PHP_VERSION}-fpm}"
 SMOKE_RETRIES="${SMOKE_RETRIES:-6}"
 LOG_DIR="$APP_DIR/storage/logs"
