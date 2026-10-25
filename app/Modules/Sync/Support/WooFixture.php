@@ -18,6 +18,13 @@ use InvalidArgumentException;
 final readonly class WooFixture
 {
     /** Relative API paths only — the same rule HttpWooClient enforces. */
+    /**
+     * Request parameters that shape or bound a response without changing WHICH recorded exchange it is: the field list, the ordering and the
+     * incremental lower bound (derived from the clock/cursor, like the frozen window). FakeWooClient records them for assertions but does not
+     * match fixtures on them, so a fixture recorded without them still replays.
+     */
+    public const SHAPING_PARAMS = ['_fields', 'orderby', 'order', 'modified_after', 'dates_are_gmt'];
+
     public const ENDPOINT_PATTERN = '#^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$#';
 
     /** @var array<string, string> */

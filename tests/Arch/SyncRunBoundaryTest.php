@@ -50,7 +50,7 @@ it('keeps the jobs free of business logic: no control flow, no models, no databa
     }
 });
 
-it('advances the stored cursor in exactly one place: SyncService, when a run completes', function () {
+it('advances a stored cursor in exactly one place per entity: SyncService (orders) and CatalogSyncCheckpoint (catalog), when a run completes', function () {
     $assignments = [];
 
     foreach (Scanner::phpFiles(['app']) as $file) {
@@ -63,8 +63,12 @@ it('advances the stored cursor in exactly one place: SyncService, when a run com
         }
     }
 
-    expect($assignments)->toHaveCount(1)
-        ->and($assignments[0])->toStartWith('app/Modules/Sync/Services/SyncService.php');
+    // Two writers, one per entity (P8-03g): SyncService for orders and CatalogSyncCheckpoint for the catalog's own cursor + resume point.
+    $files = array_values(array_unique(array_map(fn (string $a) => explode(' ', $a)[0], $assignments)));
+    sort($files);
+
+    expect($files)->toBe(['app/Modules/Sync/Services/CatalogSyncCheckpoint.php', 'app/Modules/Sync/Services/SyncService.php'])
+        ->and(count($assignments))->toBe(count($files));   // and exactly one assignment in each
 });
 
 it('never increments or decrements a stored counter in the sync run code — every counter is recomputed from rows and SET', function () {
@@ -79,12 +83,13 @@ it('never increments or decrements a stored counter in the sync run code — eve
     ]))->toBe([]);
 });
 
-it('lets only SyncService write the run tables', function () {
-    // P2-12: three READ-ONLY classes may name the run models to list them. That they never write is enforced by
+it('lets only SyncService (and the catalog\'s CatalogSyncCheckpoint, for its own cursor row) write the run tables', function () {
+    // P2-12 (+ P8-03g's OrdersCursorReader): READ-ONLY classes may name the run models to list/read them. That they never write is enforced by
     // SystemPagesBoundaryTest (no create/update/delete/save/insert/upsert/dispatch in any of them).
     $readers = [
         'app/Modules/Sync/Services/SyncHealthService.php',
         'app/Modules/Sync/Services/SyncRunLogService.php',
+        'app/Modules/Sync/Services/OrdersCursorReader.php',
         'app/Modules/Sync/Support/SyncRunRow.php',
     ];
     $violations = [];
@@ -92,7 +97,7 @@ it('lets only SyncService write the run tables', function () {
     foreach (Scanner::phpFiles(['app']) as $file) {
         $relative = Scanner::relative($file);
 
-        if (str_starts_with($relative, 'app/Modules/Sync/Models/') || $relative === 'app/Modules/Sync/Services/SyncService.php' || in_array($relative, $readers, true)) {
+        if (str_starts_with($relative, 'app/Modules/Sync/Models/') || $relative === 'app/Modules/Sync/Services/SyncService.php' || $relative === 'app/Modules/Sync/Services/CatalogSyncCheckpoint.php' || in_array($relative, $readers, true)) {
             continue;
         }
 

@@ -36,7 +36,7 @@ it('ends the orders sync, the catalog sync and the reconcile step quietly when W
     $failedBefore = DB::table('failed_jobs')->count();
 
     SyncEntityJob::dispatch(SyncEntity::Orders);
-    CatalogSyncJob::dispatch(failSoft: true);
+    CatalogSyncJob::dispatch();
     ReconcileRecentMonthsJob::dispatch(2);
 
     expect(SyncJob::query()->count())->toBe(0)

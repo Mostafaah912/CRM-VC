@@ -42,8 +42,9 @@ use Throwable;
  * check read stored reports only, and must work on a store whose Woo credentials are not configured (that is when they are needed).
  *
  * compare() is pure. reconcile() compares and stores one row per month (replaced on every run); a failure leaves a failed row
- * with the scrubbed reason and rethrows. Only complete months from the first (Mehr 1403) can be reconciled; a refused month
- * writes nothing.
+ * with the scrubbed reason and rethrows. Complete months from the first (Mehr 1403) are compared whole; since P8-03g the RUNNING month is
+ * compared month-to-date up to the orders cursor (less the overlap) and stored with details.month_to_date = true, replaced every night. A
+ * month after the running one, or before the first, is refused and writes nothing. GATE 1 still reads complete months only.
  */
 final class ReconciliationService
 {
@@ -54,6 +55,7 @@ final class ReconciliationService
         private readonly OrderService $orders,
         private readonly OrderStatusMapper $statuses,
         private readonly ReconciliationMonths $months,
+        private readonly OrdersCursorReader $ordersCursor,
     ) {}
 
     public function lastCompleteMonth(): string
@@ -86,6 +88,35 @@ final class ReconciliationService
         $this->months->assertReconcilable($jalaliMonth);
         [$start, $end] = $this->months->window($jalaliMonth);
 
+        return $this->compareWindow($jalaliMonth, $start, $end);
+    }
+
+    /**
+     * The end (exclusive, UTC) of the running month's month-to-date window, or null when it cannot be compared yet. The cutoff is the orders
+     * cursor minus the sync overlap — every order created before it has certainly been ingested by a completed poll, so a green month-to-date
+     * means "no order is missing up to there", not "the month is finished".
+     */
+    public function currentMonthCutoff(): ?CarbonImmutable
+    {
+        $month = $this->months->current();
+
+        if (! $this->months->isCurrent($month)) {
+            return null;
+        }
+
+        $cursor = $this->ordersCursor->value();
+
+        if ($cursor === null) {
+            return null;
+        }
+
+        $cutoff = $cursor->subMinutes((int) config('woo.overlap_minutes'))->utc();
+
+        return $cutoff->greaterThan($this->months->window($month)[0]) ? $cutoff : null;
+    }
+
+    private function compareWindow(string $jalaliMonth, CarbonImmutable $start, CarbonImmutable $end): ReconciliationReport
+    {
         [$wooCount, $wooRevenue] = $this->readWoo($start, $end);
         $local = $this->orders->totalsInWindow($start, $end);
         $variance = RevenueVariance::between($wooRevenue, $local->realizedRevenue);
@@ -110,15 +141,25 @@ final class ReconciliationService
      */
     public function reconcile(string $jalaliMonth): ReconciliationReport
     {
+        $cutoff = null;
+
+        // The running month with no usable orders cursor is REFUSED up front (nothing to compare yet) — like any other refused month it
+        // asks Woo nothing and writes nothing, not even a failed row.
+        if ($this->months->isCurrent($jalaliMonth)) {
+            $cutoff = $this->currentMonthCutoff() ?? throw ReconciliationMonthException::notComplete();
+        }
+
         try {
-            $report = $this->compare($jalaliMonth);
+            $report = $cutoff === null
+                ? $this->compare($jalaliMonth)
+                : $this->compareWindow($jalaliMonth, $this->months->window($jalaliMonth)[0], $cutoff);
         } catch (Throwable $e) {
             $this->recordFailure($jalaliMonth, $e);
 
             throw $e;
         }
 
-        $this->store($report);
+        $this->store($report, $cutoff);
 
         return $report;
     }
@@ -129,10 +170,12 @@ final class ReconciliationService
      */
     public function recordFailure(string $jalaliMonth, Throwable $e): void
     {
-        try {
-            $this->months->assertReconcilable($jalaliMonth);
-        } catch (ReconciliationMonthException) {
-            return;
+        if (! $this->months->isCurrent($jalaliMonth)) {
+            try {
+                $this->months->assertReconcilable($jalaliMonth);
+            } catch (ReconciliationMonthException) {
+                return;
+            }
         }
 
         [$first, $last] = $this->months->dates($jalaliMonth);
@@ -176,11 +219,16 @@ final class ReconciliationService
      * step "ReconcileJob(2)"): a cheap nightly re-check of only the most recent months, not the whole
      * history every night — dispatchAllMonths() stays for the standalone `hm:reconcile --all` command.
      *
-     * @return list<string> the months queued, oldest first
+     * @return list<string> the months queued, oldest first; the running month (month-to-date) last, when it can be compared
      */
     public function dispatchRecentMonths(int $count): array
     {
         $months = $this->months->lastN($count);
+
+        // P8-03g: the running month too, month-to-date up to the orders cursor — so a missing order is seen the next night, not a month later.
+        if ($this->currentMonthCutoff() !== null) {
+            $months[] = $this->months->current();
+        }
 
         foreach ($months as $month) {
             ReconcileMonthJob::dispatch($month);
@@ -255,10 +303,11 @@ final class ReconciliationService
         return [$read, $revenue];
     }
 
-    private function store(ReconciliationReport $report): void
+    private function store(ReconciliationReport $report, ?CarbonImmutable $partialEnd = null): void
     {
         [$first, $last] = $this->months->dates($report->jalaliMonth);
         [$start, $end] = $this->months->window($report->jalaliMonth);
+        $end = $partialEnd ?? $end;
 
         ReconciliationReportModel::query()->updateOrCreate(['jalali_month' => $report->jalaliMonth], [
             'period_start' => $first,
@@ -273,6 +322,7 @@ final class ReconciliationService
             'is_acceptable' => $report->isGreen(),
             'details' => [
                 'window' => ['start' => $start->format('Y-m-d\TH:i:s'), 'end' => $end->format('Y-m-d\TH:i:s')],
+                'month_to_date' => $partialEnd !== null,
                 'realized_statuses' => array_values((array) config('woo.realized_statuses')),
             ],
             'status' => $report->status,

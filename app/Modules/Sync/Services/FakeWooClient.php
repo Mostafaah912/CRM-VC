@@ -60,8 +60,9 @@ final class FakeWooClient implements WooClient
 
         $this->requests[] = ['endpoint' => $endpoint, 'page' => $page, 'window' => $window, 'query' => $query];
 
-        $fixture = $this->fixtures[WooFixture::keyFor($endpoint, $page, $query)]
-            ?? throw new WooFixtureNotFoundException($this->describeMiss($endpoint, $page, $query));
+        $matching = array_diff_key($query, array_flip(WooFixture::SHAPING_PARAMS));
+        $fixture = $this->fixtures[WooFixture::keyFor($endpoint, $page, $matching)]
+            ?? throw new WooFixtureNotFoundException($this->describeMiss($endpoint, $page, $matching));
 
         return $this->replay($fixture);
     }

@@ -11,7 +11,8 @@ function syncJobRow(array $overrides = []): int
     return DB::table('sync_jobs')->insertGetId(array_merge(['entity' => 'orders', 'mode' => 'incremental'], $overrides));
 }
 
-it('has sync_cursors exactly as the PRD defines it', function () {
+// PRD columns plus ONE deliberate addition (P8-03g): `checkpoint` jsonb NULL, the resume point of an in-flight catalog run.
+it('has sync_cursors exactly as the PRD defines it, plus the catalog run checkpoint', function () {
     expect(SchemaProbe::mismatches('sync_cursors', [
         'entity' => ['varchar(20)', false, null],
         'cursor_value' => ['tstz', true, null],
@@ -19,6 +20,7 @@ it('has sync_cursors exactly as the PRD defines it', function () {
         'last_status' => ['varchar(15)', true, null],
         'consecutive_failures' => ['int', false, '0'],
         'updated_at' => ['tstz', false, 'current_timestamp'],
+        'checkpoint' => ['jsonb', true, null],
     ]))->toBeEmpty()
         ->and(SchemaProbe::primaryKey('sync_cursors'))->toBe(['entity']);
 });

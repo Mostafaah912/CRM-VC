@@ -148,16 +148,16 @@ it('marks the month failed from the failed() hook too, for a worker that died or
 it('writes nothing from the failed() hook for a month that cannot be reconciled', function () {
     jobWoo();
 
-    (new ReconcileMonthJob('1403-10'))->failed(new RuntimeException('late'));
+    (new ReconcileMonthJob('1403-12'))->failed(new RuntimeException('late'));
     (new ReconcileMonthJob('nonsense'))->failed(new RuntimeException('late'));
 
     expect(ReconciliationReportModel::count())->toBe(0);
 });
 
-it('refuses a month that is not complete, leaving no row', function () {
+it('refuses a month after the running one, leaving no row', function () {
     jobWoo();
 
-    expect(fn () => (new ReconcileMonthJob('1403-10'))->handle(app(ReconciliationService::class)))->toThrow(InvalidArgumentException::class);
+    expect(fn () => (new ReconcileMonthJob('1403-11'))->handle(app(ReconciliationService::class)))->toThrow(InvalidArgumentException::class);
 
     expect(ReconciliationReportModel::count())->toBe(0);
 });

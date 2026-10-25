@@ -100,8 +100,12 @@ it('still advances the stored cursor in exactly one place — a full run and a c
         }
     }
 
-    expect($assignments)->toHaveCount(1)
-        ->and($assignments[0])->toStartWith('app/Modules/Sync/Services/SyncService.php');
+    $files = array_values(array_unique(array_map(fn (string $a) => explode(' ', $a)[0], $assignments)));
+    sort($files);
+
+    // One writer per entity (P8-03g): SyncService for orders, CatalogSyncCheckpoint for the catalog cursor — one assignment in each.
+    expect($files)->toBe(['app/Modules/Sync/Services/CatalogSyncCheckpoint.php', 'app/Modules/Sync/Services/SyncService.php'])
+        ->and(count($assignments))->toBe(count($files));
 });
 
 it('derives the epoch from the Jalali calendar in config and never spells a date in code', function () {
@@ -116,17 +120,18 @@ it('derives the epoch from the Jalali calendar in config and never spells a date
         ->and($service)->not->toContain('JalaliDate');
 });
 
-it('registers only the hm:sync orders poll in routes/console.php, with no overlap or server flags (P6-09: catalog moved inside hm:nightly-chain)', function () {
+it('registers the hm:sync orders poll with no overlap or server flags, plus the catalog\'s OWN two entries (P8-03g: incremental daily, FULL on Friday, 01:00 Tehran)', function () {
     $console = Scanner::phpCode(Scanner::root().'/routes/console.php');
     // P8-02 deliberately gave backup:run withoutOverlapping/onOneServer; the rule is about the orders poll, so only its own statement is checked.
     preg_match('/Schedule::command\(\'hm:sync\'[^;]*;/', $console, $poll);
     $pollStatement = $poll[0] ?? '';
 
-    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(1)
+    expect(substr_count($console, 'Schedule::command(\'hm:sync\''))->toBe(3)
         ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'orders'])")
         ->and($console)->toContain('->everyFifteenMinutes()')
         ->and($console)->toContain("->timezone('Asia/Tehran')")
-        ->and($console)->not->toContain("'--entity' => 'catalog'")
+        ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'catalog'])->dailyAt('01:00')->days([0, 1, 2, 3, 4, 6])")
+        ->and($console)->toContain("Schedule::command('hm:sync', ['--entity' => 'catalog', '--full' => true])->weeklyOn(5, '01:00')")
         ->and($pollStatement)->not->toMatch('/withoutOverlapping|onOneServer|runInBackground|everyMinute\(/');
 });
 

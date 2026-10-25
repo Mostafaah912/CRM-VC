@@ -159,7 +159,7 @@ it('no longer schedules hm:reconcile directly (P6-09): its nightly evidence now 
     expect(scheduledReconcileEvents())->toHaveCount(0);
 });
 
-it('schedules exactly eight tasks (P8-02 added backup:run): the orders poll, HealthCheckJob (P6-10), the nightly chain (P6-09), PruneLogsJob (P6-10), the weekly affinity rebuild, and the two separate AI entries (P7-08: daily brief, weekly review)', function () {
+it('schedules exactly ten tasks (P8-02 added backup:run, P8-03g the two catalog entries): the orders poll, HealthCheckJob (P6-10), the nightly chain (P6-09), PruneLogsJob (P6-10), the weekly affinity rebuild, the two AI entries (P7-08) and the catalog (daily incremental + Friday full)', function () {
     Artisan::all();
     $events = app(Schedule::class)->events();
 
@@ -167,7 +167,7 @@ it('schedules exactly eight tasks (P8-02 added backup:run): the orders poll, Hea
     // ->command, only ->description.
     $labels = array_map(fn ($event) => (string) ($event->command ?? $event->description ?? ''), $events);
 
-    expect($labels)->toHaveCount(8)
+    expect($labels)->toHaveCount(10)
         ->and(implode(' ', $labels))->toContain('hm:sync')->toContain('backup:run')->toContain('hm:nightly-chain')
         ->and(implode(' ', $labels))->toContain('HealthCheckJob')
         ->and(implode(' ', $labels))->toContain('PruneLogsJob')

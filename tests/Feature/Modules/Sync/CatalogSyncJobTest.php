@@ -13,6 +13,7 @@ use App\Modules\Sync\Support\SyncWindow;
 use App\Modules\Sync\Support\WooFixture;
 use App\Modules\Sync\Support\WooPage;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
+use Illuminate\Queue\TimeoutExceededException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -79,8 +80,9 @@ it('is idempotent: dispatching twice does not duplicate rows', function () {
 });
 
 /*
-| P7-08 follow-up — the catalog is fail-soft INSIDE the nightly chain. Measured live: ~96 sequential Woo requests at ~3 s each, which a 300 s
-| timeout could not hold; every timeout stopped the whole Bus::chain (09-30, 10-05, 10-18) so metrics/daily/cohort/segments never ran.
+| P8-03g — the catalog runs on its OWN schedule, out of the nightly chain, and fails LOUDLY on its own: the job throws, its failed() hook (which
+| the worker also calls when it KILLS the job at its timeout — the case no fail-soft could ever catch) raises ONE SyncFailure alert and marks
+| the cursor failed. The previous run's mirror stays; the next run resumes from the checkpoint.
 */
 
 function failingWoo(): WooClient
@@ -100,42 +102,52 @@ function failingWoo(): WooClient
     };
 }
 
-it('gives the catalog 1800 seconds — the live run MEASURED 911 s (310 sequential Woo requests) — and stays unique above that', function () {
+it('gives the catalog 1500 seconds — a full read is ~900 s (311 sequential requests at 2.3-4 s) — and stays unique above that', function () {
     $job = new CatalogSyncJob;
 
-    expect($job->timeout)->toBe(1800)->and($job->timeout)->toBeGreaterThan(911 * 1.5)->and($job->uniqueFor)->toBeGreaterThan($job->timeout)->and($job->tries)->toBe(1);
+    expect($job->timeout)->toBe(1500)->and($job->timeout)->toBeGreaterThan(911 * 1.5)->and($job->uniqueFor)->toBeGreaterThan($job->timeout)->and($job->tries)->toBe(1);
 });
 
-it('keeps its timeout under the queue\'s retry_after (by the project\'s 30 s margin) and within Horizon\'s supervisor timeout, so a running catalog is never re-reserved and run twice', function () {
+it('keeps job timeout < Horizon supervisor timeout < queue retry_after, each strictly: the worker timeout (which calls failed()) always fires first, never the supervisor, never a re-reserve that runs the catalog twice', function () {
     $job = new CatalogSyncJob;
+    $horizon = (int) config('horizon.defaults.supervisor-1.timeout');
+    $retryAfter = (int) config('queue.connections.redis.retry_after');
 
-    expect((int) config('queue.connections.redis.retry_after'))->toBeGreaterThanOrEqual($job->timeout + 30)
-        ->and((int) config('horizon.defaults.supervisor-1.timeout'))->toBeGreaterThanOrEqual($job->timeout)
-        ->and((int) config('horizon.defaults.supervisor-1.timeout'))->toBeLessThan((int) config('queue.connections.redis.retry_after'));
+    expect($job->timeout)->toBeLessThan($horizon)
+        ->and($horizon)->toBeLessThan($retryAfter)
+        ->and($retryAfter)->toBeGreaterThanOrEqual($job->timeout + 30);
 });
 
-it('standalone (the default) still throws on a Woo failure, exactly as before', function () {
-    app()->instance(WooClient::class, failingWoo());
-
-    expect(fn () => CatalogSyncJob::dispatchSync())->toThrow(WooRequestException::class);
-});
-
-it('fail-soft ends normally on a Woo failure, logs only the class, and raises a SyncFailure alert for the catalog', function () {
+it('throws on a Woo failure (it is no longer a fail-soft chain step) and raises exactly one CatalogSyncFailed with the class name only', function () {
     Event::fake([CatalogSyncFailed::class]);
     app()->instance(WooClient::class, failingWoo());
 
-    CatalogSyncJob::dispatchSync(failSoft: true);
+    expect(fn () => CatalogSyncJob::dispatchSync())->toThrow(WooRequestException::class);
 
+    Event::assertDispatchedTimes(CatalogSyncFailed::class, 1);
     Event::assertDispatched(CatalogSyncFailed::class, fn ($e) => $e->exception === WooRequestException::class);
+});
+
+it('raises the alert from failed() directly too — the path a worker timeout kill takes, where handle() never gets to catch anything', function () {
+    Event::fake([CatalogSyncFailed::class]);
+
+    (new CatalogSyncJob)->failed(new TimeoutExceededException('CatalogSyncJob has timed out.'));
+
+    Event::assertDispatched(CatalogSyncFailed::class, fn ($e) => $e->exception === TimeoutExceededException::class);
 });
 
 it('turns CatalogSyncFailed into one SyncFailure alert, in its own dedupe window', function () {
     app()->instance(WooClient::class, failingWoo());
 
-    CatalogSyncJob::dispatchSync(failSoft: true);
-    CatalogSyncJob::dispatchSync(failSoft: true);
+    foreach ([1, 2] as $_) {
+        try {
+            CatalogSyncJob::dispatchSync();
+        } catch (WooRequestException) {
+        }
+    }
     $alerts = DB::table('audit_logs')->where('action', 'alert.critical')->pluck('after')->map(fn ($a) => json_decode($a, true));
 
     expect($alerts)->toHaveCount(1)->and($alerts[0]['kind'])->toBe('sync_failure')->and($alerts[0]['context']['entity'])->toBe('catalog')->and($alerts[0]['message'])->toContain('WooRequestException')
-        ->and($alerts[0]['message'])->not->toContain('connection failure');   // class name only, never the Woo/transport text
+        ->and($alerts[0]['message'])->not->toContain('connection failure')   // class name only, never the Woo/transport text
+        ->and($alerts[0]['message'])->not->toContain('nightly chain');       // the catalog is not a chain step any more
 });

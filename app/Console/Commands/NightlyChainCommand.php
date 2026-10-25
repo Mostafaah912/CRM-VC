@@ -11,7 +11,6 @@ use App\Modules\Metrics\Jobs\RecomputeMetricsJob;
 use App\Modules\Segments\Jobs\RebuildAllSegmentsJob;
 use App\Modules\Sync\Enums\SyncEntity;
 use App\Modules\Sync\Enums\SyncMode;
-use App\Modules\Sync\Jobs\CatalogSyncJob;
 use App\Modules\Sync\Jobs\ReconcileRecentMonthsJob;
 use App\Modules\Sync\Jobs\SyncEntityJob;
 use App\Modules\Sync\Support\SafeErrorText;
@@ -25,7 +24,8 @@ use Throwable;
  * order PRD §22 gives — no logic here, only the wiring (CLAUDE.md §1/§5).
  *
  * Steps, and why this order (each dependency already documented, individually, on the job it protects):
- *  1. CatalogSyncJob            - categories/products/variations, a full mirror every run.
+ *  (P8-03g: the catalog mirror is no longer a step here — it has its own 01:00 schedule, routes/console.php. It was the only step that
+ *  reads live Woo for minutes, and a timeout kill of it, which no fail-soft can catch, stopped every metrics step behind it.)
  *  2. SyncEntityJob(Orders)     - incremental: the 15-minute poll (still scheduled separately below)
  *                                 already keeps orders close to live; this step only catches up on
  *                                 whatever landed in the last few minutes before metrics run.
@@ -56,7 +56,6 @@ final class NightlyChainCommand extends Command
     public function handle(): int
     {
         Bus::chain([
-            new CatalogSyncJob(failSoft: true),
             new SyncEntityJob(SyncEntity::Orders, SyncMode::Incremental),
             new RecomputeMetricsJob('full'),
             new BuildCustomerPurchaseAggregatesJob,

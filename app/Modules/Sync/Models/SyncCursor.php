@@ -10,13 +10,15 @@ use Illuminate\Database\Eloquent\Model;
 
 /**
  * The stored cursor of one entity (PRD §09 sync_cursors). cursor_value moves ONLY when a run completes (CLAUDE.md §5);
- * consecutive_failures is derived from the run history, never incremented. Written only by SyncService.
+ * consecutive_failures is derived from the run history, never incremented. Written only by SyncService (orders) and
+ * CatalogSyncCheckpoint (catalog, which also keeps its in-flight run in `checkpoint`).
  *
  * @property string $entity
  * @property CarbonImmutable|null $cursor_value
  * @property CarbonImmutable|null $last_run_at
  * @property SyncStatus|null $last_status
  * @property int $consecutive_failures
+ * @property array<string, mixed>|null $checkpoint
  * @property CarbonImmutable $updated_at
  */
 class SyncCursor extends Model
@@ -29,7 +31,7 @@ class SyncCursor extends Model
 
     protected $keyType = 'string';
 
-    protected $fillable = ['entity', 'cursor_value', 'last_run_at', 'last_status', 'consecutive_failures'];
+    protected $fillable = ['entity', 'cursor_value', 'last_run_at', 'last_status', 'consecutive_failures', 'checkpoint'];
 
     protected function casts(): array
     {
@@ -38,6 +40,7 @@ class SyncCursor extends Model
             'last_run_at' => 'immutable_datetime',
             'last_status' => SyncStatus::class,
             'consecutive_failures' => 'integer',
+            'checkpoint' => 'array',
             'updated_at' => 'immutable_datetime',
         ];
     }

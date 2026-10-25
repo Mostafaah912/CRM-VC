@@ -28,12 +28,14 @@ return [
     // (WOO_WEBHOOK_SECRET) registered on a separate Woo webhook. Everywhere else it defaults ON.
     'webhook_enabled' => filter_var(env('WOO_WEBHOOK_ENABLED', env('APP_ENV') !== 'staging'), FILTER_VALIDATE_BOOLEAN),
 
-    'timeout' => 30,
+    // P8-03g (measured on staging, 70 requests): Woo answers any request in 2.3-4.9 s (p90 <= 4.9 s), 20 s is four times that. A request is
+    // therefore bounded by (1 + max_retries) x timeout + the backoff ladder = 4 x 20 + 40 = 120 s, down from 5 x 30 + 160 = 310 s (PRD §10 said
+    // 4 retries at 2/8/30/120 s): one stalled request can no longer eat the time budget of a whole job. A 429 Retry-After still wins over the ladder.
+    'timeout' => 20,
     'per_page' => 50,
 
-    // Retry policy: PRD §10 — 4 retries at 2s, 8s, 30s, 120s (a 429 Retry-After wins over the ladder).
-    'max_retries' => 4,
-    'retry_backoff_seconds' => [2, 8, 30, 120],
+    'max_retries' => 3,
+    'retry_backoff_seconds' => [2, 8, 30],
 
     // Redis token bucket: capacity = this value, refilled continuously at value/60 per second.
     'rate_limit_per_minute' => 90,

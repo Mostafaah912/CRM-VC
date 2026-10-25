@@ -49,6 +49,18 @@ final class ReconciliationMonths
         return JalaliDate::toJalaliMonth(CarbonImmutable::parse((string) config('woo.sync_epoch')));
     }
 
+    /** The running Jalali month in Tehran (P8-03g: reconciled month-to-date, up to the orders cursor — see ReconciliationService). */
+    public function current(): string
+    {
+        return JalaliDate::toJalaliMonth(CarbonImmutable::now('Asia/Tehran'));
+    }
+
+    /** True for the running month once it is inside the reconcilable range (it is never before the first month). */
+    public function isCurrent(string $month): bool
+    {
+        return $month === $this->current() && $month >= $this->first();
+    }
+
     /** The month before the current Jalali month in Tehran. */
     public function lastComplete(): string
     {

@@ -563,6 +563,8 @@ Backoff:   2s,8s,30s,120s (max 4); on 429 honor Retry-After
 Rate limit: Redis token bucket, 90 req/min
 ```
 
+> **اصلاحیه P8 (۲۰۲۶-۱۰-۲۵ — تصمیم مالک محصول، پس از اندازه‌گیری روی staging):** Timeout هر درخواست ۲۰ ثانیه، حداکثر ۳ retry با Backoff `2s, 8s, 30s` (به‌جای ۴ retry و `2s,8s,30s,120s`). اندازه‌گیری: ۷۰ درخواست از سرور staging، همه موفق، میانه‌ی زمان ۲٫۳ تا ۴٫۰ ثانیه و p90 حداکثر ۴٫۹ ثانیه (حتی `orders?per_page=1` میانه ۲٫۵ ثانیه است: هزینه زمان پردازش ووکامرس است نه شبکه و نه اندازه‌ی پاسخ). سقف یک درخواست: `(1+3)×20 + 40 = 120` ثانیه به‌جای ۳۱۰ ثانیه. `429 Retry-After` همچنان بر نردبان مقدم است.
+
 ### نگاشت و Resolve محصول
 ```
 billing.phone → PhoneNormalizer → customer identity
@@ -1039,15 +1041,18 @@ PruneLogsJob، HealthCheckJob.
 ```
 every 15m: SyncEntityJob(Orders, incremental), HealthCheckJob
 hourly:    SyncRefundsJob, RecomputeMetricsJob('dirty')
-daily 03:00 Bus::chain([Products, Variations, Customers, Orders sync,
+daily 01:00 CatalogSyncJob (incremental; Friday = FULL rebuild)   -- P8: OUT of the chain, own schedule + own alert
+daily 03:00 Bus::chain([Orders sync,
              RecomputeMetricsJob('full'), BuildCustomerPurchaseAggregatesJob,
              BuildDailyMetricsJob(3), BuildCohortSnapshotsJob,
-             RebuildAllSegmentsJob, ReconcileJob(2)])
+             RebuildAllSegmentsJob, ReconcileJob(2) + the running month month-to-date])
 daily 04:30 PruneLogsJob · daily 07:00 GenerateDailyBriefJob
 weekly Sat 04:00 BuildAffinityJob · Sat 07:30 GenerateWeeklyReviewJob
 daily 02:00 backup:run · every 5m horizon:snapshot
 crontab: * * * * * php artisan schedule:run
 ```
+
+> **اصلاحیه P8 (۲۰۲۶-۱۰-۲۵):** محصولات و Variationها دیگر گام اول زنجیره نیستند. شب ۲۰۲۶-۱۰-۲۵ تایم‌اوت ۳۰ دقیقه‌ای همان گام (`TimeoutExceededException`، کشته‌شدن worker که هیچ fail-soft ی نمی‌تواند بگیرد) کل زنجیره را متوقف کرد: هیچ metrics، daily، cohort، سگمنت یا reconcile اجرا نشد. حالا Catalog زمان‌بندی مستقل (۰۱:۰۰ تهران، افزایشی با `modified_after` + checkpoint صفحه، جمعه بازسازی کامل) و هشدار مستقل دارد؛ `ReconcileJob` ماه جاری را هم تا cursor سفارش‌ها (منهای ۱۰ دقیقه) مقایسه می‌کند.
 
 > **چرا زنجیره:** ترتیب حیاتی است. `Bus::chain` در اولین شکست متوقف می‌شود — بهتر است چیزی اجرا نشود تا با داده ناقص اجرا شود.
 

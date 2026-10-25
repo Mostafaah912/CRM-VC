@@ -10,6 +10,7 @@ use App\Modules\Sync\Jobs\SyncEntityJob;
 use App\Modules\Sync\Models\SyncCursor;
 use App\Modules\Sync\Models\SyncJob;
 use App\Modules\Sync\Models\SyncLog;
+use Carbon\Carbon;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Artisan;
@@ -162,10 +163,27 @@ it('leaves overlap protection to the P2-08 run rule and the job\'s uniqueness: t
 
 // ================================================== hm:sync --entity=catalog (P6-09: no longer scheduled standalone)
 
-it('no longer schedules hm:sync --entity=catalog standalone (P6-09): CatalogSyncJob is now the first step of hm:nightly-chain', function () {
+it('schedules the catalog on its OWN entries again (P8-03g, out of the nightly chain): incremental daily except Friday and a FULL rebuild on Friday, both 01:00 Tehran', function () {
     $events = array_values(array_filter(scheduledSyncEvents(), fn ($event) => preg_match("/--entity='?catalog'?(\s|$)/", (string) $event->command) === 1));
+    $full = array_values(array_filter($events, fn ($e) => str_contains((string) $e->command, '--full')));
+    $incremental = array_values(array_filter($events, fn ($e) => ! str_contains((string) $e->command, '--full')));
 
-    expect($events)->toHaveCount(0);
+    expect($events)->toHaveCount(2)->and($full)->toHaveCount(1)->and($incremental)->toHaveCount(1);
+
+    // 2026-10-30 is a Friday, 2026-10-31 a Saturday (Tehran). 01:00 Tehran = 21:30 UTC the evening before.
+    $due = fn ($event, string $tehran) => (function () use ($event, $tehran): bool {
+        Carbon::setTestNow(Carbon::parse($tehran, 'Asia/Tehran')->utc());
+        $result = $event->isDue(app());
+        Carbon::setTestNow();
+
+        return $result;
+    })();
+
+    expect($due($full[0], '2026-10-30 01:00:00'))->toBeTrue()                 // Friday: the full rebuild
+        ->and($due($incremental[0], '2026-10-30 01:00:00'))->toBeFalse()      // ... and NOT the incremental one
+        ->and($due($incremental[0], '2026-10-31 01:00:00'))->toBeTrue()       // Saturday: incremental
+        ->and($due($full[0], '2026-10-31 01:00:00'))->toBeFalse()
+        ->and($due($incremental[0], '2026-10-31 02:00:00'))->toBeFalse();     // only at 01:00
 });
 
 // P2-11 used to add the nightly reconciliation here; P6-09 replaced it with hm:nightly-chain. The

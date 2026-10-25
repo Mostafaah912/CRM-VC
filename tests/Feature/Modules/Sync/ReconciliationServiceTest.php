@@ -326,6 +326,7 @@ it('stores the report for the month in reconciliation_reports', function () {
         ->and($row->reconciled_at->utc()->format('Y-m-d\TH:i:s'))->toBe('2025-01-10T12:00:00')
         ->and($row->details)->toEqual([
             'window' => ['start' => '2024-09-21T20:30:00', 'end' => '2024-10-21T20:30:00'],
+            'month_to_date' => false,
             'realized_statuses' => ['processing', 'completed'],
         ]);
 });
@@ -422,7 +423,7 @@ it('never lets a phone number reach error_message, whatever an exception says', 
 it('writes no row at all for a month it refuses (an invalid month has nothing to attach a failure to)', function () {
     $service = reconService(new WooOrderTotalsSimulator([]));
 
-    expect(fn () => $service->reconcile('1403-10'))->toThrow(InvalidArgumentException::class)
+    expect(fn () => $service->reconcile('1403-11'))->toThrow(InvalidArgumentException::class)      // after the running month (1403-10)
         ->and(fn () => $service->reconcile('nonsense'))->toThrow(InvalidArgumentException::class);
 
     expect(ReconciliationReportModel::count())->toBe(0);
@@ -551,4 +552,92 @@ it('describes a report in one line of counts and a percentage, nothing else', fu
     $report = reconService(reconAgreeing())->compare('1403-07');
 
     expect($report->summary())->toBe('1403-07: green (orders 4/4, revenue diff 0.0000%)');
+});
+
+// ================================================================== the RUNNING month, month-to-date (P8-03g)
+//
+// "Now" is 2025-01-10 12:00Z, Tehran 1403-10-21: the running month is 1403-10 = [2024-12-20 20:30Z, 2025-01-20 20:30Z).
+
+function reconOrdersCursor(?string $value): void
+{
+    DB::table('sync_cursors')->insert(['entity' => 'orders', 'cursor_value' => $value, 'last_status' => 'completed', 'consecutive_failures' => 0]);
+}
+
+const RECON_RUNNING = [
+    ['created' => '2024-12-20 20:30:00', 'status' => 'processing', 'total' => 100_000],   // the very first second of the month
+    ['created' => '2025-01-05 09:00:00', 'status' => 'completed', 'total' => 250_000],
+    ['created' => '2025-01-07 09:00:00', 'status' => 'cancelled', 'total' => 70_000],
+];
+
+it('reconciles the running month up to the orders cursor less the overlap, and stores it as month-to-date', function () {
+    config(['woo.overlap_minutes' => 10]);
+    reconOrdersCursor('2025-01-10 11:00:00+00');   // cutoff = 10:50:00
+    reconSeedLocal(RECON_RUNNING);
+    // an order created after the cutoff exists in Woo only (the poll has not seen it yet): it must not turn the month red
+    $woo = new WooOrderTotalsSimulator([...RECON_RUNNING, ['created' => '2025-01-10 10:55:00', 'status' => 'completed', 'total' => 999_000]]);
+
+    $report = reconService($woo)->reconcile('1403-10');
+
+    $row = ReconciliationReportModel::sole();
+    expect($report->status)->toBe(ReconciliationStatus::Green)
+        ->and([$report->wooOrderCount, $report->localOrderCount])->toBe([3, 3])
+        ->and([$report->wooRevenue, $report->localRevenue])->toBe([350_000, 350_000])
+        ->and($row->jalali_month)->toBe('1403-10')
+        ->and($row->details['month_to_date'])->toBeTrue()
+        ->and($row->details['window'])->toEqual(['start' => '2024-12-20T20:30:00', 'end' => '2025-01-10T10:50:00']);
+});
+
+it('is red month-to-date when an order created BEFORE the cutoff is missing locally', function () {
+    reconOrdersCursor('2025-01-10 11:00:00+00');
+    reconSeedLocal([RECON_RUNNING[0], RECON_RUNNING[1]]);   // the third order never arrived
+
+    $report = reconService(new WooOrderTotalsSimulator(RECON_RUNNING))->reconcile('1403-10');
+
+    expect($report->status)->toBe(ReconciliationStatus::Red)->and($report->countDiff)->toBe(1);
+});
+
+it('refuses the running month, asking Woo nothing and writing nothing, while there is no orders cursor yet', function () {
+    $woo = new WooOrderTotalsSimulator(RECON_RUNNING);
+
+    expect(fn () => reconService($woo)->reconcile('1403-10'))->toThrow(InvalidArgumentException::class);
+
+    expect(ReconciliationReportModel::count())->toBe(0);
+});
+
+it('refuses the running month when the orders cursor is not past the month start', function () {
+    reconOrdersCursor('2024-12-20 00:00:00+00');
+
+    expect(fn () => reconService(new WooOrderTotalsSimulator([]))->reconcile('1403-10'))->toThrow(InvalidArgumentException::class);
+    expect(ReconciliationReportModel::count())->toBe(0);
+});
+
+it('marks the running month failed (and rethrows) when Woo cannot be read', function () {
+    reconOrdersCursor('2025-01-10 11:00:00+00');
+
+    expect(fn () => reconService(new WooOrderTotalsSimulator([], failure: new RuntimeException('woo is down')))->reconcile('1403-10'))->toThrow(RuntimeException::class);
+
+    $row = ReconciliationReportModel::sole();
+    expect($row->jalali_month)->toBe('1403-10')->and($row->status)->toBe(ReconciliationStatus::Failed);
+});
+
+it('dispatches the running month after the recent complete months — only once the orders cursor allows a comparison', function () {
+    Queue::fake();
+
+    expect(reconService(new WooOrderTotalsSimulator([]))->dispatchRecentMonths(2))->toBe(['1403-08', '1403-09']);   // no cursor: complete months only
+
+    reconOrdersCursor('2025-01-10 11:00:00+00');
+    Queue::fake();
+
+    expect(reconService(new WooOrderTotalsSimulator([]))->dispatchRecentMonths(2))->toBe(['1403-08', '1403-09', '1403-10']);
+    Queue::assertPushed(ReconcileMonthJob::class, 3);
+});
+
+it('keeps GATE 1 on complete months only: a stored month-to-date row for the running month changes nothing', function () {
+    reconOrdersCursor('2025-01-10 11:00:00+00');
+    reconSeedLocal(RECON_RUNNING);
+    reconService(new WooOrderTotalsSimulator(RECON_RUNNING))->reconcile('1403-10');
+
+    $gate = app(ReconciliationService::class)->gateOne();
+
+    expect($gate->passed)->toBeFalse();   // 1403-07..09 were never reconciled — the running month's green row must not stand in for them
 });
